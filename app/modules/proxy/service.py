@@ -243,6 +243,9 @@ _WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES = frozenset(
     }
 )
 _WEBSOCKET_PREVIOUS_RESPONSE_ACCOUNT_CACHE_LIMIT = 4096
+_WEBSOCKET_CONTINUITY_CACHE_LIMIT = 4096
+_WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS = 20
+_WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +308,7 @@ class ProxyService:
         self._http_bridge_turn_state_index: dict[tuple[str, str | None], _HTTPBridgeSessionKey] = {}
         self._http_bridge_previous_response_index: dict[tuple[str, str | None], _HTTPBridgeSessionKey] = {}
         self._websocket_previous_response_account_index: dict[tuple[str, str | None, str | None], str] = {}
+        self._websocket_continuity_index: dict[tuple[str, str | None], _WebSocketContinuityState] = {}
         # In-memory pin from upstream-issued file_id -> codex-lb account_id.
         # Used so ``finalize_file`` for a given ``file_id`` is routed to
         # the same account that handled ``create_file``. Cross-instance
@@ -316,6 +320,30 @@ class ProxyService:
         self._file_account_pin_lock = asyncio.Lock()
         self._http_bridge_lock = anyio.Lock()
         self._work_admission: WorkAdmissionController | None = None
+
+    def _websocket_continuity_state_for_request(
+        self,
+        headers: Mapping[str, str],
+        *,
+        api_key: ApiKeyData | None,
+        codex_session_affinity: bool,
+    ) -> "_WebSocketContinuityState":
+        if not codex_session_affinity:
+            return _WebSocketContinuityState()
+        session_id = _owner_lookup_session_id_from_headers(headers)
+        if session_id is None:
+            return _WebSocketContinuityState()
+        key = (session_id, api_key.id if api_key is not None else None)
+        continuity_state = self._websocket_continuity_index.get(key)
+        if continuity_state is None:
+            continuity_state = _WebSocketContinuityState()
+            self._websocket_continuity_index[key] = continuity_state
+        else:
+            self._websocket_continuity_index.pop(key, None)
+            self._websocket_continuity_index[key] = continuity_state
+        while len(self._websocket_continuity_index) > _WEBSOCKET_CONTINUITY_CACHE_LIMIT:
+            self._websocket_continuity_index.pop(next(iter(self._websocket_continuity_index)))
+        return continuity_state
 
     def _get_work_admission(self) -> WorkAdmissionController:
         if self._work_admission is None:
@@ -2343,7 +2371,11 @@ class ProxyService:
         upstream: UpstreamResponsesWebSocket | None = None
         upstream_reader: asyncio.Task[None] | None = None
         upstream_control: _WebSocketUpstreamControl | None = None
-        continuity_state = _WebSocketContinuityState()
+        continuity_state = self._websocket_continuity_state_for_request(
+            headers,
+            api_key=api_key,
+            codex_session_affinity=codex_session_affinity,
+        )
         account: Account | None = None
         upstream_turn_state: str | None = _sticky_key_from_turn_state_header(headers)
         downstream_activity = _DownstreamWebSocketActivity()
@@ -2468,6 +2500,38 @@ class ProxyService:
                                     api_key=api_key,
                                     continuity_state=continuity_state,
                                 )
+                                if await _websocket_full_replay_should_wait_for_continuity(
+                                    prepared_request.request_state,
+                                    pending_requests,
+                                    pending_lock=pending_lock,
+                                    codex_session_affinity=codex_session_affinity,
+                                ):
+                                    await self._release_websocket_reservation(
+                                        prepared_request.request_state.api_key_reservation
+                                    )
+                                    wait_started_at = time.monotonic()
+                                    waited_for_anchor = await _wait_for_websocket_continuity_gap(
+                                        pending_requests,
+                                        pending_lock=pending_lock,
+                                        timeout_seconds=runtime_settings.proxy_request_budget_seconds,
+                                    )
+                                    logger.info(
+                                        "websocket_full_replay_waited_for_continuity waited=%s elapsed_ms=%s "
+                                        "original_items=%s",
+                                        waited_for_anchor,
+                                        int((time.monotonic() - wait_started_at) * 1000),
+                                        prepared_request.request_state.input_item_count,
+                                    )
+                                    prepared_request = await self._prepare_websocket_response_create_request(
+                                        payload,
+                                        headers=headers,
+                                        codex_session_affinity=codex_session_affinity,
+                                        openai_cache_affinity=openai_cache_affinity,
+                                        sticky_threads_enabled=sticky_threads_enabled,
+                                        openai_cache_affinity_max_age_seconds=openai_cache_affinity_max_age_seconds,
+                                        api_key=api_key,
+                                        continuity_state=continuity_state,
+                                    )
                                 request_state = prepared_request.request_state
                                 request_affinity = prepared_request.affinity_policy
                                 text_data = prepared_request.text_data
@@ -8604,6 +8668,40 @@ def _record_websocket_continuity_completion(
     if request_state.input_item_count > 0:
         continuity_state.last_completed_input_count = request_state.input_item_count
         continuity_state.last_completed_input_prefix_fingerprint = request_state.input_full_fingerprint
+
+
+async def _wait_for_websocket_continuity_gap(
+    pending_requests: deque[_WebSocketRequestState],
+    *,
+    pending_lock: anyio.Lock,
+    timeout_seconds: float,
+) -> bool:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        async with pending_lock:
+            if not pending_requests:
+                return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(_WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS, remaining))
+
+
+async def _websocket_full_replay_should_wait_for_continuity(
+    request_state: _WebSocketRequestState,
+    pending_requests: deque[_WebSocketRequestState],
+    *,
+    pending_lock: anyio.Lock,
+    codex_session_affinity: bool,
+) -> bool:
+    if (
+        not codex_session_affinity
+        or request_state.previous_response_id is not None
+        or request_state.input_item_count < _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS
+    ):
+        return False
+    async with pending_lock:
+        return bool(pending_requests)
 
 
 def _http_error_status_from_payload(payload: dict[str, JsonValue] | None) -> int | None:

@@ -5173,6 +5173,77 @@ async def test_prepare_websocket_response_create_request_trims_codex_session_ful
     assert fresh_payload["input"] == [*historical_input, new_input]
 
 
+def test_websocket_continuity_state_reuses_codex_session_scope():
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+
+    first = service._websocket_continuity_state_for_request(
+        {"session_id": "codex-session-shared"},
+        api_key=None,
+        codex_session_affinity=True,
+    )
+    first.last_completed_response_id = "resp_cached"
+
+    second = service._websocket_continuity_state_for_request(
+        {"session_id": "codex-session-shared"},
+        api_key=None,
+        codex_session_affinity=True,
+    )
+    unscoped = service._websocket_continuity_state_for_request(
+        {"session_id": "codex-session-shared"},
+        api_key=None,
+        codex_session_affinity=False,
+    )
+
+    assert second is first
+    assert second.last_completed_response_id == "resp_cached"
+    assert unscoped is not first
+
+
+@pytest.mark.asyncio
+async def test_websocket_full_replay_waits_for_pending_continuity_gap():
+    pending_request = proxy_service._WebSocketRequestState(
+        request_id="ws_pending_full_replay_anchor",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+    )
+    next_request = proxy_service._WebSocketRequestState(
+        request_id="ws_next_full_replay",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        input_item_count=proxy_service._WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS,
+    )
+    pending_requests = deque([pending_request])
+    pending_lock = anyio.Lock()
+
+    assert await proxy_service._websocket_full_replay_should_wait_for_continuity(
+        next_request,
+        pending_requests,
+        pending_lock=pending_lock,
+        codex_session_affinity=True,
+    )
+
+    async def clear_pending() -> None:
+        await asyncio.sleep(0.01)
+        async with pending_lock:
+            pending_requests.clear()
+
+    clear_task = asyncio.create_task(clear_pending())
+    try:
+        assert await proxy_service._wait_for_websocket_continuity_gap(
+            pending_requests,
+            pending_lock=pending_lock,
+            timeout_seconds=1.0,
+        )
+    finally:
+        await clear_task
+
+
 @pytest.mark.asyncio
 async def test_pop_replayable_precreated_websocket_request_replays_injected_anchor_as_fresh_payload():
     anchored_payload = {"type": "response.create", "previous_response_id": "resp_anchor", "input": ["tail"]}
