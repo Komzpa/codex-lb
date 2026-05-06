@@ -246,6 +246,8 @@ _WEBSOCKET_PREVIOUS_RESPONSE_ACCOUNT_CACHE_LIMIT = 4096
 _WEBSOCKET_CONTINUITY_CACHE_LIMIT = 4096
 _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS = 20
 _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS = 0.05
+_WEBSOCKET_DUPLICATE_TOOL_CALL_BURST_SECONDS = 3.0
+_WEBSOCKET_DUPLICATE_TOOL_CALL_BURST_CACHE_LIMIT = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -7713,6 +7715,7 @@ class ProxyService:
         saw_text_delta = False
         latency_first_token_ms: int | None = None
         response_create_lease = AdmissionLease(None)
+        tool_call_dedupe = _WebSocketUpstreamControl()
 
         try:
             response_create_lease = await self._get_work_admission().acquire_response_create()
@@ -7825,6 +7828,12 @@ class ProxyService:
                 suppress_text_done_events=suppress_text_done_events,
                 saw_text_delta=saw_text_delta,
             ):
+                if _mark_duplicate_tool_call_downstream_event(
+                    first_payload,
+                    upstream_control=tool_call_dedupe,
+                    response_id=_websocket_response_id(event, first_payload) or response_id,
+                ):
+                    return
                 if latency_first_token_ms is None and event_type in _TEXT_DELTA_EVENT_TYPES:
                     latency_first_token_ms = int((time.monotonic() - request_started_at) * 1000)
                 yield first
@@ -7908,6 +7917,12 @@ class ProxyService:
                             status = "error"
                 if latency_first_token_ms is None and event_type in _TEXT_DELTA_EVENT_TYPES:
                     latency_first_token_ms = int((time.monotonic() - request_started_at) * 1000)
+                if _mark_duplicate_tool_call_downstream_event(
+                    event_payload,
+                    upstream_control=tool_call_dedupe,
+                    response_id=_websocket_response_id(event, event_payload) or response_id,
+                ):
+                    continue
                 yield line
         except ProxyResponseError as exc:
             response_create_lease.release()
@@ -8591,6 +8606,7 @@ class _WebSocketUpstreamControl:
     replay_request_state: _WebSocketRequestState | None = None
     downstream_texts: list[str] | None = None
     seen_tool_call_keys: set[tuple[str, str, str | None, str]] = field(default_factory=set)
+    recent_tool_call_burst_keys: dict[tuple[str, str | None, str], float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -8724,6 +8740,7 @@ def _mark_duplicate_tool_call_downstream_event(
     *,
     upstream_control: _WebSocketUpstreamControl,
     response_id: str | None,
+    now: float | None = None,
 ) -> bool:
     if not isinstance(payload, dict) or payload.get("type") != "response.output_item.done":
         return False
@@ -8745,14 +8762,39 @@ def _mark_duplicate_tool_call_downstream_event(
     key = (response_id or "", str(item_type), item_name, argument_value)
     if key in upstream_control.seen_tool_call_keys:
         logger.warning(
-            "Suppressed duplicate websocket tool call response_id=%s item_type=%s name=%s",
+            "Suppressed duplicate downstream tool call response_id=%s item_type=%s name=%s",
             response_id,
             item_type,
             item_name,
         )
         return True
     upstream_control.seen_tool_call_keys.add(key)
+    burst_now = time.monotonic() if now is None else now
+    burst_key = (str(item_type), item_name, argument_value)
+    recent_seen_at = upstream_control.recent_tool_call_burst_keys.get(burst_key)
+    if recent_seen_at is not None and burst_now - recent_seen_at <= _WEBSOCKET_DUPLICATE_TOOL_CALL_BURST_SECONDS:
+        logger.warning(
+            "Suppressed duplicate downstream tool call burst response_id=%s item_type=%s name=%s",
+            response_id,
+            item_type,
+            item_name,
+        )
+        return True
+    upstream_control.recent_tool_call_burst_keys[burst_key] = burst_now
+    _prune_websocket_duplicate_tool_call_burst_keys(upstream_control, burst_now)
     return False
+
+
+def _prune_websocket_duplicate_tool_call_burst_keys(
+    upstream_control: _WebSocketUpstreamControl,
+    now: float,
+) -> None:
+    expired_before = now - _WEBSOCKET_DUPLICATE_TOOL_CALL_BURST_SECONDS
+    for key, seen_at in list(upstream_control.recent_tool_call_burst_keys.items()):
+        if seen_at < expired_before:
+            upstream_control.recent_tool_call_burst_keys.pop(key, None)
+    while len(upstream_control.recent_tool_call_burst_keys) > _WEBSOCKET_DUPLICATE_TOOL_CALL_BURST_CACHE_LIMIT:
+        upstream_control.recent_tool_call_burst_keys.pop(next(iter(upstream_control.recent_tool_call_burst_keys)))
 
 
 def _websocket_event_dedupe_response_id(

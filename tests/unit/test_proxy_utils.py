@@ -4096,6 +4096,61 @@ async def test_stream_responses_non_retryable_first_failure_does_not_retry(monke
 
 
 @pytest.mark.asyncio
+async def test_stream_responses_suppresses_duplicate_http_tool_call_bursts(monkeypatch):
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    account = _make_account("acc_http_tool_dupe")
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        service._load_balancer,
+        "select_account",
+        AsyncMock(return_value=AccountSelection(account=account, error_message=None)),
+    )
+    monkeypatch.setattr(service, "_ensure_fresh", AsyncMock(return_value=account))
+    monkeypatch.setattr(service, "_settle_stream_api_key_usage", AsyncMock(return_value=True))
+
+    tool_payload = {
+        "type": "response.output_item.done",
+        "response_id": "resp_tool_first",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"","yield_time_ms":1000}',
+            "call_id": "call_first",
+        },
+    }
+    replayed_tool_payload = {
+        **tool_payload,
+        "response_id": "resp_tool_replayed",
+        "item": {
+            **tool_payload["item"],
+            "call_id": "call_replayed",
+        },
+    }
+
+    async def fake_stream(*_, **__):
+        yield 'data: {"type":"response.created","response":{"id":"resp_http_tool_dupe"}}\n\n'
+        yield f"data: {json.dumps(tool_payload)}\n\n"
+        yield f"data: {json.dumps(replayed_tool_payload)}\n\n"
+        yield 'data: {"type":"response.completed","response":{"id":"resp_http_tool_dupe"}}\n\n'
+
+    monkeypatch.setattr(proxy_service, "core_stream_responses", fake_stream)
+
+    payload = ResponsesRequest.model_validate({"model": "gpt-5.1", "instructions": "hi", "input": [], "stream": True})
+    chunks = [chunk async for chunk in service.stream_responses(payload, {"session_id": "sid-stream"})]
+    tool_chunks: list[JsonValue] = []
+    for chunk in chunks:
+        chunk_payload = parse_sse_data_json(chunk)
+        if isinstance(chunk_payload, dict) and chunk_payload.get("type") == "response.output_item.done":
+            tool_chunks.append(chunk_payload)
+
+    assert tool_chunks == [tool_payload]
+
+
+@pytest.mark.asyncio
 async def test_connect_proxy_websocket_passes_sticky_kind_to_load_balancer(monkeypatch):
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
@@ -5343,6 +5398,7 @@ def test_mark_duplicate_tool_call_downstream_event_scopes_by_response_id():
             first_payload,
             upstream_control=upstream_control,
             response_id=proxy_service._websocket_response_id(None, first_payload),
+            now=0.0,
         )
         is False
     )
@@ -5351,6 +5407,89 @@ def test_mark_duplicate_tool_call_downstream_event_scopes_by_response_id():
             second_payload,
             upstream_control=upstream_control,
             response_id=proxy_service._websocket_response_id(None, second_payload),
+            now=10.0,
+        )
+        is False
+    )
+
+
+def test_mark_duplicate_tool_call_downstream_event_suppresses_burst_across_response_ids():
+    upstream_control = proxy_service._WebSocketUpstreamControl()
+    first_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "response_id": "resp_first",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"","yield_time_ms":1000}',
+        },
+    }
+    replay_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "response_id": "resp_replay",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"","yield_time_ms":1000}',
+        },
+    }
+
+    assert (
+        proxy_service._mark_duplicate_tool_call_downstream_event(
+            first_payload,
+            upstream_control=upstream_control,
+            response_id=proxy_service._websocket_response_id(None, first_payload),
+            now=100.0,
+        )
+        is False
+    )
+    assert (
+        proxy_service._mark_duplicate_tool_call_downstream_event(
+            replay_payload,
+            upstream_control=upstream_control,
+            response_id=proxy_service._websocket_response_id(None, replay_payload),
+            now=101.0,
+        )
+        is True
+    )
+
+
+def test_mark_duplicate_tool_call_downstream_event_allows_later_repeated_poll():
+    upstream_control = proxy_service._WebSocketUpstreamControl()
+    first_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "response_id": "resp_first",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"","yield_time_ms":1000}',
+        },
+    }
+    later_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "response_id": "resp_later",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"","yield_time_ms":1000}',
+        },
+    }
+
+    assert (
+        proxy_service._mark_duplicate_tool_call_downstream_event(
+            first_payload,
+            upstream_control=upstream_control,
+            response_id=proxy_service._websocket_response_id(None, first_payload),
+            now=100.0,
+        )
+        is False
+    )
+    assert (
+        proxy_service._mark_duplicate_tool_call_downstream_event(
+            later_payload,
+            upstream_control=upstream_control,
+            response_id=proxy_service._websocket_response_id(None, later_payload),
+            now=104.5,
         )
         is False
     )
