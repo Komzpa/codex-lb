@@ -30,9 +30,9 @@ export function AccountActions({
   onRoutingPolicyChange,
 }: AccountActionsProps) {
   return (
-    <div className="space-y-3 border-t pt-4">
-      <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 p-3">
-        <div className="flex min-w-36 items-center gap-2 text-sm font-medium">
+    <div className="border-t pt-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="mr-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <Route className="h-4 w-4 text-muted-foreground" />
           Routing policy
         </div>
@@ -41,7 +41,7 @@ export function AccountActions({
           onValueChange={(value) => onRoutingPolicyChange(account.accountId, value as AccountRoutingPolicy)}
           disabled={busy}
         >
-          <SelectTrigger aria-label="Routing policy" size="sm" className="h-8 w-44 text-xs">
+          <SelectTrigger aria-label="Routing policy" size="sm" className="h-8 w-40 text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -50,9 +50,9 @@ export function AccountActions({
             <SelectItem value="preserve">Preserve</SelectItem>
           </SelectContent>
         </Select>
-      </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+        <div className="mx-1 hidden h-6 w-px bg-border sm:block" />
+
         {account.status === "paused" ? (
           <Button
             type="button"
