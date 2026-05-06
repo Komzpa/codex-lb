@@ -5356,6 +5356,22 @@ def test_mark_duplicate_tool_call_downstream_event_scopes_by_response_id():
     )
 
 
+def test_websocket_event_dedupe_response_id_falls_back_to_request_state():
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="ws_req_without_event_response_id",
+        model="gpt-5.5",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+    )
+
+    assert proxy_service._websocket_event_dedupe_response_id("resp_payload", request_state) == "resp_payload"
+    assert proxy_service._websocket_event_dedupe_response_id(None, request_state) == "ws_req_without_event_response_id"
+    request_state.response_id = "resp_assigned"
+    assert proxy_service._websocket_event_dedupe_response_id(None, request_state) == "resp_assigned"
+
+
 @pytest.mark.asyncio
 async def test_pop_replayable_precreated_websocket_request_replays_injected_anchor_as_fresh_payload():
     anchored_payload = {"type": "response.create", "previous_response_id": "resp_anchor", "input": ["tail"]}

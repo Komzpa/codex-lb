@@ -5579,13 +5579,6 @@ class ProxyService:
         )
         previous_response_id_hint = _previous_response_id_from_not_found_message(error_message)
 
-        if _mark_duplicate_tool_call_downstream_event(
-            payload,
-            upstream_control=session.upstream_control,
-            response_id=response_id,
-        ):
-            return
-
         async with session.pending_lock:
             matched_request_state = None
             created_request_state = None
@@ -5618,6 +5611,13 @@ class ProxyService:
                 if actual_service_tier is not None:
                     matched_request_state.actual_service_tier = actual_service_tier
                     matched_request_state.service_tier = actual_service_tier
+
+            if _mark_duplicate_tool_call_downstream_event(
+                payload,
+                upstream_control=session.upstream_control,
+                response_id=_websocket_event_dedupe_response_id(response_id, matched_request_state),
+            ):
+                return
 
             if _should_buffer_pre_response_created_event(matched_request_state, event_type=event_type):
                 precreated_request_state = matched_request_state
@@ -6171,14 +6171,6 @@ class ProxyService:
         )
         previous_response_id_hint = _previous_response_id_from_not_found_message(error_message)
 
-        if _mark_duplicate_tool_call_downstream_event(
-            payload,
-            upstream_control=upstream_control,
-            response_id=response_id,
-        ):
-            upstream_control.suppress_downstream_event = True
-            return text
-
         async with pending_lock:
             request_state = None
             created_request_state = None
@@ -6207,6 +6199,13 @@ class ProxyService:
                 if actual_service_tier is not None:
                     request_state.actual_service_tier = actual_service_tier
                     request_state.service_tier = actual_service_tier
+            if _mark_duplicate_tool_call_downstream_event(
+                payload,
+                upstream_control=upstream_control,
+                response_id=_websocket_event_dedupe_response_id(response_id, request_state),
+            ):
+                upstream_control.suppress_downstream_event = True
+                return text
             if _should_buffer_pre_response_created_event(request_state, event_type=event_type):
                 precreated_request_state = request_state
             if event_type in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES and pending_requests:
@@ -8754,6 +8753,17 @@ def _mark_duplicate_tool_call_downstream_event(
         return True
     upstream_control.seen_tool_call_keys.add(key)
     return False
+
+
+def _websocket_event_dedupe_response_id(
+    response_id: str | None,
+    request_state: _WebSocketRequestState | None,
+) -> str | None:
+    if response_id is not None:
+        return response_id
+    if request_state is None:
+        return None
+    return request_state.response_id or request_state.request_id
 
 
 def _http_error_status_from_payload(payload: dict[str, JsonValue] | None) -> int | None:
