@@ -37,7 +37,7 @@ describe("AccountListItem", () => {
 
     render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
 
-    expect(screen.getByLabelText("Burn first")).toBeInTheDocument();
+    expect(screen.getByText("Burn first")).toBeInTheDocument();
   });
 
   it("marks preserved accounts in the list", () => {
@@ -45,6 +45,14 @@ describe("AccountListItem", () => {
 
     render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
 
-    expect(screen.getByLabelText("Preserve")).toBeInTheDocument();
+    expect(screen.getByText("Preserve")).toBeInTheDocument();
+  });
+
+  it("marks normal accounts in the list", () => {
+    const account = createAccountSummary({ routingPolicy: "normal" });
+
+    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+
+    expect(screen.getByText("Normal")).toBeInTheDocument();
   });
 });

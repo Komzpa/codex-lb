@@ -1,10 +1,11 @@
 import { Flame, Shield } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { isEmailLabel } from "@/components/blur-email";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { StatusBadge } from "@/components/status-badge";
-import type { AccountSummary } from "@/features/accounts/schemas";
+import type { AccountRoutingPolicy, AccountSummary } from "@/features/accounts/schemas";
 import { normalizeStatus, quotaBarColor, quotaBarTrack } from "@/utils/account-status";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import { formatSlug } from "@/utils/formatters";
@@ -32,6 +33,30 @@ function MiniQuotaBar({ percent }: { percent: number | null }) {
   );
 }
 
+function RoutingPolicyBadge({ policy }: { policy: AccountRoutingPolicy | undefined }) {
+  if (policy === "burn_first") {
+    return (
+      <Badge variant="outline" className="shrink-0 gap-1 border-amber-300 bg-amber-50 px-1.5 text-[11px] text-amber-700">
+        <Flame className="h-3 w-3" aria-hidden="true" />
+        Burn first
+      </Badge>
+    );
+  }
+  if (policy === "preserve") {
+    return (
+      <Badge variant="outline" className="shrink-0 gap-1 border-sky-300 bg-sky-50 px-1.5 text-[11px] text-sky-700">
+        <Shield className="h-3 w-3" aria-hidden="true" />
+        Preserve
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="shrink-0 px-1.5 text-[11px] text-muted-foreground">
+      Normal
+    </Badge>
+  );
+}
+
 export function AccountListItem({ account, selected, showAccountId = false, onSelect }: AccountListItemProps) {
   const blurred = usePrivacyStore((s) => s.blurred);
   const status = normalizeStatus(account.status);
@@ -43,11 +68,6 @@ export function AccountListItem({ account, selected, showAccountId = false, onSe
   const baseSubtitle = emailSubtitle ?? formatSlug(account.planType);
   const idSuffix = showAccountId ? ` | ID ${formatCompactAccountId(account.accountId)}` : "";
   const secondary = account.usage?.secondaryRemainingPercent ?? null;
-  const policyIcon = account.routingPolicy === "burn_first"
-    ? <Flame className="h-3.5 w-3.5 text-amber-600" aria-label="Burn first" />
-    : account.routingPolicy === "preserve"
-      ? <Shield className="h-3.5 w-3.5 text-sky-600" aria-label="Preserve" />
-      : null;
 
   return (
     <button
@@ -69,7 +89,7 @@ export function AccountListItem({ account, selected, showAccountId = false, onSe
             {emailSubtitle ? <><span className={blurred ? "privacy-blur" : undefined}>{emailSubtitle}</span>{idSuffix}</> : <>{baseSubtitle}{idSuffix}</>}
           </p>
         </div>
-        {policyIcon}
+        <RoutingPolicyBadge policy={account.routingPolicy} />
         <StatusBadge status={status} />
       </div>
       <div className="mt-1.5">
