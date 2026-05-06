@@ -5248,6 +5248,7 @@ def test_mark_duplicate_tool_call_downstream_event_suppresses_same_arguments():
     upstream_control = proxy_service._WebSocketUpstreamControl()
     first_payload: dict[str, JsonValue] = {
         "type": "response.output_item.done",
+        "response_id": "resp_dupe",
         "item": {
             "type": "function_call",
             "name": "write_stdin",
@@ -5257,6 +5258,7 @@ def test_mark_duplicate_tool_call_downstream_event_suppresses_same_arguments():
     }
     second_payload: dict[str, JsonValue] = {
         "type": "response.output_item.done",
+        "response_id": "resp_dupe",
         "item": {
             "type": "function_call",
             "name": "write_stdin",
@@ -5266,6 +5268,7 @@ def test_mark_duplicate_tool_call_downstream_event_suppresses_same_arguments():
     }
     different_payload: dict[str, JsonValue] = {
         "type": "response.output_item.done",
+        "response_id": "resp_dupe",
         "item": {
             "type": "function_call",
             "name": "write_stdin",
@@ -5295,6 +5298,59 @@ def test_mark_duplicate_tool_call_downstream_event_suppresses_same_arguments():
             different_payload,
             upstream_control=upstream_control,
             response_id="resp_dupe",
+        )
+        is False
+    )
+
+
+def test_websocket_response_id_reads_output_item_done_response_id():
+    payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "response_id": " resp_output_item ",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": "{}",
+        },
+    }
+
+    assert proxy_service._websocket_response_id(None, payload) == "resp_output_item"
+
+
+def test_mark_duplicate_tool_call_downstream_event_scopes_by_response_id():
+    upstream_control = proxy_service._WebSocketUpstreamControl()
+    first_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "response_id": "resp_first",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"","yield_time_ms":1000}',
+        },
+    }
+    second_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "response_id": "resp_second",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"","yield_time_ms":1000}',
+        },
+    }
+
+    assert (
+        proxy_service._mark_duplicate_tool_call_downstream_event(
+            first_payload,
+            upstream_control=upstream_control,
+            response_id=proxy_service._websocket_response_id(None, first_payload),
+        )
+        is False
+    )
+    assert (
+        proxy_service._mark_duplicate_tool_call_downstream_event(
+            second_payload,
+            upstream_control=upstream_control,
+            response_id=proxy_service._websocket_response_id(None, second_payload),
         )
         is False
     )
