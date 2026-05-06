@@ -3045,6 +3045,11 @@ class ProxyService:
         request_id: str | None = None,
         request_log_id: str | None = None,
     ) -> tuple[_WebSocketRequestState, str]:
+        if payload.previous_response_id is not None and isinstance(payload.input, list):
+            input_items = cast(list[JsonValue], payload.input)
+            trimmed_input_items = _trim_websocket_previous_response_input_items(input_items)
+            if len(trimmed_input_items) != len(input_items):
+                payload = payload.model_copy(update={"input": trimmed_input_items})
         upstream_payload = dict(payload.to_payload())
         upstream_payload.pop("stream", None)
         upstream_payload.pop("background", None)
