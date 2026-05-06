@@ -1,7 +1,14 @@
 import { Download, Pause, Play, RefreshCw, Trash2, Zap } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { AccountSummary } from "@/features/accounts/schemas";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { AccountRoutingPolicy, AccountSummary } from "@/features/accounts/schemas";
 
 export type AccountActionsProps = {
   account: AccountSummary;
@@ -13,6 +20,7 @@ export type AccountActionsProps = {
   onExport: (accountId: string) => void;
   onLimitWarmupChange: (accountId: string, enabled: boolean) => void;
   onExportOpenCodeAuth: (accountId: string) => void;
+  onRoutingPolicyChange: (accountId: string, routingPolicy: AccountRoutingPolicy) => void;
 };
 
 export function AccountActions({
@@ -25,9 +33,25 @@ export function AccountActions({
   onExport,
   onLimitWarmupChange,
   onExportOpenCodeAuth,
+  onRoutingPolicyChange,
 }: AccountActionsProps) {
   return (
-    <div className="flex flex-wrap gap-2 border-t pt-4">
+    <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+      <Select
+        value={account.routingPolicy ?? "normal"}
+        onValueChange={(value) => onRoutingPolicyChange(account.accountId, value as AccountRoutingPolicy)}
+        disabled={busy}
+      >
+        <SelectTrigger size="sm" className="h-8 w-36 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="burn_first">Burn first</SelectItem>
+          <SelectItem value="normal">Normal</SelectItem>
+          <SelectItem value="preserve">Preserve</SelectItem>
+        </SelectContent>
+      </Select>
+
       {account.status === "paused" ? (
         <Button
           type="button"

@@ -36,6 +36,7 @@ RELATIVE_AVAILABILITY_MIN_WEIGHT_FRACTION = 0.1
 DEFAULT_RELATIVE_AVAILABILITY_POWER = 2.0
 DEFAULT_RELATIVE_AVAILABILITY_TOP_K = 5
 RoutingStrategy = Literal["usage_weighted", "round_robin", "capacity_weighted", "relative_availability"]
+UsageWeightedOrder = Literal["secondary_first", "primary_first"]
 UNKNOWN_PLAN_FALLBACK = "free"
 CAPACITY_PLAN_ALIASES = {
     "education": "edu",
@@ -57,6 +58,9 @@ DRAIN_ERROR_WINDOW_SECONDS = 60.0
 DRAIN_ERROR_COUNT_THRESHOLD = 2
 PROBE_QUIET_SECONDS = 60.0
 PROBE_SUCCESS_STREAK_REQUIRED = 3
+ROUTING_POLICY_NORMAL = "normal"
+ROUTING_POLICY_BURN_FIRST = "burn_first"
+ROUTING_POLICY_PRESERVE = "preserve"
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +86,7 @@ class AccountState:
     plan_type: str | None = None
     capacity_credits: float | None = None
     health_tier: int = 0
+    routing_policy: str = ROUTING_POLICY_NORMAL
 
 
 @dataclass
@@ -102,6 +107,16 @@ def _primary_usage_sort_key(state: AccountState) -> tuple[float, float, float, s
     secondary_used = state.secondary_used_percent if state.secondary_used_percent is not None else primary_used
     last_selected = state.last_selected_at or 0.0
     return primary_used, secondary_used, last_selected, state.account_id
+
+
+def _routing_policy(state: AccountState) -> str:
+    if state.routing_policy in {
+        ROUTING_POLICY_BURN_FIRST,
+        ROUTING_POLICY_NORMAL,
+        ROUTING_POLICY_PRESERVE,
+    }:
+        return state.routing_policy
+    return ROUTING_POLICY_NORMAL
 
 
 def _reset_bucket_days(state: AccountState, current: float) -> int:
@@ -134,7 +149,7 @@ def select_account(
     deterministic_probe: bool = False,
     relative_availability_power: float = DEFAULT_RELATIVE_AVAILABILITY_POWER,
     relative_availability_top_k: int = DEFAULT_RELATIVE_AVAILABILITY_TOP_K,
-    primary_first_usage_weighted: bool = False,
+    usage_weighted_order: UsageWeightedOrder = "secondary_first",
 ) -> SelectionResult:
     """Select an eligible account by applying availability checks and routing strategy.
 
@@ -161,8 +176,9 @@ def select_account(
             availability weights.
         relative_availability_top_k: Maximum number of highest-weight
             relative-availability candidates retained before weighted draw.
-        primary_first_usage_weighted: Whether usage-weighted routing should
-            rank by primary-window pressure before secondary-window pressure.
+        usage_weighted_order: Whether usage-weighted routing ranks secondary
+        window pressure first, or primary-window pressure first for
+        budget-safe fallback selection.
 
     Returns:
         A ``SelectionResult`` containing the selected ``AccountState`` and no
@@ -271,10 +287,15 @@ def select_account(
         # Pick the least recently selected account, then stabilize by account_id.
         return state.last_selected_at or 0.0, state.account_id
 
-    healthy = [s for s in available if s.health_tier == HEALTH_TIER_HEALTHY]
-    probing = [s for s in available if s.health_tier == HEALTH_TIER_PROBING]
-    draining = [s for s in available if s.health_tier == HEALTH_TIER_DRAINING]
-    effective_pool = healthy or probing or draining or available
+    burn_first = [s for s in available if _routing_policy(s) == ROUTING_POLICY_BURN_FIRST]
+    normal = [s for s in available if _routing_policy(s) == ROUTING_POLICY_NORMAL]
+    preserve = [s for s in available if _routing_policy(s) == ROUTING_POLICY_PRESERVE]
+    policy_pool = burn_first or normal or preserve or available
+
+    healthy = [s for s in policy_pool if s.health_tier == HEALTH_TIER_HEALTHY]
+    probing = [s for s in policy_pool if s.health_tier == HEALTH_TIER_PROBING]
+    draining = [s for s in policy_pool if s.health_tier == HEALTH_TIER_DRAINING]
+    effective_pool = healthy or probing or draining or policy_pool
     effective_prefer_earlier_reset = prefer_earlier_reset and routing_strategy != "relative_availability"
 
     if routing_strategy == "round_robin":
@@ -298,8 +319,11 @@ def select_account(
             deterministic_probe=deterministic_probe,
         )
     else:
-        if primary_first_usage_weighted:
-            selected = min(effective_pool, key=_primary_usage_sort_key)
+        if usage_weighted_order == "primary_first":
+            selected = min(
+                effective_pool,
+                key=_primary_reset_first_sort_key if prefer_earlier_reset else _primary_usage_sort_key,
+            )
         else:
             selected = min(
                 effective_pool,

@@ -1,3 +1,5 @@
+import { Flame, Shield } from "lucide-react";
+
 import { cn } from "@/lib/utils";
 import { isEmailLabel } from "@/components/blur-email";
 import { usePrivacyStore } from "@/hooks/use-privacy";
@@ -38,6 +40,11 @@ export function AccountListItem({ account, selected, showAccountId = false, onSe
   const warmupMeta = account.limitWarmup
     ? `${formatSlug(account.limitWarmup.status)} | ${formatSlug(account.limitWarmup.model)} | ${formatDateTimeInline(account.limitWarmup.completedAt ?? account.limitWarmup.attemptedAt)}`
     : "No attempts";
+  const policyIcon = account.routingPolicy === "burn_first"
+    ? <Flame className="h-3.5 w-3.5 text-amber-600" aria-label="Burn first" />
+    : account.routingPolicy === "preserve"
+      ? <Shield className="h-3.5 w-3.5 text-sky-600" aria-label="Preserve" />
+      : null;
 
   return (
     <button
@@ -59,6 +66,7 @@ export function AccountListItem({ account, selected, showAccountId = false, onSe
             {emailSubtitle ? <><span className={blurred ? "privacy-blur" : undefined}>{emailSubtitle}</span>{idSuffix}</> : <>{baseSubtitle}{idSuffix}</>}
           </p>
         </div>
+        {policyIcon}
         <StatusBadge status={status} />
       </div>
       <div className={cn("mt-2 grid gap-2", visibleQuotaRows > 1 ? "grid-cols-2" : "grid-cols-1")}>

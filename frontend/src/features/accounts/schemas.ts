@@ -8,7 +8,6 @@ export const UsageTrendPointSchema = z.object({
 export const AccountUsageTrendSchema = z.object({
   primary: z.array(UsageTrendPointSchema),
   secondary: z.array(UsageTrendPointSchema),
-  secondaryScheduled: z.array(UsageTrendPointSchema).default([]),
 });
 
 export const AccountUsageSchema = z.object({
@@ -67,13 +66,12 @@ export const AccountSummarySchema = z.object({
   displayName: z.string(),
   planType: z.string(),
   status: z.string(),
+  routingPolicy: z.enum(["normal", "burn_first", "preserve"]).optional(),
   usage: AccountUsageSchema.nullable().optional(),
   resetAtPrimary: z.string().datetime({ offset: true }).nullable().optional(),
   resetAtSecondary: z.string().datetime({ offset: true }).nullable().optional(),
   windowMinutesPrimary: z.number().nullable().optional(),
   windowMinutesSecondary: z.number().nullable().optional(),
-  capacityCreditsSecondary: z.number().nullable().optional(),
-  remainingCreditsSecondary: z.number().nullable().optional(),
   requestUsage: AccountRequestUsageSchema.nullable().optional(),
   auth: AccountAuthSchema.nullable().optional(),
   additionalQuotas: z.array(AccountAdditionalQuotaSchema).default([]),
@@ -85,7 +83,6 @@ export const AccountTrendsResponseSchema = z.object({
   accountId: z.string(),
   primary: z.array(UsageTrendPointSchema),
   secondary: z.array(UsageTrendPointSchema),
-  secondaryScheduled: z.array(UsageTrendPointSchema).default([]),
 });
 
 export const AccountsResponseSchema = z.object({
@@ -143,6 +140,15 @@ export const AccountLimitWarmupUpdateRequestSchema = z.object({
 export const AccountLimitWarmupUpdateResponseSchema = z.object({
   status: z.string(),
   enabled: z.boolean(),
+});
+
+export const AccountRoutingPolicyUpdateSchema = z.object({
+  routingPolicy: z.enum(["normal", "burn_first", "preserve"]),
+});
+
+export const AccountRoutingPolicyResponseSchema = z.object({
+  status: z.string(),
+  routingPolicy: z.enum(["normal", "burn_first", "preserve"]),
 });
 
 export const AccountExportResponseSchema = z.object({
@@ -223,6 +229,7 @@ export type AccountSummary = z.infer<typeof AccountSummarySchema>;
 export type AccountAliasResponse = z.infer<typeof AccountAliasResponseSchema>;
 export type AccountLimitWarmupStatus = z.infer<typeof AccountLimitWarmupStatusSchema>;
 export type AccountExportResponse = z.infer<typeof AccountExportResponseSchema>;
+export type AccountRoutingPolicy = NonNullable<AccountSummary["routingPolicy"]>;
 export type AccountAdditionalWindow = z.infer<typeof AccountAdditionalWindowSchema>;
 export type AccountAdditionalQuota = z.infer<typeof AccountAdditionalQuotaSchema>;
 export type AccountTrendsResponse = z.infer<typeof AccountTrendsResponseSchema>;

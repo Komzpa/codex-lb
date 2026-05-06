@@ -75,6 +75,7 @@ class AccountSummary(DashboardModel):
     display_name: str
     plan_type: str
     status: str
+    routing_policy: str = "normal"
     usage: AccountUsage | None = None
     reset_at_primary: datetime | None = None
     reset_at_secondary: datetime | None = None
@@ -143,6 +144,15 @@ class AccountLimitWarmupUpdateRequest(DashboardModel):
 class AccountLimitWarmupUpdateResponse(DashboardModel):
     status: str
     enabled: bool
+
+
+class AccountRoutingPolicyUpdate(DashboardModel):
+    routing_policy: str
+
+
+class AccountRoutingPolicyResponse(DashboardModel):
+    status: str
+    routing_policy: str
 
 
 class AccountDeleteResponse(DashboardModel):

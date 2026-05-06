@@ -43,6 +43,7 @@ from app.modules.usage.updater import AdditionalUsageRepositoryPort, UsageUpdate
 
 _SPARKLINE_DAYS = 7
 _DETAIL_BUCKET_SECONDS = 3600  # 1h → 168 points
+_ROUTING_POLICIES = frozenset({"normal", "burn_first", "preserve"})
 
 
 class InvalidAuthJsonError(Exception):
@@ -233,6 +234,16 @@ class AccountsService:
 
     async def set_limit_warmup_enabled(self, account_id: str, enabled: bool) -> bool:
         return await self._repo.update_limit_warmup_enabled(account_id, enabled)
+
+    async def update_routing_policy(self, account_id: str, routing_policy: str) -> str | None:
+        normalized = routing_policy.strip().lower()
+        if normalized not in _ROUTING_POLICIES:
+            raise ValueError("Invalid account routing policy")
+        result = await self._repo.update_routing_policy(account_id, normalized)
+        if result:
+            get_account_selection_cache().invalidate()
+            return normalized
+        return None
 
     async def delete_account(self, account_id: str, *, delete_history: bool = False) -> bool:
         result = await self._repo.delete(account_id, delete_history=delete_history)
