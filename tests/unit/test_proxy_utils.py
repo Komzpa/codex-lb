@@ -5124,11 +5124,11 @@ async def test_prepare_websocket_response_create_request_trims_codex_session_ful
         log_proxy_service_tier_trace = False
         openai_prompt_cache_key_derivation_enabled = True
 
-    historical_input = [
+    historical_input: list[JsonValue] = [
         {"role": "user", "content": [{"type": "input_text", "text": "old question"}]},
         {"type": "function_call_output", "call_id": "call_old", "output": "old output"},
     ]
-    new_input = {"role": "user", "content": [{"type": "input_text", "text": "next question"}]}
+    new_input: JsonValue = {"role": "user", "content": [{"type": "input_text", "text": "next question"}]}
     continuity_state = proxy_service._WebSocketContinuityState(
         last_completed_input_count=len(historical_input),
         last_completed_response_id="resp_completed_anchor",
@@ -5140,11 +5140,14 @@ async def test_prepare_websocket_response_create_request_trims_codex_session_ful
     monkeypatch.setattr(service, "_refresh_websocket_api_key_policy", AsyncMock(return_value=api_key))
 
     prepared = await service._prepare_websocket_response_create_request(
-        {
-            "type": "response.create",
-            "model": "gpt-5.1",
-            "input": [*historical_input, new_input],
-        },
+        cast(
+            dict[str, JsonValue],
+            {
+                "type": "response.create",
+                "model": "gpt-5.1",
+                "input": [*historical_input, new_input],
+            },
+        ),
         headers={"session_id": "turn_ws_trim"},
         codex_session_affinity=True,
         openai_cache_affinity=True,
@@ -5168,6 +5171,41 @@ async def test_prepare_websocket_response_create_request_trims_codex_session_ful
     fresh_payload = json.loads(prepared.request_state.fresh_upstream_request_text)
     assert "previous_response_id" not in fresh_payload
     assert fresh_payload["input"] == [*historical_input, new_input]
+
+
+@pytest.mark.asyncio
+async def test_pop_replayable_precreated_websocket_request_replays_injected_anchor_as_fresh_payload():
+    anchored_payload = {"type": "response.create", "previous_response_id": "resp_anchor", "input": ["tail"]}
+    fresh_payload = {"type": "response.create", "input": ["old", "tail"]}
+    pending_request = proxy_service._WebSocketRequestState(
+        request_id="ws_req_injected_anchor_replay",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        awaiting_response_created=True,
+        previous_response_id="resp_anchor",
+        request_text=json.dumps(anchored_payload, separators=(",", ":")),
+        fresh_upstream_request_text=json.dumps(fresh_payload, separators=(",", ":")),
+        fresh_upstream_request_is_retry_safe=True,
+        proxy_injected_previous_response_id=True,
+    )
+    pending_requests = deque([pending_request])
+
+    replay_request = await proxy_service._pop_replayable_precreated_websocket_request_state(
+        pending_requests,
+        pending_lock=anyio.Lock(),
+    )
+
+    assert replay_request is pending_request
+    assert pending_requests == deque()
+    assert pending_request.replay_count == 1
+    assert pending_request.previous_response_id is None
+    assert pending_request.proxy_injected_previous_response_id is False
+    assert pending_request.fresh_upstream_request_is_retry_safe is False
+    assert pending_request.request_text is not None
+    assert json.loads(pending_request.request_text) == fresh_payload
 
 
 def test_slim_response_create_payload_rewrites_top_level_historical_input_image():

@@ -5902,10 +5902,10 @@ class ProxyService:
         api_key: ApiKeyData | None,
         upstream_control: _WebSocketUpstreamControl,
         response_create_gate: asyncio.Semaphore,
-        continuity_state: "_WebSocketContinuityState",
         proxy_request_budget_seconds: float,
         stream_idle_timeout_seconds: float,
         downstream_activity: _DownstreamWebSocketActivity,
+        continuity_state: "_WebSocketContinuityState | None" = None,
     ) -> None:
         try:
             while True:
@@ -8896,6 +8896,15 @@ async def _pop_replayable_precreated_websocket_request_state(
         if request_state.replay_count >= 1:
             return None
         pending_requests.popleft()
+    if (
+        request_state.proxy_injected_previous_response_id
+        and request_state.fresh_upstream_request_is_retry_safe
+        and request_state.fresh_upstream_request_text
+    ):
+        request_state.request_text = request_state.fresh_upstream_request_text
+        request_state.previous_response_id = None
+        request_state.proxy_injected_previous_response_id = False
+        request_state.fresh_upstream_request_is_retry_safe = False
     request_state.replay_count += 1
     request_state.awaiting_response_created = True
     request_state.response_id = None
