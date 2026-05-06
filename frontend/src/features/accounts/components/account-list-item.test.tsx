@@ -31,4 +31,20 @@ describe("AccountListItem", () => {
 
     expect(screen.getByTestId("mini-quota-fill")).toHaveStyle({ width: "73%" });
   });
+
+  it("marks burn-first accounts in the list", () => {
+    const account = createAccountSummary({ routingPolicy: "burn_first" });
+
+    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+
+    expect(screen.getByLabelText("Burn first")).toBeInTheDocument();
+  });
+
+  it("marks preserved accounts in the list", () => {
+    const account = createAccountSummary({ routingPolicy: "preserve" });
+
+    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+
+    expect(screen.getByLabelText("Preserve")).toBeInTheDocument();
+  });
 });

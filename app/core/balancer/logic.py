@@ -43,6 +43,9 @@ DRAIN_ERROR_WINDOW_SECONDS = 60.0
 DRAIN_ERROR_COUNT_THRESHOLD = 2
 PROBE_QUIET_SECONDS = 60.0
 PROBE_SUCCESS_STREAK_REQUIRED = 3
+ROUTING_POLICY_NORMAL = "normal"
+ROUTING_POLICY_BURN_FIRST = "burn_first"
+ROUTING_POLICY_PRESERVE = "preserve"
 
 
 @dataclass
@@ -62,6 +65,7 @@ class AccountState:
     plan_type: str | None = None
     capacity_credits: float | None = None
     health_tier: int = 0
+    routing_policy: str = ROUTING_POLICY_NORMAL
 
 
 @dataclass
@@ -75,6 +79,16 @@ def _usage_sort_key(state: AccountState) -> tuple[float, float, float, str]:
     secondary_used = state.secondary_used_percent if state.secondary_used_percent is not None else primary_used
     last_selected = state.last_selected_at or 0.0
     return secondary_used, primary_used, last_selected, state.account_id
+
+
+def _routing_policy(state: AccountState) -> str:
+    if state.routing_policy in {
+        ROUTING_POLICY_BURN_FIRST,
+        ROUTING_POLICY_NORMAL,
+        ROUTING_POLICY_PRESERVE,
+    }:
+        return state.routing_policy
+    return ROUTING_POLICY_NORMAL
 
 
 def _reset_bucket_days(state: AccountState, current: float) -> int:
@@ -228,10 +242,15 @@ def select_account(
         # Pick the least recently selected account, then stabilize by account_id.
         return state.last_selected_at or 0.0, state.account_id
 
-    healthy = [s for s in available if s.health_tier == HEALTH_TIER_HEALTHY]
-    probing = [s for s in available if s.health_tier == HEALTH_TIER_PROBING]
-    draining = [s for s in available if s.health_tier == HEALTH_TIER_DRAINING]
-    effective_pool = healthy or probing or draining or available
+    burn_first = [s for s in available if _routing_policy(s) == ROUTING_POLICY_BURN_FIRST]
+    normal = [s for s in available if _routing_policy(s) == ROUTING_POLICY_NORMAL]
+    preserve = [s for s in available if _routing_policy(s) == ROUTING_POLICY_PRESERVE]
+    policy_pool = burn_first or normal or preserve or available
+
+    healthy = [s for s in policy_pool if s.health_tier == HEALTH_TIER_HEALTHY]
+    probing = [s for s in policy_pool if s.health_tier == HEALTH_TIER_PROBING]
+    draining = [s for s in policy_pool if s.health_tier == HEALTH_TIER_DRAINING]
+    effective_pool = healthy or probing or draining or policy_pool
 
     if routing_strategy == "round_robin":
         selected = min(effective_pool, key=_round_robin_sort_key)
