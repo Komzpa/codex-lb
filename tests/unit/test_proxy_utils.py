@@ -5244,6 +5244,62 @@ async def test_websocket_full_replay_waits_for_pending_continuity_gap():
         await clear_task
 
 
+def test_mark_duplicate_tool_call_downstream_event_suppresses_same_arguments():
+    upstream_control = proxy_service._WebSocketUpstreamControl()
+    first_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"","yield_time_ms":1000}',
+            "call_id": "call_a",
+        },
+    }
+    second_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"","yield_time_ms":1000}',
+            "call_id": "call_b",
+        },
+    }
+    different_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": '{"session_id":1,"chars":"x","yield_time_ms":1000}',
+            "call_id": "call_c",
+        },
+    }
+
+    assert (
+        proxy_service._mark_duplicate_tool_call_downstream_event(
+            first_payload,
+            upstream_control=upstream_control,
+            response_id="resp_dupe",
+        )
+        is False
+    )
+    assert (
+        proxy_service._mark_duplicate_tool_call_downstream_event(
+            second_payload,
+            upstream_control=upstream_control,
+            response_id="resp_dupe",
+        )
+        is True
+    )
+    assert (
+        proxy_service._mark_duplicate_tool_call_downstream_event(
+            different_payload,
+            upstream_control=upstream_control,
+            response_id="resp_dupe",
+        )
+        is False
+    )
+
+
 @pytest.mark.asyncio
 async def test_pop_replayable_precreated_websocket_request_replays_injected_anchor_as_fresh_payload():
     anchored_payload = {"type": "response.create", "previous_response_id": "resp_anchor", "input": ["tail"]}

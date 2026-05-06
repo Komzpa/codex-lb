@@ -5579,6 +5579,13 @@ class ProxyService:
         )
         previous_response_id_hint = _previous_response_id_from_not_found_message(error_message)
 
+        if _mark_duplicate_tool_call_downstream_event(
+            payload,
+            upstream_control=session.upstream_control,
+            response_id=response_id,
+        ):
+            return
+
         async with session.pending_lock:
             matched_request_state = None
             created_request_state = None
@@ -6163,6 +6170,14 @@ class ProxyService:
             message=error_message,
         )
         previous_response_id_hint = _previous_response_id_from_not_found_message(error_message)
+
+        if _mark_duplicate_tool_call_downstream_event(
+            payload,
+            upstream_control=upstream_control,
+            response_id=response_id,
+        ):
+            upstream_control.suppress_downstream_event = True
+            return text
 
         async with pending_lock:
             request_state = None
@@ -8576,6 +8591,7 @@ class _WebSocketUpstreamControl:
     suppress_downstream_event: bool = False
     replay_request_state: _WebSocketRequestState | None = None
     downstream_texts: list[str] | None = None
+    seen_tool_call_keys: set[tuple[str, str, str | None, str]] = field(default_factory=set)
 
 
 @dataclass(slots=True)
@@ -8702,6 +8718,42 @@ async def _websocket_full_replay_should_wait_for_continuity(
         return False
     async with pending_lock:
         return bool(pending_requests)
+
+
+def _mark_duplicate_tool_call_downstream_event(
+    payload: dict[str, JsonValue] | None,
+    *,
+    upstream_control: _WebSocketUpstreamControl,
+    response_id: str | None,
+) -> bool:
+    if not isinstance(payload, dict) or payload.get("type") != "response.output_item.done":
+        return False
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return False
+    item_type = item.get("type")
+    if item_type == "function_call":
+        argument_value = item.get("arguments")
+    elif item_type == "custom_tool_call":
+        argument_value = item.get("input")
+    else:
+        return False
+    if not isinstance(argument_value, str):
+        return False
+    item_name = item.get("name")
+    if item_name is not None and not isinstance(item_name, str):
+        item_name = None
+    key = (response_id or "", str(item_type), item_name, argument_value)
+    if key in upstream_control.seen_tool_call_keys:
+        logger.warning(
+            "Suppressed duplicate websocket tool call response_id=%s item_type=%s name=%s",
+            response_id,
+            item_type,
+            item_name,
+        )
+        return True
+    upstream_control.seen_tool_call_keys.add(key)
+    return False
 
 
 def _http_error_status_from_payload(payload: dict[str, JsonValue] | None) -> int | None:
