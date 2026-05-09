@@ -27,7 +27,14 @@ import { ExpiryPicker } from "@/features/api-keys/components/expiry-picker";
 import { LimitRulesEditor } from "@/features/api-keys/components/limit-rules-editor";
 import { AccountMultiSelect } from "@/features/api-keys/components/account-multi-select";
 import { ModelMultiSelect } from "@/features/api-keys/components/model-multi-select";
-import type { ApiKey, ApiKeyUpdateRequest, LimitRuleCreate, LimitType, ServiceTierType } from "@/features/api-keys/schemas";
+import type {
+  ApiKey,
+  ApiKeyUpdateRequest,
+  LimitRuleCreate,
+  LimitType,
+  ServiceTierType,
+  TrafficClassType,
+} from "@/features/api-keys/schemas";
 import { parseDate } from "@/utils/formatters";
 
 import { hasLimitRuleChanges, normalizeLimitRules } from "./limit-rules-utils";
@@ -94,6 +101,7 @@ function ApiKeyEditForm({ apiKey, busy, onSubmit, onClose }: ApiKeyEditFormProps
   const [enforcedServiceTier, setEnforcedServiceTier] = useState<string>(
     apiKey.enforcedServiceTier || "none",
   );
+  const [trafficClass, setTrafficClass] = useState<TrafficClassType>(apiKey.trafficClass);
 
   const handleSubmit = async (values: FormValues) => {
     const normalizedLimits = normalizeLimitRules(limitRules);
@@ -107,6 +115,7 @@ function ApiKeyEditForm({ apiKey, busy, onSubmit, onClose }: ApiKeyEditFormProps
       enforcedModel: enforcedModel.trim() ? enforcedModel.trim() : null,
       enforcedReasoningEffort: enforcedReasoningEffort === "none" ? null : enforcedReasoningEffort as "minimal" | "low" | "medium" | "high" | "xhigh",
       enforcedServiceTier: enforcedServiceTier === "none" ? null : enforcedServiceTier as ServiceTierType,
+      trafficClass,
       expiresAt: expiresAt?.toISOString() ?? null,
       isActive: values.isActive,
     };
@@ -206,6 +215,19 @@ function ApiKeyEditForm({ apiKey, busy, onSubmit, onClose }: ApiKeyEditFormProps
                   <SelectItem value="default">Default</SelectItem>
                   <SelectItem value="priority">Priority</SelectItem>
                   <SelectItem value="flex">Flex</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Traffic class</div>
+              <Select value={trafficClass} onValueChange={(value) => setTrafficClass(value as TrafficClassType)}>
+                <SelectTrigger aria-label="Traffic class">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="foreground">Foreground</SelectItem>
+                  <SelectItem value="opportunistic">Opportunistic</SelectItem>
                 </SelectContent>
               </Select>
             </div>
