@@ -165,8 +165,6 @@ def _limit_warmup_to_status(entry: AccountLimitWarmup | None) -> AccountLimitWar
         error_message=entry.error_message,
     )
 
-
-<<<<<<< HEAD
 def _effective_status_from_usage(
     account: Account,
     primary_usage: UsageHistory | None,
@@ -195,12 +193,12 @@ def _effective_status_from_usage(
             return status
         return account.status
     return status
-=======
+
+
 def _normalize_account_routing_policy(value: str | None) -> str:
     if value in _ACCOUNT_ROUTING_POLICIES:
         return value
     return "normal"
->>>>>>> 8f5b1996 (fix(accounts): normalize legacy routing policy payloads)
 
 
 def _first_not_none(primary_usage: UsageHistory | None, secondary_usage: UsageHistory | None, field: str):
