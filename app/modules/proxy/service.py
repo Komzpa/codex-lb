@@ -229,6 +229,14 @@ _TRANSIENT_RETRY_CODES = frozenset(
 _MAX_TRANSIENT_SAME_ACCOUNT_RETRIES = 3
 _COMPACT_MAX_ACCOUNT_ATTEMPTS = 2
 _STREAM_MAX_ACCOUNT_ATTEMPTS = 3
+
+
+def _is_transient_retryable_stream_failure(code: str | None, message: str | None) -> bool:
+    if code not in _TRANSIENT_RETRY_CODES:
+        return False
+    if code == "upstream_request_timeout" and message and "proxy request budget exhausted" in message.lower():
+        return False
+    return True
 _WEBSOCKET_MAX_ACCOUNT_ATTEMPTS = 3
 _WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES = frozenset(
     {
@@ -7584,7 +7592,10 @@ class ProxyService:
                     settlement.account_health_error = _should_penalize_stream_error(code)
                     if allow_retry and _should_retry_stream_error(code):
                         raise _RetryableStreamError(code, settlement.error)
-                    if allow_transient_retry and code in _TRANSIENT_RETRY_CODES:
+                    if allow_transient_retry and _is_transient_retryable_stream_failure(
+                        code,
+                        error.message if error else None,
+                    ):
                         raise _TransientStreamError(code, settlement.error)
                 terminal_stream_error = _TerminalStreamError(
                     error_code or code,
