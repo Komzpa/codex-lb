@@ -13,6 +13,10 @@ const LIMIT_WARMUP_DEFAULTS = {
   limitWarmupCooldownSeconds: 3600,
   limitWarmupMinAvailablePercent: 100,
 };
+const ADDITIONAL_QUOTA_DEFAULTS = {
+  additionalQuotaRoutingPolicies: {},
+  additionalQuotaPolicies: [],
+};
 
 const BASE_SETTINGS: DashboardSettings = {
   stickyThreadsEnabled: false,
@@ -28,6 +32,7 @@ const BASE_SETTINGS: DashboardSettings = {
   totpConfigured: false,
   apiKeyAuthEnabled: true,
   ...LIMIT_WARMUP_DEFAULTS,
+  ...ADDITIONAL_QUOTA_DEFAULTS,
 };
 
 describe("RoutingSettings", () => {

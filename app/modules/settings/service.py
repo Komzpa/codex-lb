@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from app.modules.settings.repository import SettingsRepository
+from app.modules.usage.additional_quota_keys import (
+    get_additional_quota_routing_policy,
+    list_additional_quota_definitions,
+    normalize_additional_quota_routing_policy_overrides,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AdditionalQuotaPolicyData:
+    quota_key: str
+    display_label: str
+    routing_policy: str
+    model_ids: list[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +42,8 @@ class DashboardSettingsData:
     limit_warmup_prompt: str
     limit_warmup_cooldown_seconds: int
     limit_warmup_min_available_percent: float
+    additional_quota_routing_policies: dict[str, str]
+    additional_quota_policies: list[AdditionalQuotaPolicyData]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +68,41 @@ class DashboardSettingsUpdateData:
     limit_warmup_prompt: str
     limit_warmup_cooldown_seconds: int
     limit_warmup_min_available_percent: float
+    additional_quota_routing_policies: dict[str, str]
+
+
+def parse_additional_quota_routing_policies(raw: str | None) -> dict[str, str]:
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return normalize_additional_quota_routing_policy_overrides({str(key): str(value) for key, value in payload.items()})
+
+
+def serialize_additional_quota_routing_policies(policies: dict[str, str]) -> str:
+    return json.dumps(
+        normalize_additional_quota_routing_policy_overrides(policies),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def build_additional_quota_policy_data(overrides: dict[str, str]) -> list[AdditionalQuotaPolicyData]:
+    policies = []
+    for definition in list_additional_quota_definitions():
+        policies.append(
+            AdditionalQuotaPolicyData(
+                quota_key=definition.quota_key,
+                display_label=definition.display_label,
+                routing_policy=get_additional_quota_routing_policy(definition.quota_key, overrides=overrides),
+                model_ids=sorted(definition.model_ids),
+            )
+        )
+    return policies
 
 
 class SettingsService:
@@ -60,6 +111,7 @@ class SettingsService:
 
     async def get_settings(self) -> DashboardSettingsData:
         row = await self._repository.get_or_create()
+        routing_policies = parse_additional_quota_routing_policies(row.additional_quota_routing_policies_json)
         return DashboardSettingsData(
             sticky_threads_enabled=row.sticky_threads_enabled,
             upstream_stream_transport=row.upstream_stream_transport,
@@ -84,6 +136,8 @@ class SettingsService:
             limit_warmup_prompt=row.limit_warmup_prompt,
             limit_warmup_cooldown_seconds=row.limit_warmup_cooldown_seconds,
             limit_warmup_min_available_percent=row.limit_warmup_min_available_percent,
+            additional_quota_routing_policies=routing_policies,
+            additional_quota_policies=build_additional_quota_policy_data(routing_policies),
         )
 
     async def update_settings(self, payload: DashboardSettingsUpdateData) -> DashboardSettingsData:
@@ -113,7 +167,11 @@ class SettingsService:
             limit_warmup_prompt=payload.limit_warmup_prompt,
             limit_warmup_cooldown_seconds=payload.limit_warmup_cooldown_seconds,
             limit_warmup_min_available_percent=payload.limit_warmup_min_available_percent,
+            additional_quota_routing_policies_json=serialize_additional_quota_routing_policies(
+                payload.additional_quota_routing_policies
+            ),
         )
+        routing_policies = parse_additional_quota_routing_policies(row.additional_quota_routing_policies_json)
         return DashboardSettingsData(
             sticky_threads_enabled=row.sticky_threads_enabled,
             upstream_stream_transport=row.upstream_stream_transport,
@@ -138,4 +196,6 @@ class SettingsService:
             limit_warmup_prompt=row.limit_warmup_prompt,
             limit_warmup_cooldown_seconds=row.limit_warmup_cooldown_seconds,
             limit_warmup_min_available_percent=row.limit_warmup_min_available_percent,
+            additional_quota_routing_policies=routing_policies,
+            additional_quota_policies=build_additional_quota_policy_data(routing_policies),
         )

@@ -150,6 +150,7 @@ def select_account(
     relative_availability_power: float = DEFAULT_RELATIVE_AVAILABILITY_POWER,
     relative_availability_top_k: int = DEFAULT_RELATIVE_AVAILABILITY_TOP_K,
     usage_weighted_order: UsageWeightedOrder = "secondary_first",
+    ignore_standard_quota: bool = False,
 ) -> SelectionResult:
     """Select an eligible account by applying availability checks and routing strategy.
 
@@ -179,6 +180,9 @@ def select_account(
         usage_weighted_order: Whether usage-weighted routing ranks secondary
         window pressure first, or primary-window pressure first for
         budget-safe fallback selection.
+        ignore_standard_quota: Whether to ignore the account's standard
+            primary/secondary quota status. This is only for models that are
+            gated by a separate additional quota pool.
 
     Returns:
         A ``SelectionResult`` containing the selected ``AccountState`` and no
@@ -195,7 +199,7 @@ def select_account(
             continue
         if state.status == AccountStatus.PAUSED:
             continue
-        if state.status == AccountStatus.RATE_LIMITED:
+        if state.status == AccountStatus.RATE_LIMITED and not ignore_standard_quota:
             if state.reset_at and current >= state.reset_at:
                 state.status = AccountStatus.ACTIVE
                 state.used_percent = 0.0
@@ -203,7 +207,7 @@ def select_account(
                 state.reset_at = None
             else:
                 continue
-        if state.status == AccountStatus.QUOTA_EXCEEDED:
+        if state.status == AccountStatus.QUOTA_EXCEEDED and not ignore_standard_quota:
             if state.reset_at and current >= state.reset_at:
                 state.status = AccountStatus.ACTIVE
                 state.used_percent = 0.0
@@ -215,7 +219,7 @@ def select_account(
             state.cooldown_until = None
             state.last_error_at = None
             state.error_count = 0
-        if state.cooldown_until and current < state.cooldown_until:
+        if state.cooldown_until and current < state.cooldown_until and not ignore_standard_quota:
             continue
         if state.error_count >= 3:
             backoff = min(300, 30 * (2 ** (state.error_count - 3)))

@@ -31,6 +31,11 @@ async def test_settings_api_get_and_update(async_client):
     assert payload["limitWarmupPrompt"] == "Say OK."
     assert payload["limitWarmupCooldownSeconds"] == 3600
     assert payload["limitWarmupMinAvailablePercent"] == 100.0
+    assert payload["additionalQuotaRoutingPolicies"] == {}
+    assert any(
+        policy["quotaKey"] == "codex_spark" and policy["routingPolicy"] == "burn_first"
+        for policy in payload["additionalQuotaPolicies"]
+    )
 
     response = await async_client.put(
         "/api/settings",
@@ -55,6 +60,7 @@ async def test_settings_api_get_and_update(async_client):
             "limitWarmupPrompt": "Say OK.",
             "limitWarmupCooldownSeconds": 7200,
             "limitWarmupMinAvailablePercent": 99.0,
+            "additionalQuotaRoutingPolicies": {"codex_spark": "inherit"},
         },
     )
     assert response.status_code == 200
@@ -80,6 +86,11 @@ async def test_settings_api_get_and_update(async_client):
     assert updated["limitWarmupPrompt"] == "Say OK."
     assert updated["limitWarmupCooldownSeconds"] == 7200
     assert updated["limitWarmupMinAvailablePercent"] == 99.0
+    assert updated["additionalQuotaRoutingPolicies"] == {"codex_spark": "inherit"}
+    assert any(
+        policy["quotaKey"] == "codex_spark" and policy["routingPolicy"] == "inherit"
+        for policy in updated["additionalQuotaPolicies"]
+    )
 
     response = await async_client.get("/api/settings")
     assert response.status_code == 200
@@ -105,3 +116,4 @@ async def test_settings_api_get_and_update(async_client):
     assert payload["limitWarmupPrompt"] == "Say OK."
     assert payload["limitWarmupCooldownSeconds"] == 7200
     assert payload["limitWarmupMinAvailablePercent"] == 99.0
+    assert payload["additionalQuotaRoutingPolicies"] == {"codex_spark": "inherit"}
