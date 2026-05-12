@@ -2310,7 +2310,7 @@ def _stream_startup_error_response(
             request,
             status_code,
             envelope.model_dump(mode="json", exclude_none=True),
-            headers=headers,
+            headers={**headers, **error.headers},
         )
     status_code, envelope = _mask_previous_response_not_found_error(error)
     return _logged_error_json_response(
