@@ -2885,6 +2885,10 @@ class ProxyService:
                     await upstream.close()
                 except Exception:
                     logger.debug("Failed to close upstream websocket", exc_info=True)
+            if replay_request_state is not None:
+                await self._release_websocket_reservation(replay_request_state.api_key_reservation)
+                replay_request_state.api_key_reservation = None
+                _release_websocket_response_create_gate(replay_request_state, response_create_gate)
             await self._fail_pending_websocket_requests(
                 account_id_value=account.id if account else None,
                 pending_requests=pending_requests,
@@ -8895,11 +8899,7 @@ def _websocket_continuity_anchor_for_payload(
 
 def _trim_websocket_previous_response_input_items(input_items: list[JsonValue]) -> list[JsonValue]:
     first_output_index = next(
-        (
-            index
-            for index, item in enumerate(input_items)
-            if _websocket_input_item_type(item) == "function_call_output"
-        ),
+        (index for index, item in enumerate(input_items) if _websocket_input_item_type(item) == "function_call_output"),
         None,
     )
     if first_output_index is None or first_output_index == 0:
