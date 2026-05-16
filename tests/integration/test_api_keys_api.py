@@ -16,9 +16,10 @@ from app.core.clients.proxy import ProxyResponseError
 from app.core.openai.model_registry import ReasoningLevel, UpstreamModel, get_model_registry
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.utils.time import utcnow
-from app.db.models import LimitWindow, RequestLog
+from app.db.models import ApiKeyUsageReservation, LimitWindow, RequestLog
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
+from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService, LimitRuleInput
 
 pytestmark = pytest.mark.integration
 
@@ -2110,6 +2111,52 @@ async def test_reset_expired_limits_background_fallback_processes_batches(async_
         assert by_window[LimitWindow.WEEKLY].reset_at == now + timedelta(days=7)
         assert by_window[LimitWindow.MONTHLY].current_value == 0
         assert by_window[LimitWindow.MONTHLY].reset_at == now + timedelta(days=30)
+
+
+@pytest.mark.asyncio
+async def test_release_stale_usage_reservations_restores_reserved_usage(db_setup):
+    now = utcnow()
+    async with SessionLocal() as session:
+        repo = ApiKeysRepository(session)
+        service = ApiKeysService(repo)
+        created = await service.create_key(
+            ApiKeyCreateData(
+                name="stale-reservation-cleanup",
+                allowed_models=None,
+                expires_at=None,
+                limits=[
+                    LimitRuleInput(limit_type="total_tokens", limit_window="weekly", max_value=50_000),
+                ],
+            )
+        )
+        stale_reservation = await service.enforce_limits_for_request(created.id, request_model="gpt-5.1")
+        fresh_reservation = await service.enforce_limits_for_request(created.id, request_model="gpt-5.1")
+        await session.execute(
+            update(ApiKeyUsageReservation)
+            .where(ApiKeyUsageReservation.id == stale_reservation.reservation_id)
+            .values(created_at=now - timedelta(hours=7))
+        )
+        await session.commit()
+
+    async with SessionLocal() as session:
+        repo = ApiKeysRepository(session)
+        released_count = await repo.release_stale_usage_reservations(cutoff=now - timedelta(hours=6))
+
+    assert released_count == 1
+
+    async with SessionLocal() as session:
+        repo = ApiKeysRepository(session)
+        limits = await repo.get_limits_by_key(created.id)
+        assert len(limits) == 1
+        assert limits[0].current_value == 8_192
+
+        stale = await repo.get_usage_reservation(stale_reservation.reservation_id)
+        fresh = await repo.get_usage_reservation(fresh_reservation.reservation_id)
+        assert stale is not None
+        assert stale.status == "released"
+        assert stale.items[0].actual_delta == 0
+        assert fresh is not None
+        assert fresh.status == "reserved"
 
 
 @pytest.mark.asyncio

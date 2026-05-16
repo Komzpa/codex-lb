@@ -79,6 +79,7 @@ class _Unset(Enum):
 
 _UNSET = _Unset.UNSET
 _EXPIRED_LIMIT_RESET_BATCH_SIZE = 500
+_STALE_USAGE_RESERVATION_RELEASE_BATCH_SIZE = 500
 
 
 class ApiKeysRepository:
@@ -195,6 +196,7 @@ class ApiKeysRepository:
         enforced_model: str | None | _Unset = _UNSET,
         enforced_reasoning_effort: str | None | _Unset = _UNSET,
         enforced_service_tier: str | None | _Unset = _UNSET,
+        traffic_class: str | _Unset = _UNSET,
         account_assignment_scope_enabled: bool | _Unset = _UNSET,
         expires_at: datetime | None | _Unset = _UNSET,
         is_active: bool | _Unset = _UNSET,
@@ -220,6 +222,9 @@ class ApiKeysRepository:
         if enforced_service_tier is not _UNSET:
             assert enforced_service_tier is None or isinstance(enforced_service_tier, str)
             row.enforced_service_tier = enforced_service_tier
+        if traffic_class is not _UNSET:
+            assert isinstance(traffic_class, str)
+            row.traffic_class = traffic_class
         if account_assignment_scope_enabled is not _UNSET:
             assert isinstance(account_assignment_scope_enabled, bool)
             row.account_assignment_scope_enabled = account_assignment_scope_enabled
@@ -247,9 +252,10 @@ class ApiKeysRepository:
         await self._session.commit()
         return True
 
-    async def update_last_used(self, key_id: str) -> None:
+    async def update_last_used(self, key_id: str, *, commit: bool = True) -> None:
         await self._session.execute(update(ApiKey).where(ApiKey.id == key_id).values(last_used_at=utcnow()))
-        await self._session.commit()
+        if commit:
+            await self._session.commit()
 
     async def commit(self) -> None:
         await self._session.commit()
@@ -377,6 +383,61 @@ class ApiKeysRepository:
                 )
                 if update_result.scalar_one_or_none() is not None:
                     reset_count += 1
+            await self._session.commit()
+
+    async def release_stale_usage_reservations(
+        self,
+        *,
+        cutoff: datetime,
+        batch_size: int = _STALE_USAGE_RESERVATION_RELEASE_BATCH_SIZE,
+    ) -> int:
+        released_count = 0
+        while True:
+            result = await self._session.execute(
+                select(ApiKeyUsageReservation)
+                .options(selectinload(ApiKeyUsageReservation.items))
+                .where(ApiKeyUsageReservation.status == "reserved")
+                .where(ApiKeyUsageReservation.created_at < cutoff)
+                .order_by(ApiKeyUsageReservation.created_at.asc(), ApiKeyUsageReservation.id.asc())
+                .limit(batch_size)
+            )
+            reservations = list(result.scalars().unique().all())
+            if not reservations:
+                return released_count
+
+            for reservation in reservations:
+                claim_result = await self._session.execute(
+                    update(ApiKeyUsageReservation)
+                    .where(ApiKeyUsageReservation.id == reservation.id)
+                    .where(ApiKeyUsageReservation.status == "reserved")
+                    .values(
+                        status="released",
+                        input_tokens=None,
+                        output_tokens=None,
+                        cached_input_tokens=None,
+                        cost_microdollars=None,
+                    )
+                    .returning(ApiKeyUsageReservation.id)
+                )
+                if claim_result.scalar_one_or_none() is None:
+                    continue
+                for item in reservation.items:
+                    await self.adjust_reserved_usage(
+                        item.limit_id,
+                        delta=-item.reserved_delta,
+                        expected_reset_at=item.expected_reset_at,
+                    )
+                    await self.upsert_reservation_item_actual(
+                        reservation.id,
+                        item=UsageReservationItemData(
+                            limit_id=item.limit_id,
+                            limit_type=LimitType(item.limit_type),
+                            reserved_delta=item.reserved_delta,
+                            expected_reset_at=item.expected_reset_at,
+                        ),
+                        actual_delta=0,
+                    )
+                released_count += 1
             await self._session.commit()
 
     async def try_reserve_usage(

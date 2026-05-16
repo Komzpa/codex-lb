@@ -21,6 +21,11 @@ from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
 pytestmark = pytest.mark.unit
 
 
+async def _iter_blocks(*blocks: str):
+    for block in blocks:
+        yield block
+
+
 @pytest.mark.asyncio
 async def test_validate_proxy_websocket_request_returns_firewall_denial(monkeypatch):
     denial = JSONResponse(
@@ -388,6 +393,63 @@ def test_public_previous_response_not_found_error_is_masked_to_stream_incomplete
     assert masked.error.type == "server_error"
     assert masked.error.message == "Upstream websocket closed before response.completed"
     assert "resp_missing" not in masked.model_dump_json()
+
+
+def test_public_bridge_previous_response_not_found_error_is_masked_to_stream_incomplete():
+    envelope = proxy_api_module.OpenAIErrorEnvelopeModel(
+        error=proxy_api_module.OpenAIError(
+            message="Upstream websocket closed before response.completed",
+            type="invalid_request_error",
+            code="bridge_previous_response_not_found",
+        )
+    )
+
+    status_code, masked = proxy_api_module._mask_previous_response_not_found_error(
+        envelope,
+        default_status=502,
+        mask_bridge_errors=True,
+    )
+
+    assert status_code == 502
+    assert masked.error.code == "stream_incomplete"
+    assert masked.error.type == "server_error"
+
+
+@pytest.mark.asyncio
+async def test_normalize_public_stream_masks_bridge_previous_response_error_for_user_facing_routes():
+    chunks = [
+        chunk
+        async for chunk in proxy_api_module._normalize_public_responses_stream(
+            _iter_blocks(
+                'data: {"type":"error","error":{'
+                '"message":"Upstream websocket closed before response.completed",'
+                '"type":"server_error","code":"bridge_previous_response_not_found"}}\n\n'
+            ),
+            mask_bridge_errors=True,
+        )
+    ]
+
+    assert len(chunks) == 1
+    assert "stream_incomplete" in chunks[0]
+    assert "bridge_previous_response_not_found" not in chunks[0]
+
+
+@pytest.mark.asyncio
+async def test_normalize_public_stream_preserves_bridge_previous_response_error_for_internal_forward():
+    chunks = [
+        chunk
+        async for chunk in proxy_api_module._normalize_public_responses_stream(
+            _iter_blocks(
+                'data: {"type":"error","error":{'
+                '"message":"Upstream websocket closed before response.completed",'
+                '"type":"server_error","code":"bridge_previous_response_not_found"}}\n\n'
+            ),
+            mask_bridge_errors=False,
+        )
+    ]
+
+    assert len(chunks) == 1
+    assert "bridge_previous_response_not_found" in chunks[0]
 
 
 def test_public_previous_response_invalid_request_param_is_masked_to_stream_incomplete():

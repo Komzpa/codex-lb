@@ -8265,6 +8265,7 @@ async def test_process_upstream_websocket_text_masks_precreated_previous_respons
     )
     pending_requests = deque([pending_request])
     upstream_control = proxy_service._WebSocketUpstreamControl()
+    continuity_state = proxy_service._WebSocketContinuityState()
     upstream_payload = {
         "type": "error",
         "status": 400,
@@ -8286,6 +8287,7 @@ async def test_process_upstream_websocket_text_masks_precreated_previous_respons
         api_key=None,
         upstream_control=upstream_control,
         response_create_gate=asyncio.Semaphore(1),
+        continuity_state=continuity_state,
     )
 
     assert '"code":"stream_incomplete"' in downstream_text
@@ -8295,6 +8297,7 @@ async def test_process_upstream_websocket_text_masks_precreated_previous_respons
     assert upstream_control.reconnect_requested is True
     assert upstream_control.suppress_downstream_event is False
     assert upstream_control.replay_request_state is None
+    assert continuity_state.lost_previous_response_ids == {"resp_anchor"}
     assert pending_request.replay_count == 0
     assert list(pending_requests) == []
 

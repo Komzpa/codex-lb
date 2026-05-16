@@ -23,6 +23,7 @@ from sqlalchemy import (
     true,
 )
 from sqlalchemy import Enum as SqlEnum
+from sqlalchemy.dialects.sqlite import REAL
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -88,6 +89,12 @@ class Account(Base):
     deactivation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     blocked_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    security_work_authorized: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=false(),
+        nullable=False,
+    )
 
     api_key_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(
         "ApiKeyAccountAssignment",
@@ -158,6 +165,7 @@ class RequestLog(Base):
     status: Mapped[str] = mapped_column(String, nullable=False)
     error_code: Mapped[str | None] = mapped_column(String, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    slim_summary_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     account: Mapped[Account | None] = relationship(
         "Account",
         back_populates="request_logs",
@@ -281,6 +289,24 @@ class DashboardSettings(Base):
         server_default=text("95.0"),
         nullable=False,
     )
+    sticky_reallocation_primary_budget_threshold_pct: Mapped[float] = mapped_column(
+        Float().with_variant(REAL(), "sqlite"),
+        default=95.0,
+        server_default=text("95.0"),
+        nullable=False,
+    )
+    sticky_reallocation_secondary_budget_threshold_pct: Mapped[float] = mapped_column(
+        Float().with_variant(REAL(), "sqlite"),
+        default=100.0,
+        server_default=text("100.0"),
+        nullable=False,
+    )
+    additional_quota_routing_policies_json: Mapped[str] = mapped_column(
+        Text,
+        default="{}",
+        server_default=text("'{}'"),
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -308,6 +334,12 @@ class ApiKey(Base):
     enforced_model: Mapped[str | None] = mapped_column(String, nullable=True)
     enforced_reasoning_effort: Mapped[str | None] = mapped_column(String, nullable=True)
     enforced_service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
+    traffic_class: Mapped[str] = mapped_column(
+        String,
+        default="foreground",
+        server_default=text("'foreground'"),
+        nullable=False,
+    )
     account_assignment_scope_enabled: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -647,6 +679,12 @@ Index(
     "idx_logs_status_error_time",
     RequestLog.status,
     RequestLog.error_code,
+    RequestLog.requested_at.desc(),
+    RequestLog.id.desc(),
+)
+Index(
+    "idx_logs_api_key_time",
+    RequestLog.api_key_id,
     RequestLog.requested_at.desc(),
     RequestLog.id.desc(),
 )

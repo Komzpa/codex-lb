@@ -10,6 +10,7 @@ That raw error makes clients treat the previous response as permanently invalid 
 
 - Rewrite single-request anonymous HTTP bridge `previous_response_not_found` events the same way as the existing multi-request and response-id cases.
 - Keep the response HTTP status retryable (`502`) and hide `previous_response_not_found` from downstream clients.
+- Preserve the bridge-local recovery signal on internal owner-forward routes so replicas can still rebind/retry continuity misses.
 - For direct WebSocket full-resend follow-ups, capture a safe fresh-turn replay body and retry without `previous_response_id` when upstream rejects the just-completed anchor.
 - Add regression coverage for a single pending HTTP bridge follow-up with no upstream response id.
 - Add regression coverage for a direct WebSocket full-resend follow-up whose anchor disappears before `response.created`.

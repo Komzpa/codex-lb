@@ -5,6 +5,7 @@ import contextlib
 import importlib
 import logging
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Protocol, cast
 
 from app.core.utils.time import utcnow
@@ -14,6 +15,7 @@ from app.modules.api_keys.repository import ApiKeysRepository
 logger = logging.getLogger(__name__)
 
 _API_KEY_LIMIT_RESET_INTERVAL_SECONDS = 3600
+_STALE_USAGE_RESERVATION_AGE = timedelta(hours=6)
 
 
 class _LeaderElectionLike(Protocol):
@@ -65,9 +67,18 @@ class ApiKeyLimitResetScheduler:
             try:
                 async with get_background_session() as session:
                     repo = ApiKeysRepository(session)
-                    reset_count = await repo.reset_expired_limits(now=utcnow())
+                    now = utcnow()
+                    reset_count = await repo.reset_expired_limits(now=now)
                     if reset_count > 0:
                         logger.info("Reset expired API key limits reset_count=%s", reset_count)
+                    stale_reservation_count = await repo.release_stale_usage_reservations(
+                        cutoff=now - _STALE_USAGE_RESERVATION_AGE,
+                    )
+                    if stale_reservation_count > 0:
+                        logger.info(
+                            "Released stale API key usage reservations stale_reservation_count=%s",
+                            stale_reservation_count,
+                        )
             except Exception:
                 logger.exception("API key limit reset loop failed")
 

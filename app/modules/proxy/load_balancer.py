@@ -16,9 +16,12 @@ from app.core.balancer import (
     QUOTA_EXCEEDED_COOLDOWN_SECONDS,
     ROUTING_POLICY_BURN_FIRST,
     ROUTING_POLICY_PRESERVE,
+    TRAFFIC_CLASS_FOREGROUND,
+    TRAFFIC_CLASS_OPPORTUNISTIC,
     AccountState,
     RoutingStrategy,
     SelectionResult,
+    TrafficClass,
     evaluate_health_tier,
     handle_permanent_failure,
     handle_quota_exceeded,
@@ -60,6 +63,7 @@ _RECOVERABLE_STATUSES = frozenset(
 NO_PLAN_SUPPORT_FOR_MODEL = "no_plan_support_for_model"
 ADDITIONAL_QUOTA_DATA_UNAVAILABLE = "additional_quota_data_unavailable"
 NO_ADDITIONAL_QUOTA_ELIGIBLE_ACCOUNTS = "no_additional_quota_eligible_accounts"
+OPPORTUNISTIC_BURN_WINDOW_CLOSED = "opportunistic_burn_window_closed"
 
 
 @dataclass
@@ -68,6 +72,7 @@ class RuntimeState:
     cooldown_until: float | None = None
     last_error_at: float | None = None
     last_selected_at: float | None = None
+    last_foreground_selected_at: float | None = None
     error_count: int = 0
     version: int = 0
     blocked_at: float | None = None
@@ -119,6 +124,7 @@ class LoadBalancer:
         account_ids: Collection[str] | None = None,
         exclude_account_ids: Collection[str] | None = None,
         budget_threshold_pct: float = 95.0,
+        traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
     ) -> AccountSelection:
         excluded_ids = set(exclude_account_ids or ())
         scoped_account_ids = None if account_ids is None else set(account_ids)
@@ -177,6 +183,7 @@ class LoadBalancer:
                     prefer_earlier_reset=prefer_earlier_reset_accounts,
                     routing_strategy=routing_strategy,
                     budget_threshold_pct=budget_threshold_pct,
+                    traffic_class=traffic_class,
                 )
 
                 selected_account_map = account_map
@@ -189,6 +196,7 @@ class LoadBalancer:
                         account,
                         state,
                         selected=result.account is not None and state.account_id == result.account.account_id,
+                        traffic_class=traffic_class,
                     )
                     selected_states.append(state)
 
@@ -313,6 +321,7 @@ class LoadBalancer:
                         prefer_earlier_reset_accounts=prefer_earlier_reset_accounts,
                         routing_strategy=routing_strategy,
                         sticky_repo=repos.sticky_sessions,
+                        traffic_class=traffic_class,
                     )
                     selected_account_map = account_map
                     selected_states = []
@@ -324,6 +333,7 @@ class LoadBalancer:
                             account,
                             state,
                             selected=result.account is not None and state.account_id == result.account.account_id,
+                            traffic_class=traffic_class,
                         )
                         selected_states.append(state)
                     if result.account is not None:
@@ -379,6 +389,12 @@ class LoadBalancer:
             )
 
         if selected_snapshot is None:
+            if traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC and error_message:
+                return AccountSelection(
+                    account=None,
+                    error_message=error_message,
+                    error_code=OPPORTUNISTIC_BURN_WINDOW_CLOSED,
+                )
             if error_message == "No available accounts":
                 set_degraded("all upstream accounts are unavailable")
                 error_message = _format_degraded_error_message(error_message)
@@ -507,6 +523,54 @@ class LoadBalancer:
             )
             return selection_inputs
 
+    async def check_opportunistic_admission(
+        self,
+        *,
+        model: str | None,
+        account_ids: Collection[str] | None,
+        prefer_earlier_reset_accounts: bool,
+        routing_strategy: RoutingStrategy,
+        budget_threshold_pct: float,
+    ) -> AccountSelection:
+        selection_inputs = await self._load_selection_inputs(
+            model=model,
+            account_ids=account_ids,
+        )
+        if selection_inputs.error_code is not None and not selection_inputs.accounts:
+            return AccountSelection(
+                account=None,
+                error_message=selection_inputs.error_message,
+                error_code=selection_inputs.error_code,
+            )
+        states, account_map = _build_states(
+            accounts=selection_inputs.accounts,
+            latest_primary=selection_inputs.latest_primary,
+            latest_secondary=selection_inputs.latest_secondary,
+            runtime=self._runtime,
+        )
+        result = _select_account_preferring_budget_safe(
+            states,
+            prefer_earlier_reset=prefer_earlier_reset_accounts,
+            routing_strategy=routing_strategy,
+            budget_threshold_pct=budget_threshold_pct,
+            deterministic_probe=True,
+            traffic_class=TRAFFIC_CLASS_OPPORTUNISTIC,
+        )
+        if result.account is None:
+            return AccountSelection(
+                account=None,
+                error_message=result.error_message,
+                error_code=OPPORTUNISTIC_BURN_WINDOW_CLOSED,
+            )
+        account = account_map.get(result.account.account_id)
+        if account is None:
+            return AccountSelection(
+                account=None,
+                error_message=result.error_message or "opportunistic burn window closed: no account available",
+                error_code=OPPORTUNISTIC_BURN_WINDOW_CLOSED,
+            )
+        return AccountSelection(account=_clone_account(account), error_message=None, error_code=None)
+
     async def _filter_accounts_for_additional_limit(
         self,
         accounts: list[Account],
@@ -623,6 +687,7 @@ class LoadBalancer:
         *,
         selected: bool = False,
         expected_version: int | None = None,
+        traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
     ) -> bool:
         lock = await self._get_account_lock(account.id)
         async with lock:
@@ -631,6 +696,7 @@ class LoadBalancer:
                 state,
                 selected=selected,
                 expected_version=expected_version,
+                traffic_class=traffic_class,
             )
 
     async def _select_with_stickiness(
@@ -646,6 +712,7 @@ class LoadBalancer:
         prefer_earlier_reset_accounts: bool,
         routing_strategy: RoutingStrategy,
         sticky_repo: StickySessionsRepository | None,
+        traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
     ) -> SelectionResult:
         if not sticky_key or not sticky_repo:
             return _select_account_preferring_budget_safe(
@@ -653,6 +720,7 @@ class LoadBalancer:
                 prefer_earlier_reset=prefer_earlier_reset_accounts,
                 routing_strategy=routing_strategy,
                 budget_threshold_pct=budget_threshold_pct,
+                traffic_class=traffic_class,
             )
         if sticky_kind is None:
             raise ValueError("sticky_kind is required when sticky_key is provided")
@@ -701,6 +769,7 @@ class LoadBalancer:
                         prefer_earlier_reset=prefer_earlier_reset_accounts,
                         routing_strategy=routing_strategy,
                         allow_backoff_fallback=False,
+                        traffic_class=traffic_class,
                     )
                     if pinned_result.account is not None:
                         if sticky_max_age_seconds is not None:
@@ -719,6 +788,7 @@ class LoadBalancer:
                             routing_strategy=routing_strategy,
                             deterministic_probe=True,
                             budget_threshold_pct=budget_threshold_pct,
+                            traffic_class=traffic_class,
                         )
                         pool_also_exhausted = pool_best.account is not None and (
                             pool_best.account.account_id == pinned.account_id
@@ -730,6 +800,7 @@ class LoadBalancer:
                                 prefer_earlier_reset=prefer_earlier_reset_accounts,
                                 routing_strategy=routing_strategy,
                                 allow_backoff_fallback=False,
+                                traffic_class=traffic_class,
                             )
                             if pinned_result.account is not None:
                                 if sticky_max_age_seconds is not None:
@@ -754,6 +825,7 @@ class LoadBalancer:
                         prefer_earlier_reset=prefer_earlier_reset_accounts,
                         routing_strategy=routing_strategy,
                         allow_backoff_fallback=False,
+                        traffic_class=traffic_class,
                     )
                     if grace_result.account is not None:
                         if sticky_max_age_seconds is not None:
@@ -782,6 +854,7 @@ class LoadBalancer:
             prefer_earlier_reset=prefer_earlier_reset_accounts,
             routing_strategy=routing_strategy,
             budget_threshold_pct=budget_threshold_pct,
+            traffic_class=traffic_class,
         )
         if persist_fallback and chosen.account is not None and chosen.account.account_id in account_map:
             await sticky_repo.upsert(sticky_key, chosen.account.account_id, kind=sticky_kind)
@@ -863,6 +936,7 @@ class LoadBalancer:
             secondary_reset_at=None,
             last_error_at=runtime.last_error_at,
             last_selected_at=runtime.last_selected_at,
+            last_foreground_selected_at=runtime.last_foreground_selected_at,
             error_count=runtime.error_count,
             deactivation_reason=account.deactivation_reason,
             plan_type=account.plan_type,
@@ -877,11 +951,14 @@ class LoadBalancer:
         *,
         selected: bool = False,
         expected_version: int | None = None,
+        traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
     ) -> bool:
         runtime = self._runtime.setdefault(account.id, RuntimeState())
         if expected_version is not None and runtime.version != expected_version:
             if selected:
                 runtime.last_selected_at = time.time()
+                if traffic_class == TRAFFIC_CLASS_FOREGROUND:
+                    runtime.last_foreground_selected_at = runtime.last_selected_at
                 runtime.version += 1
             return False
 
@@ -907,6 +984,8 @@ class LoadBalancer:
             dirty = True
         if selected:
             runtime.last_selected_at = time.time()
+            if traffic_class == TRAFFIC_CLASS_FOREGROUND:
+                runtime.last_foreground_selected_at = runtime.last_selected_at
             dirty = True
         if dirty:
             runtime.version += 1
@@ -1149,6 +1228,7 @@ def _state_from_account(
         secondary_reset_at=secondary_reset,
         last_error_at=runtime.last_error_at,
         last_selected_at=runtime.last_selected_at,
+        last_foreground_selected_at=runtime.last_foreground_selected_at,
         error_count=runtime.error_count,
         deactivation_reason=account.deactivation_reason,
         plan_type=account.plan_type,
@@ -1326,17 +1406,28 @@ def _select_account_preferring_budget_safe(
     budget_threshold_pct: float,
     allow_backoff_fallback: bool = True,
     deterministic_probe: bool = False,
+    traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
 ) -> SelectionResult:
     state_list = list(states)
     burn_first_states = [state for state in state_list if state.routing_policy == ROUTING_POLICY_BURN_FIRST]
     if burn_first_states:
-        return select_account(
+        burn_first_result = select_account(
             burn_first_states,
             prefer_earlier_reset=prefer_earlier_reset,
             routing_strategy=routing_strategy,
             allow_backoff_fallback=allow_backoff_fallback,
             deterministic_probe=deterministic_probe,
+            traffic_class=traffic_class,
         )
+        if burn_first_result.account is not None:
+            return burn_first_result
+
+        non_burn_first_states = [
+            state for state in state_list if state.routing_policy != ROUTING_POLICY_BURN_FIRST
+        ]
+        if not non_burn_first_states:
+            return burn_first_result
+        state_list = non_burn_first_states
 
     preferred_states = [
         state
@@ -1351,6 +1442,7 @@ def _select_account_preferring_budget_safe(
             routing_strategy=routing_strategy,
             allow_backoff_fallback=allow_backoff_fallback,
             deterministic_probe=deterministic_probe,
+            traffic_class=traffic_class,
         )
         if preferred.account is not None:
             return preferred
@@ -1360,6 +1452,7 @@ def _select_account_preferring_budget_safe(
         routing_strategy=routing_strategy,
         allow_backoff_fallback=allow_backoff_fallback,
         deterministic_probe=deterministic_probe,
+        traffic_class=traffic_class,
     )
 
 

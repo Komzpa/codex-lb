@@ -31,7 +31,14 @@ from app.core.auth.refresh import (
     pop_token_refresh_timeout_override,
     push_token_refresh_timeout_override,
 )
-from app.core.balancer import PERMANENT_FAILURE_CODES, RoutingStrategy, failover_decision
+from app.core.balancer import (
+    PERMANENT_FAILURE_CODES,
+    TRAFFIC_CLASS_FOREGROUND,
+    TRAFFIC_CLASS_OPPORTUNISTIC,
+    RoutingStrategy,
+    TrafficClass,
+    failover_decision,
+)
 from app.core.balancer.rendezvous_hash import select_node
 from app.core.balancer.types import ClassifiedFailure, UpstreamError
 from app.core.clients.files import (
@@ -2590,6 +2597,33 @@ class ProxyService:
                                     )
                                 continue
 
+                if (
+                    request_state is not None
+                    and continuity_state is not None
+                    and request_state.previous_response_id in continuity_state.lost_previous_response_ids
+                ):
+                    await self._release_websocket_reservation(request_state.api_key_reservation)
+                    await self._write_websocket_connect_failure(
+                        account_id=None,
+                        api_key=api_key,
+                        request_state=request_state,
+                        error_code="stream_incomplete",
+                        error_message="Upstream websocket closed before response.completed",
+                    )
+                    await self._emit_websocket_terminal_error(
+                        websocket,
+                        client_send_lock=client_send_lock,
+                        request_state=request_state,
+                        error_code="stream_incomplete",
+                        error_message="Upstream websocket closed before response.completed",
+                        error_type="server_error",
+                        downstream_activity=downstream_activity,
+                    )
+                    request_state = None
+                    text_data = None
+                    payload = None
+                    continue
+
                 if upstream_reader is not None and upstream_reader.done():
                     try:
                         await upstream_reader
@@ -5072,6 +5106,33 @@ class ProxyService:
                     502,
                     openai_error("upstream_unavailable", "HTTP responses session bridge is closed"),
                 )
+        if (
+            request_state.previous_response_id is not None
+            and request_state.previous_response_id in session.lost_previous_response_ids
+        ):
+            request_state.error_http_status_override = 502
+            (
+                _downstream_text,
+                event_block,
+                event,
+                payload,
+                event_type,
+            ) = _build_stream_incomplete_terminal_event_for_request(request_state)
+            if request_state.event_queue is not None:
+                await request_state.event_queue.put(event_block)
+                await request_state.event_queue.put(None)
+            await self._finalize_websocket_request_state(
+                request_state,
+                account=session.account,
+                account_id_value=session.account.id,
+                event=event,
+                event_type=event_type,
+                payload=payload,
+                api_key=request_state.api_key,
+                upstream_control=session.upstream_control,
+                response_create_gate=session.response_create_gate,
+            )
+            return
         await self._maybe_prewarm_http_bridge_session(
             session,
             request_state=request_state,
@@ -5347,6 +5408,18 @@ class ProxyService:
 
                 if message.kind == "text" and message.text is not None:
                     await self._process_http_bridge_upstream_text(session, message.text)
+                    if session.upstream_control.reconnect_requested:
+                        async with session.pending_lock:
+                            should_reconnect = not session.pending_requests
+                        if should_reconnect:
+                            try:
+                                await session.upstream.close()
+                            except Exception:
+                                logger.debug(
+                                    "Failed to close HTTP bridge upstream for reconnect",
+                                    exc_info=True,
+                                )
+                            break
                     continue
 
                 retried = await self._retry_http_bridge_precreated_request(session)
@@ -5713,8 +5786,9 @@ class ProxyService:
             return
 
         if len(grouped_previous_response_request_states) > 1:
-            session.upstream_control.reconnect_requested = True
             for grouped_request_state in grouped_previous_response_request_states:
+                if grouped_request_state.previous_response_id is not None:
+                    session.lost_previous_response_ids.add(grouped_request_state.previous_response_id)
                 grouped_request_state.error_http_status_override = 502
                 (
                     _grouped_downstream_text,
@@ -5744,7 +5818,8 @@ class ProxyService:
 
         status_request_state = terminal_request_state or matched_request_state
         if status_request_state is None and is_previous_response_not_found_event:
-            session.upstream_control.reconnect_requested = True
+            if previous_response_id_hint is not None:
+                session.lost_previous_response_ids.add(previous_response_id_hint)
             return
 
         if (
@@ -5752,6 +5827,7 @@ class ProxyService:
             and status_request_state.previous_response_id is not None
             and is_previous_response_not_found_event
         ):
+            session.lost_previous_response_ids.add(status_request_state.previous_response_id)
             status_request_state.error_http_status_override = 502
             status_request_state.previous_response_not_found_rewritten = (
                 response_id is None and not has_other_pending_requests
@@ -5764,7 +5840,50 @@ class ProxyService:
                 upstream_control=session.upstream_control,
                 original_text=text,
             )
+            # HTTP bridge can continue using the same upstream socket after a
+            # sanitized anchor miss; same-anchor retries are failed locally.
+            session.upstream_control.reconnect_requested = False
             event_block = f"data: {rewritten_text}\n\n"
+
+        retry_error_code = _websocket_precreated_retry_error_code(
+            status_request_state,
+            event_type=event_type,
+            payload=payload,
+            has_other_pending_requests=has_other_pending_requests,
+        )
+        if retry_error_code is not None and not is_previous_response_not_found_event:
+            await self._handle_stream_error(
+                session.account,
+                {"message": _websocket_event_error_message(event_type, payload) or "Upstream error"},
+                retry_error_code,
+            )
+            if status_request_state is not None and status_request_state.previous_response_id is None:
+                async with session.pending_lock:
+                    if status_request_state not in session.pending_requests:
+                        session.pending_requests.appendleft(status_request_state)
+                        session.queued_request_count += 1
+                    status_request_state.awaiting_response_created = True
+                    status_request_state.response_id = None
+                retried = await self._retry_http_bridge_precreated_request(session)
+                if retried:
+                    return
+                async with session.pending_lock:
+                    if status_request_state in session.pending_requests:
+                        session.pending_requests.remove(status_request_state)
+                        session.queued_request_count = max(0, session.queued_request_count - 1)
+            elif (
+                status_request_state is not None
+                and status_request_state.previous_response_id is not None
+                and status_request_state.preferred_account_id is not None
+            ):
+                status_request_state.error_http_status_override = 502
+                session.upstream_control.reconnect_requested = True
+                event, payload, event_type, rewritten_text = (
+                    _rewrite_websocket_previous_response_owner_unavailable_event(
+                        request_state=status_request_state,
+                    )
+                )
+                event_block = f"data: {rewritten_text}\n\n"
 
         if event_type == "response.completed" and terminal_request_state is not None:
             # Record the completed response id regardless of input shape so
@@ -6351,6 +6470,12 @@ class ProxyService:
             upstream_control=upstream_control,
             original_text=text,
         )
+        if (
+            retry_is_previous_response_not_found
+            and continuity_state is not None
+            and request_state.previous_response_id is not None
+        ):
+            continuity_state.lost_previous_response_ids.add(request_state.previous_response_id)
         if retry_error_code is None:
             retry_error_code = _websocket_precreated_retry_error_code(
                 request_state,
@@ -8355,6 +8480,7 @@ class ProxyService:
         additional_limit_name: str | None = None,
         exclude_account_ids: Collection[str] | None = None,
         preferred_account_id: str | None = None,
+        traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
     ) -> AccountSelection:
         remaining_budget = _remaining_budget_seconds(deadline)
         if remaining_budget <= 0:
@@ -8366,6 +8492,11 @@ class ProxyService:
             set(api_key.assigned_account_ids)
             if api_key is not None and api_key.account_assignment_scope_enabled
             else None
+        )
+        effective_traffic_class = (
+            TRAFFIC_CLASS_OPPORTUNISTIC
+            if api_key is not None and api_key.traffic_class == TRAFFIC_CLASS_OPPORTUNISTIC
+            else traffic_class
         )
         excluded_account_ids_set = set(exclude_account_ids or ())
         try:
@@ -8387,6 +8518,7 @@ class ProxyService:
                         additional_limit_name=additional_limit_name,
                         account_ids={preferred_account_id},
                         budget_threshold_pct=settings.sticky_reallocation_budget_threshold_pct,
+                        traffic_class=effective_traffic_class,
                     )
                     if preferred_selection.account is not None:
                         logger.info(
@@ -8409,6 +8541,7 @@ class ProxyService:
                     account_ids=scoped_account_ids,
                     exclude_account_ids=excluded_account_ids_set,
                     budget_threshold_pct=settings.sticky_reallocation_budget_threshold_pct,
+                    traffic_class=effective_traffic_class,
                 )
                 if selection.account is not None and selection.account.id in excluded_account_ids_set:
                     return AccountSelection(
@@ -8420,6 +8553,26 @@ class ProxyService:
         except TimeoutError:
             logger.warning("%s account selection exceeded request budget request_id=%s", kind.title(), request_id)
             _raise_proxy_budget_exhausted()
+
+    async def check_opportunistic_admission(
+        self,
+        *,
+        api_key: ApiKeyData | None,
+        model: str | None,
+    ) -> AccountSelection:
+        settings = await get_settings_cache().get()
+        scoped_account_ids = (
+            set(api_key.assigned_account_ids)
+            if api_key is not None and api_key.account_assignment_scope_enabled
+            else None
+        )
+        return await self._load_balancer.check_opportunistic_admission(
+            model=model,
+            account_ids=scoped_account_ids,
+            prefer_earlier_reset_accounts=settings.prefer_earlier_reset_accounts,
+            routing_strategy=_routing_strategy(settings),
+            budget_threshold_pct=settings.sticky_reallocation_budget_threshold_pct,
+        )
 
     async def _handle_proxy_error(self, account: Account, exc: ProxyResponseError) -> None:
         error = _parse_openai_error(exc.payload)
@@ -8627,6 +8780,7 @@ class _HTTPBridgeSession:
     downstream_turn_state: str | None = None
     downstream_turn_state_aliases: set[str] = field(default_factory=set)
     previous_response_ids: set[str] = field(default_factory=set)
+    lost_previous_response_ids: set[str] = field(default_factory=set)
     last_completed_input_count: int = 0
     last_completed_response_id: str | None = None
     last_completed_input_prefix_fingerprint: str | None = None
@@ -8641,6 +8795,7 @@ class _WebSocketContinuityState:
     last_completed_input_count: int = 0
     last_completed_response_id: str | None = None
     last_completed_input_prefix_fingerprint: str | None = None
+    lost_previous_response_ids: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True, slots=True)

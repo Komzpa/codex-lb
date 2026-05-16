@@ -30,3 +30,13 @@ Public Responses endpoints MUST NOT return an OpenAI-shaped `previous_response_n
 - **THEN** the response status is retryable
 - **AND** the public error code is `stream_incomplete`
 - **AND** the missing `previous_response_id` is not exposed in the response body
+
+#### Scenario: API layer preserves bridge recovery signals for internal forwarding
+- **WHEN** an internal `/internal/bridge` owner-forward stream receives `code=bridge_previous_response_not_found`
+- **THEN** the stream preserves that bridge-local recovery code for the forwarding replica
+- **AND** the error is not rewritten to public `stream_incomplete` before the internal recovery path can inspect it
+
+#### Scenario: API layer masks bridge recovery signals on user-facing routes
+- **WHEN** a public `/v1/responses` or `/backend-api/codex/responses` stream receives `code=bridge_previous_response_not_found`
+- **THEN** the client-visible payload is rewritten to retryable `stream_incomplete`
+- **AND** the bridge-local recovery code is not exposed to downstream clients

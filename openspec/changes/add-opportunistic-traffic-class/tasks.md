@@ -1,0 +1,4 @@
+- [x] 1. Persist API-key traffic class with a foreground default.
+- [x] 2. Add opportunistic admission and OpenAI-style denial responses.
+- [x] 3. Apply dynamic burn floors in account selection.
+- [x] 4. Cover burn-first, normal, preserve, and API-key behavior with tests.

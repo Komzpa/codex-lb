@@ -57,6 +57,7 @@ from app.db.session import get_background_session
 from app.dependencies import ProxyContext, get_proxy_context, get_proxy_websocket_context
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import (
+    TRAFFIC_CLASS_OPPORTUNISTIC,
     ApiKeyData,
     ApiKeyInvalidError,
     ApiKeyRateLimitExceededError,
@@ -160,6 +161,7 @@ _UNAVAILABLE_SELECTION_ERROR_CODES = {
     "additional_quota_data_unavailable",
     "no_additional_quota_eligible_accounts",
 }
+_OPPORTUNISTIC_RETRY_AFTER_SECONDS = 60
 
 # OpenAI error ``type`` -> HTTP status for the /v1/images/* non-streaming
 # error path. The /v1/responses path has its own ``_status_for_error``
@@ -210,6 +212,19 @@ async def responses(
         openai_cache_affinity=True,
         prefer_http_bridge=True,
     )
+
+
+@router.get("/opportunistic/admission")
+async def opportunistic_admission(
+    request: Request,
+    model: str | None = None,
+    context: ProxyContext = Depends(get_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    denial = await _opportunistic_admission_denial(request, context, api_key, model=model)
+    if denial is not None:
+        return denial
+    return JSONResponse({"admitted": True})
 
 
 @ws_router.websocket("/responses")
@@ -1549,6 +1564,9 @@ async def _stream_responses(
 ) -> Response:
     apply_api_key_enforcement(payload, api_key)
     validate_model_access(api_key, payload.model)
+    admission_denial = await _opportunistic_admission_denial(request, context, api_key, model=payload.model)
+    if admission_denial is not None:
+        return admission_denial
     owns_reservation = api_key_reservation_override is None
     reservation = (
         api_key_reservation_override
@@ -1602,7 +1620,12 @@ async def _stream_responses(
             api_key_reservation=reservation,
             suppress_text_done_events=suppress_text_done_events,
         )
-    stream = _normalize_public_responses_stream(stream)
+    # ``forwarded_request`` is the internal owner-instance hop; it must
+    # preserve bridge recovery codes so the origin can rebind locally.
+    # User-facing routes, including /backend-api/codex, may forward native
+    # upstream events but should not leak proxy-internal bridge errors.
+    mask_bridge_errors = not forwarded_request
+    stream = _normalize_public_responses_stream(stream, mask_bridge_errors=mask_bridge_errors)
     try:
         first = await stream.__anext__()
     except StopAsyncIteration:
@@ -1618,7 +1641,11 @@ async def _stream_responses(
         if owns_reservation:
             await _release_reservation(reservation)
         error = _parse_error_envelope(exc.payload)
-        status_code, error = _mask_previous_response_not_found_error(error, default_status=exc.status_code)
+        status_code, error = _mask_previous_response_not_found_error(
+            error,
+            default_status=exc.status_code,
+            mask_bridge_errors=mask_bridge_errors,
+        )
         return _logged_error_json_response(
             request,
             status_code,
@@ -1652,6 +1679,9 @@ async def _collect_responses(
 ) -> Response:
     apply_api_key_enforcement(payload, api_key)
     validate_model_access(api_key, payload.model)
+    admission_denial = await _opportunistic_admission_denial(request, context, api_key, model=payload.model)
+    if admission_denial is not None:
+        return admission_denial
     reservation = await _enforce_request_limits(
         api_key,
         request_model=payload.model,
@@ -1697,7 +1727,11 @@ async def _collect_responses(
     except ProxyResponseError as exc:
         await _release_reservation(reservation)
         error = _parse_error_envelope(exc.payload)
-        status_code, error = _mask_previous_response_not_found_error(error, default_status=exc.status_code)
+        status_code, error = _mask_previous_response_not_found_error(
+            error,
+            default_status=exc.status_code,
+            mask_bridge_errors=True,
+        )
         return _logged_error_json_response(
             request,
             status_code,
@@ -1707,7 +1741,10 @@ async def _collect_responses(
     if isinstance(response_payload, OpenAIResponsePayload):
         if response_payload.status == "failed":
             error_payload = _error_envelope_from_response(response_payload.error)
-            status_code, error_payload = _mask_previous_response_not_found_error(error_payload)
+            status_code, error_payload = _mask_previous_response_not_found_error(
+                error_payload,
+                mask_bridge_errors=True,
+            )
             return _logged_error_json_response(
                 request,
                 status_code,
@@ -1718,7 +1755,10 @@ async def _collect_responses(
             content=response_payload.model_dump(mode="json", exclude_none=True),
             headers={**turn_state_headers, **rate_limit_headers},
         )
-    status_code, response_payload = _mask_previous_response_not_found_error(response_payload)
+    status_code, response_payload = _mask_previous_response_not_found_error(
+        response_payload,
+        mask_bridge_errors=True,
+    )
     return _logged_error_json_response(
         request,
         status_code,
@@ -1806,7 +1846,11 @@ async def _compact_responses(
         )
     except ProxyResponseError as exc:
         error = _parse_error_envelope(exc.payload)
-        status_code, error = _mask_previous_response_not_found_error(error, default_status=exc.status_code)
+        status_code, error = _mask_previous_response_not_found_error(
+            error,
+            default_status=exc.status_code,
+            mask_bridge_errors=True,
+        )
         return _logged_error_json_response(
             request,
             status_code,
@@ -2009,6 +2053,29 @@ async def _enforce_request_limits(
             raise ProxyAuthError(str(exc)) from exc
 
 
+async def _opportunistic_admission_denial(
+    request: Request,
+    context: ProxyContext,
+    api_key: ApiKeyData | None,
+    *,
+    model: str | None,
+) -> JSONResponse | None:
+    if api_key is None or api_key.traffic_class != TRAFFIC_CLASS_OPPORTUNISTIC:
+        return None
+    selection = await context.service.check_opportunistic_admission(api_key=api_key, model=model)
+    if selection.account is not None:
+        return None
+    message = selection.error_message or "opportunistic burn window closed"
+    if not message.startswith("opportunistic burn window closed"):
+        message = f"opportunistic burn window closed: {message}"
+    return _logged_error_json_response(
+        request,
+        429,
+        openai_error("rate_limit_exceeded", message, error_type="rate_limit_error"),
+        headers={"Retry-After": str(_OPPORTUNISTIC_RETRY_AFTER_SECONDS)},
+    )
+
+
 async def _release_reservation(reservation: ApiKeyUsageReservationData | None) -> None:
     if reservation is None:
         return
@@ -2174,7 +2241,11 @@ def _merge_collected_output_items(
     return merged
 
 
-async def _normalize_public_responses_stream(stream: AsyncIterator[str]) -> AsyncIterator[str]:
+async def _normalize_public_responses_stream(
+    stream: AsyncIterator[str],
+    *,
+    mask_bridge_errors: bool = False,
+) -> AsyncIterator[str]:
     terminal_seen = False
     contract_violation_kind: str | None = None
     async for event_block in stream:
@@ -2187,7 +2258,10 @@ async def _normalize_public_responses_stream(stream: AsyncIterator[str]) -> Asyn
             if _looks_like_sse_data_block(event_block):
                 contract_violation_kind = contract_violation_kind or "invalid_json"
             continue
-        normalized_payload, violation_kind = _normalize_public_stream_payload(payload)
+        normalized_payload, violation_kind = _normalize_public_stream_payload(
+            payload,
+            mask_bridge_errors=mask_bridge_errors,
+        )
         if violation_kind is not None:
             contract_violation_kind = contract_violation_kind or violation_kind
         if normalized_payload is None:
@@ -2214,8 +2288,24 @@ async def _normalize_public_responses_stream(stream: AsyncIterator[str]) -> Asyn
 
 def _normalize_public_stream_payload(
     payload: dict[str, JsonValue],
+    *,
+    mask_bridge_errors: bool = False,
 ) -> tuple[dict[str, JsonValue] | None, str | None]:
     event_type = payload.get("type")
+    if event_type == "error":
+        parsed_error = _parse_event_error_envelope(payload)
+        if _is_previous_response_not_found_public_error(parsed_error.error, mask_bridge_errors=mask_bridge_errors):
+            return (
+                cast(
+                    dict[str, JsonValue],
+                    response_failed_event(
+                        "stream_incomplete",
+                        "Upstream websocket closed before response.completed",
+                    ),
+                ),
+                None,
+            )
+        return payload, None
     if event_type in ("response.completed", "response.incomplete"):
         response = payload.get("response")
         if not is_json_mapping(response):
@@ -2423,10 +2513,16 @@ def _error_envelope_from_response(error_value: OpenAIError | None) -> OpenAIErro
     return OpenAIErrorEnvelopeModel(error=error_value)
 
 
-def _is_previous_response_not_found_public_error(error_value: OpenAIError | None) -> bool:
+def _is_previous_response_not_found_public_error(
+    error_value: OpenAIError | None,
+    *,
+    mask_bridge_errors: bool = False,
+) -> bool:
     if error_value is None:
         return False
     if error_value.code == "previous_response_not_found":
+        return True
+    if mask_bridge_errors and error_value.code == "bridge_previous_response_not_found":
         return True
     message = error_value.message or ""
     return (
@@ -2441,8 +2537,9 @@ def _mask_previous_response_not_found_error(
     envelope: OpenAIErrorEnvelopeModel,
     *,
     default_status: int | None = None,
+    mask_bridge_errors: bool = False,
 ) -> tuple[int, OpenAIErrorEnvelopeModel]:
-    if not _is_previous_response_not_found_public_error(envelope.error):
+    if not _is_previous_response_not_found_public_error(envelope.error, mask_bridge_errors=mask_bridge_errors):
         return default_status if default_status is not None else _status_for_error(envelope.error), envelope
     return (
         502,

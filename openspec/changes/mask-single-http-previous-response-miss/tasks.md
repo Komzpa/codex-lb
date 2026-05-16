@@ -3,4 +3,5 @@
 - [x] Add regression coverage for direct WebSocket full-resend replay without a stale `previous_response_id`.
 - [x] Retry safe direct WebSocket full-resend follow-ups without `previous_response_id` when upstream loses the anchor.
 - [x] Mask any lower-layer public Responses `previous_response_not_found` payloads to retryable `stream_incomplete`.
+- [x] Preserve bridge-local `previous_response_not_found` recovery signals on internal owner-forward routes.
 - [x] Run focused tests for HTTP bridge previous-response handling.
