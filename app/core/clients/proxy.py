@@ -22,6 +22,7 @@ from typing import (
     Final,
     Mapping,
     Protocol,
+    Sequence,
     TypeAlias,
     TypeVar,
     cast,
@@ -85,6 +86,13 @@ _SSE_EVENT_TYPE_ALIASES = {
     "response.audio.delta": "response.output_audio.delta",
     "response.audio_transcript.delta": "response.output_audio_transcript.delta",
 }
+_RESPONSE_STREAM_TERMINAL_EVENT_TYPES = frozenset(
+    {
+        "response.completed",
+        "response.failed",
+        "response.incomplete",
+    }
+)
 
 _SSE_READ_CHUNK_SIZE = 1 * 1024
 _IMAGE_INLINE_MAX_BYTES = 8 * 1024 * 1024
@@ -340,6 +348,13 @@ class ProxyResponseError(Exception):
         self.failure_detail = failure_detail
         self.failure_exception_type = failure_exception_type
         self.upstream_status_code = upstream_status_code
+
+
+@dataclass(frozen=True)
+class CodexControlResponse:
+    status_code: int
+    body: bytes
+    headers: Mapping[str, str]
 
 
 def _should_drop_inbound_header(name: str) -> bool:
@@ -771,19 +786,35 @@ async def _iter_sse_events(
         yield bytes(buffer).decode("utf-8", errors="replace")
 
 
-async def _error_event_from_response(resp: ErrorResponse) -> ResponseFailedEvent:
+async def _error_response_body(resp: ErrorResponse) -> tuple[object | None, str | None]:
+    try:
+        return await resp.json(content_type=None), None
+    except Exception:
+        return None, await resp.text()
+
+
+def _error_archive_payload(data: object | None, text: str | None) -> object:
+    if data is not None:
+        return data
+    return {"text": text or ""}
+
+
+def _error_event_from_response_body(
+    resp: ErrorResponse,
+    *,
+    data: object | None,
+    text: str | None,
+) -> ResponseFailedEvent:
     fallback_message = f"Upstream error: HTTP {resp.status}"
     if resp.reason:
         fallback_message += f" {resp.reason}"
-    try:
-        data = await resp.json(content_type=None)
-    except Exception:
-        text = await resp.text()
-        message = text.strip() or fallback_message
+    if data is None:
+        message = (text or "").strip() or fallback_message
         return response_failed_event("upstream_error", message, response_id=get_request_id())
 
-    if isinstance(data, dict):
-        error = parse_error_payload(data)
+    if is_json_mapping(data):
+        payload_data = cast(dict[str, JsonValue], data)
+        error = parse_error_payload(payload_data)
         if error:
             payload = error.model_dump(exclude_none=True)
             event = response_failed_event(
@@ -797,31 +828,44 @@ async def _error_event_from_response(resp: ErrorResponse) -> ResponseFailedEvent
                 if key in payload:
                     event["response"]["error"][key] = payload[key]
             return event
-        message = _extract_upstream_message(data)
+        message = _extract_upstream_message(payload_data)
         if message:
             return response_failed_event("upstream_error", message, response_id=get_request_id())
     return response_failed_event("upstream_error", fallback_message, response_id=get_request_id())
 
 
-async def _error_payload_from_response(resp: ErrorResponse) -> OpenAIErrorEnvelope:
+async def _error_event_from_response(resp: ErrorResponse) -> ResponseFailedEvent:
+    data, text = await _error_response_body(resp)
+    return _error_event_from_response_body(resp, data=data, text=text)
+
+
+def _error_payload_from_response_body(
+    resp: ErrorResponse,
+    *,
+    data: object | None,
+    text: str | None,
+) -> OpenAIErrorEnvelope:
     fallback_message = f"Upstream error: HTTP {resp.status}"
     if resp.reason:
         fallback_message += f" {resp.reason}"
-    try:
-        data = await resp.json(content_type=None)
-    except Exception:
-        text = await resp.text()
-        message = text.strip() or fallback_message
+    if data is None:
+        message = (text or "").strip() or fallback_message
         return openai_error("upstream_error", message)
 
-    if isinstance(data, dict):
-        error = parse_error_payload(data)
+    if is_json_mapping(data):
+        payload_data = cast(dict[str, JsonValue], data)
+        error = parse_error_payload(payload_data)
         if error:
             return {"error": _openai_error_detail(error)}
-        message = _extract_upstream_message(data)
+        message = _extract_upstream_message(payload_data)
         if message:
             return openai_error("upstream_error", message)
     return openai_error("upstream_error", fallback_message)
+
+
+async def _error_payload_from_response(resp: ErrorResponse) -> OpenAIErrorEnvelope:
+    data, text = await _error_response_body(resp)
+    return _error_payload_from_response_body(resp, data=data, text=text)
 
 
 def _openai_error_detail(error: OpenAIError) -> OpenAIErrorDetail:
@@ -849,6 +893,16 @@ def _extract_upstream_message(data: Mapping[str, JsonValue]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value
     return None
+
+
+async def _error_payload_from_raw_body(resp: ErrorResponse, body: bytes) -> OpenAIErrorEnvelope:
+    try:
+        data: object | None = json.loads(body)
+        text = None
+    except Exception:
+        data = None
+        text = body.decode("utf-8", errors="replace")
+    return _error_payload_from_response_body(resp, data=data, text=text)
 
 
 def _normalize_sse_data_line(line: str) -> str:
@@ -916,6 +970,37 @@ def _normalize_stream_event_payload(payload: dict[str, JsonValue]) -> dict[str, 
         normalized = dict(payload)
         normalized["type"] = _SSE_EVENT_TYPE_ALIASES[event_type]
         return normalized
+    error = parse_error_payload(payload)
+    if error is not None:
+        detail = error.model_dump(exclude_none=True)
+        event = response_failed_event(
+            _normalize_error_code(detail.get("code"), detail.get("type")),
+            detail.get("message", "Upstream websocket error"),
+            error_type=detail.get("type") or "server_error",
+            response_id=get_request_id(),
+            error_param=detail.get("param"),
+        )
+        for key in ("plan_type", "resets_at", "resets_in_seconds"):
+            if key in detail:
+                event["response"]["error"][key] = detail[key]
+        return cast(dict[str, JsonValue], event)
+    if event_type == "error":
+        message = _extract_upstream_message(payload) or "Upstream websocket error"
+        code = payload.get("code")
+        raw_error_type = payload.get("error_type")
+        error_type = raw_error_type if isinstance(raw_error_type, str) else None
+        return cast(
+            dict[str, JsonValue],
+            response_failed_event(
+                _normalize_error_code(
+                    code if isinstance(code, str) else None,
+                    error_type,
+                ),
+                message,
+                error_type=error_type or "server_error",
+                response_id=get_request_id(),
+            ),
+        )
     return payload
 
 
@@ -1211,13 +1296,9 @@ async def _stream_websocket_events(
         if not isinstance(payload, dict):
             continue
         normalized = _normalize_stream_event_payload(payload)
-        event_type = payload.get("type")
+        event_type = normalized.get("type")
         yield format_sse_event(normalized)
-        if isinstance(event_type, str) and event_type in (
-            "response.completed",
-            "response.failed",
-            "response.incomplete",
-        ):
+        if isinstance(event_type, str) and event_type in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES:
             break
 
 
@@ -1326,7 +1407,7 @@ async def _stream_responses_via_websocket(
                 extra={"event_format": "sse"},
             )
             parsed_event = parse_sse_event(event)
-            if parsed_event and parsed_event.type in ("response.completed", "response.failed", "response.incomplete"):
+            if parsed_event and parsed_event.type in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES:
                 seen_terminal = True
                 await _record_lifecycle_success()
             yield event
@@ -1829,6 +1910,7 @@ async def stream_responses(
 
     seen_terminal = False
     status_code: int | None = None
+    last_stream_activity_at: float | None = None
     error_code: str | None = None
     error_message: str | None = None
     client_session = session or get_http_client().session
@@ -1876,7 +1958,7 @@ async def stream_responses(
         current_headers: Mapping[str, str],
         current_timeout: aiohttp.ClientTimeout,
     ) -> AsyncIterator[str]:
-        nonlocal status_code, error_code, error_message, seen_terminal
+        nonlocal status_code, last_stream_activity_at, error_code, error_message, seen_terminal
 
         async with _service_circuit_breaker_context(
             client_session.post(
@@ -1889,6 +1971,7 @@ async def stream_responses(
             account_id=account_id,
         ) as resp:
             status_code = resp.status
+            last_stream_activity_at = time.monotonic()
             if resp.status >= 400:
                 if raise_for_status:
                     error_payload = await _error_payload_from_response(resp)
@@ -1928,11 +2011,12 @@ async def stream_responses(
                 effective_idle_timeout,
                 settings.max_sse_event_bytes,
             ):
+                last_stream_activity_at = time.monotonic()
                 event_block = _normalize_sse_event_block(event_block)
                 event = parse_sse_event(event_block)
                 if event:
                     event_type = event.type
-                    if event_type in ("response.completed", "response.failed", "response.incomplete"):
+                    if event_type in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES:
                         seen_terminal = True
                 archive_text(
                     direction="server_to_codex",
@@ -1989,7 +2073,7 @@ async def stream_responses(
                     event = parse_sse_event(event_block)
                     if event:
                         event_type = event.type
-                        if event_type in ("response.completed", "response.failed", "response.incomplete"):
+                        if event_type in _RESPONSE_STREAM_TERMINAL_EVENT_TYPES:
                             seen_terminal = True
                     yield event_block
                     if seen_terminal:
@@ -2111,6 +2195,23 @@ async def stream_responses(
             error_message = str(exc) or "Request to upstream timed out"
             yield format_sse_event(
                 response_failed_event("upstream_unavailable", error_message, response_id=get_request_id()),
+            )
+            return
+        now = time.monotonic()
+        idle_elapsed_seconds = max(0.0, now - last_stream_activity_at) if last_stream_activity_at is not None else None
+        if (
+            idle_elapsed_seconds is not None
+            and effective_idle_timeout <= (request_total_timeout or effective_idle_timeout)
+            and idle_elapsed_seconds >= effective_idle_timeout
+        ):
+            error_code = "stream_idle_timeout"
+            error_message = "Upstream stream idle timeout"
+            yield format_sse_event(
+                response_failed_event(
+                    "stream_idle_timeout",
+                    "Upstream stream idle timeout",
+                    response_id=get_request_id(),
+                ),
             )
             return
         error_code = "upstream_request_timeout"
@@ -2492,6 +2593,224 @@ class _CompactCommandTransport:
                 failure_exception_type=failure_exception_type,
                 retryable_same_contract=retryable_same_contract,
             )
+
+
+async def thread_goal_request(
+    operation: str,
+    payload: Mapping[str, JsonValue],
+    headers: Mapping[str, str],
+    access_token: str,
+    account_id: str | None,
+    *,
+    method: str = "POST",
+    timeout_seconds: float | None = None,
+    base_url: str | None = None,
+    session: aiohttp.ClientSession | None = None,
+) -> dict[str, JsonValue]:
+    settings = get_settings()
+    upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
+    url = f"{upstream_base}/codex/thread/goal/{operation}"
+    upstream_headers = _build_upstream_headers(headers, access_token, account_id, accept="application/json")
+    request_method = method.upper()
+    total_timeout = (
+        max(0.001, timeout_seconds)
+        if timeout_seconds is not None
+        else _effective_stream_timeout(settings.proxy_request_budget_seconds, "total")
+    )
+    connect_timeout = min(
+        _effective_stream_timeout(settings.upstream_connect_timeout_seconds, "connect"),
+        total_timeout,
+    )
+    timeout = aiohttp.ClientTimeout(
+        total=total_timeout,
+        sock_connect=connect_timeout,
+        sock_read=total_timeout,
+    )
+    client_session = session or get_http_client().session
+    started_at = time.monotonic()
+    status_code: int | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    payload_dict = dict(payload)
+    _maybe_log_upstream_request_start(
+        kind=f"thread_goal_{operation}",
+        url=url,
+        headers=upstream_headers,
+        method=request_method,
+        payload_summary=_summarize_json_payload(payload_dict),
+        payload_json=json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":"))
+        if settings.log_upstream_request_payload
+        else None,
+    )
+    try:
+        request_kwargs: dict[str, object] = {
+            "headers": upstream_headers,
+            "timeout": timeout,
+        }
+        if request_method == "GET":
+            request_kwargs["params"] = {key: str(value) for key, value in payload_dict.items() if value is not None}
+        else:
+            request_kwargs["json"] = payload_dict
+        async with _service_circuit_breaker_context(
+            client_session.request(request_method, url, **request_kwargs),
+            settings=settings,
+            account_id=account_id,
+        ) as resp:
+            status_code = resp.status
+            if resp.status >= 400:
+                error_payload = await _error_payload_from_response(resp)
+                error_code, error_message = _error_details_from_envelope(error_payload)
+                raise ProxyResponseError(resp.status, error_payload)
+            try:
+                data = await resp.json(content_type=None)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                message = str(exc) or "Request to upstream timed out"
+                error_code = "upstream_unavailable"
+                error_message = message
+                raise ProxyResponseError(502, openai_error("upstream_unavailable", message)) from exc
+            except Exception as exc:
+                error_code = "upstream_error"
+                error_message = "Invalid JSON from upstream"
+                raise ProxyResponseError(502, openai_error("upstream_error", "Invalid JSON from upstream")) from exc
+            if isinstance(data, dict):
+                return cast(dict[str, JsonValue], data)
+            error_code = "upstream_error"
+            error_message = "Unexpected upstream payload"
+            raise ProxyResponseError(502, openai_error("upstream_error", "Unexpected upstream payload"))
+    except ProxyResponseError as exc:
+        if error_code is None and error_message is None:
+            error_code, error_message = _error_details_from_envelope(exc.payload)
+        raise
+    except CircuitBreakerOpenError as exc:
+        error_code = "upstream_unavailable"
+        error_message = "Upstream circuit breaker is open"
+        raise ProxyResponseError(503, openai_error("upstream_unavailable", error_message)) from exc
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        message = str(exc) or "Request to upstream timed out"
+        error_code = "upstream_unavailable"
+        error_message = message
+        raise ProxyResponseError(502, openai_error("upstream_unavailable", message)) from exc
+    finally:
+        _maybe_log_upstream_request_complete(
+            kind=f"thread_goal_{operation}",
+            url=url,
+            headers=upstream_headers,
+            method=request_method,
+            started_at=started_at,
+            status_code=status_code,
+            error_code=error_code,
+            error_message=error_message,
+        )
+
+
+async def codex_control_request(
+    path: str,
+    *,
+    method: str,
+    payload: bytes | None,
+    query_params: Mapping[str, str] | Sequence[tuple[str, str]],
+    headers: Mapping[str, str],
+    access_token: str,
+    account_id: str | None,
+    timeout_seconds: float | None = None,
+    base_url: str | None = None,
+    session: aiohttp.ClientSession | None = None,
+) -> CodexControlResponse:
+    settings = get_settings()
+    upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
+    normalized_path = path.strip("/")
+    upstream_path = normalized_path if normalized_path.startswith("wham/") else f"codex/{normalized_path}"
+    url = f"{upstream_base}/{upstream_path}"
+    request_method = method.upper()
+    upstream_headers = _build_upstream_headers(headers, access_token, account_id, accept=headers.get("accept", "*/*"))
+    content_type = next((value for key, value in headers.items() if key.lower() == "content-type"), None)
+    if content_type:
+        upstream_headers["Content-Type"] = content_type
+    elif payload is None:
+        upstream_headers.pop("Content-Type", None)
+    total_timeout = (
+        max(0.001, timeout_seconds)
+        if timeout_seconds is not None
+        else _effective_stream_timeout(settings.proxy_request_budget_seconds, "total")
+    )
+    connect_timeout = min(
+        _effective_stream_timeout(settings.upstream_connect_timeout_seconds, "connect"),
+        total_timeout,
+    )
+    timeout = aiohttp.ClientTimeout(
+        total=total_timeout,
+        sock_connect=connect_timeout,
+        sock_read=total_timeout,
+    )
+    client_session = session or get_http_client().session
+    started_at = time.monotonic()
+    status_code: int | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    payload_summary: dict[str, JsonValue] | None = None
+    if payload and content_type and "json" in content_type.lower():
+        with contextlib.suppress(Exception):
+            decoded = json.loads(payload)
+            if isinstance(decoded, dict):
+                payload_summary = cast(dict[str, JsonValue], decoded)
+    _maybe_log_upstream_request_start(
+        kind=f"codex_control_{normalized_path.replace('/', '_')}",
+        url=url,
+        headers=upstream_headers,
+        method=request_method,
+        payload_summary=_summarize_json_payload(payload_summary or {}),
+        payload_json=payload.decode("utf-8", errors="replace")
+        if payload is not None and settings.log_upstream_request_payload
+        else None,
+    )
+    try:
+        async with _service_circuit_breaker_context(
+            client_session.request(
+                request_method,
+                url,
+                params=query_params,
+                data=payload,
+                headers=upstream_headers,
+                timeout=timeout,
+            ),
+            settings=settings,
+            account_id=account_id,
+        ) as resp:
+            status_code = resp.status
+            body = await resp.read()
+            if resp.status >= 400:
+                error_payload = await _error_payload_from_raw_body(resp, body)
+                error_code, error_message = _error_details_from_envelope(error_payload)
+                raise ProxyResponseError(resp.status, error_payload)
+            return CodexControlResponse(
+                status_code=resp.status,
+                body=body,
+                headers={key: value for key, value in resp.headers.items()},
+            )
+    except ProxyResponseError as exc:
+        if error_code is None and error_message is None:
+            error_code, error_message = _error_details_from_envelope(exc.payload)
+        raise
+    except CircuitBreakerOpenError as exc:
+        error_code = "upstream_unavailable"
+        error_message = "Upstream circuit breaker is open"
+        raise ProxyResponseError(503, openai_error("upstream_unavailable", error_message)) from exc
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        message = str(exc) or "Request to upstream timed out"
+        error_code = "upstream_unavailable"
+        error_message = message
+        raise ProxyResponseError(502, openai_error("upstream_unavailable", message)) from exc
+    finally:
+        _maybe_log_upstream_request_complete(
+            kind=f"codex_control_{normalized_path.replace('/', '_')}",
+            url=url,
+            headers=upstream_headers,
+            method=request_method,
+            started_at=started_at,
+            status_code=status_code,
+            error_code=error_code,
+            error_message=error_message,
+        )
 
 
 async def transcribe_audio(
