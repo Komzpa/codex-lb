@@ -28,6 +28,7 @@ export function AccountsPage() {
     pauseMutation,
     resumeMutation,
     deleteMutation,
+    updateMutation,
     exportMutation,
   } = useAccounts();
   const routingPolicyMutation = useAccountRoutingPolicyMutation();
@@ -73,6 +74,7 @@ export function AccountsPage() {
     pauseMutation.isPending ||
     resumeMutation.isPending ||
     deleteMutation.isPending ||
+    updateMutation.isPending ||
     exportMutation.isPending;
 
   const mutationError =
@@ -81,6 +83,7 @@ export function AccountsPage() {
     getErrorMessageOrNull(pauseMutation.error) ||
     getErrorMessageOrNull(resumeMutation.error) ||
     getErrorMessageOrNull(deleteMutation.error) ||
+    getErrorMessageOrNull(updateMutation.error) ||
     getErrorMessageOrNull(exportMutation.error);
 
   return (
@@ -120,6 +123,9 @@ export function AccountsPage() {
               void routingPolicyMutation.mutateAsync({ accountId, routingPolicy })
             }
             onReauth={() => oauthDialog.show()}
+            onSecurityWorkAuthorizedChange={(accountId, enabled) =>
+              void updateMutation.mutateAsync({ accountId, securityWorkAuthorized: enabled })
+            }
             onExport={(accountId) => void exportMutation.mutateAsync(accountId)}
           />
         </div>

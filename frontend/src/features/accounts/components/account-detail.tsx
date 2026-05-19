@@ -19,6 +19,7 @@ export type AccountDetailProps = {
   onDelete: (accountId: string) => void;
   onRoutingPolicyChange: (accountId: string, routingPolicy: AccountRoutingPolicy) => void;
   onReauth: () => void;
+  onSecurityWorkAuthorizedChange: (accountId: string, enabled: boolean) => void;
   onExport: (accountId: string) => void;
 };
 
@@ -31,6 +32,7 @@ export function AccountDetail({
   onDelete,
   onRoutingPolicyChange,
   onReauth,
+  onSecurityWorkAuthorizedChange,
   onExport,
 }: AccountDetailProps) {
   const { data: trends } = useAccountTrends(account?.accountId ?? null);
@@ -84,6 +86,7 @@ export function AccountDetail({
         onResume={onResume}
         onDelete={onDelete}
         onReauth={onReauth}
+        onSecurityWorkAuthorizedChange={onSecurityWorkAuthorizedChange}
         onExport={onExport}
       />
     </div>
