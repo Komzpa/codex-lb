@@ -28,6 +28,7 @@ export function AccountsPage() {
     pauseMutation,
     resumeMutation,
     deleteMutation,
+    exportMutation,
   } = useAccounts();
   const routingPolicyMutation = useAccountRoutingPolicyMutation();
   const oauth = useOauth();
@@ -71,14 +72,16 @@ export function AccountsPage() {
     importMutation.isPending ||
     pauseMutation.isPending ||
     resumeMutation.isPending ||
-    deleteMutation.isPending;
+    deleteMutation.isPending ||
+    exportMutation.isPending;
 
   const mutationError =
     getErrorMessageOrNull(routingPolicyMutation.error) ||
     getErrorMessageOrNull(importMutation.error) ||
     getErrorMessageOrNull(pauseMutation.error) ||
     getErrorMessageOrNull(resumeMutation.error) ||
-    getErrorMessageOrNull(deleteMutation.error);
+    getErrorMessageOrNull(deleteMutation.error) ||
+    getErrorMessageOrNull(exportMutation.error);
 
   return (
     <div className="animate-fade-in-up space-y-6">
@@ -117,6 +120,7 @@ export function AccountsPage() {
               void routingPolicyMutation.mutateAsync({ accountId, routingPolicy })
             }
             onReauth={() => oauthDialog.show()}
+            onExport={(accountId) => void exportMutation.mutateAsync(accountId)}
           />
         </div>
       )}

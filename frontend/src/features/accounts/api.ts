@@ -2,6 +2,7 @@ import { del, get, patch, post } from "@/lib/api-client";
 
 import {
   AccountActionResponseSchema,
+  AccountExportResponseSchema,
   AccountImportResponseSchema,
   AccountsResponseSchema,
   AccountTrendsResponseSchema,
@@ -68,6 +69,14 @@ export function updateAccountRoutingPolicy(accountId: string, payload: unknown) 
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/routing-policy`,
     AccountRoutingPolicyResponseSchema,
     { body: validated },
+  );
+}
+
+export function exportAccount(accountId: string) {
+  return post(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/export`,
+    AccountExportResponseSchema,
+    { cache: "no-store" },
   );
 }
 
