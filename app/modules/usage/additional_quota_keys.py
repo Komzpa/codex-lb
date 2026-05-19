@@ -213,7 +213,11 @@ def get_additional_quota_definition_for_key(quota_key: str | None) -> Additional
     by_quota_key, _, _, alias_to_quota_key, quota_key_alias_to_quota_key = _definition_maps_for_path(
         str(_registry_path())
     )
-    resolved_key = canonicalize_additional_quota_key(quota_key=quota_key)
+    resolved_key = canonicalize_additional_quota_key(
+        quota_key=quota_key,
+        limit_name=quota_key,
+        metered_feature=quota_key,
+    )
     if resolved_key is None or resolved_key not in by_quota_key:
         normalized_quota_key = _normalize_identifier(quota_key)
         resolved_key = (
