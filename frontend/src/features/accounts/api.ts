@@ -2,6 +2,7 @@ import { del, get, patch, post } from "@/lib/api-client";
 
 import {
   AccountActionResponseSchema,
+  AccountExportResponseSchema,
   AccountImportResponseSchema,
   AccountUpdateRequestSchema,
   AccountsResponseSchema,
@@ -65,6 +66,14 @@ export function deleteAccount(accountId: string) {
   return del(
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}`,
     AccountActionResponseSchema,
+  );
+}
+
+export function exportAccount(accountId: string) {
+  return post(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/export`,
+    AccountExportResponseSchema,
+    { cache: "no-store" },
   );
 }
 

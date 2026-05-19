@@ -1,4 +1,4 @@
-import { Pause, Play, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { Download, Pause, Play, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -12,6 +12,7 @@ export type AccountActionsProps = {
   onDelete: (accountId: string) => void;
   onReauth: () => void;
   onSecurityWorkAuthorizedChange: (accountId: string, enabled: boolean) => void;
+  onExport: (accountId: string) => void;
 };
 
 export function AccountActions({
@@ -22,6 +23,7 @@ export function AccountActions({
   onDelete,
   onReauth,
   onSecurityWorkAuthorizedChange,
+  onExport,
 }: AccountActionsProps) {
   return (
     <div className="space-y-3 border-t pt-4">
@@ -76,6 +78,18 @@ export function AccountActions({
             Re-authenticate
           </Button>
         ) : null}
+
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 text-xs"
+          onClick={() => onExport(account.accountId)}
+          disabled={busy}
+        >
+          <Download className="h-3.5 w-3.5" />
+          Export
+        </Button>
 
         <Button
           type="button"
