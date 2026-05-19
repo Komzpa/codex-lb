@@ -4,6 +4,7 @@ import random
 import time
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -1724,7 +1725,7 @@ async def test_load_selection_inputs_parallelizes_usage_queries():
 async def test_sync_runtime_state_preserves_foreground_timestamp_for_opportunistic_selection():
     from app.modules.proxy.load_balancer import LoadBalancer
 
-    balancer = LoadBalancer(repo_factory=lambda: None)
+    balancer = LoadBalancer(repo_factory=cast(Any, lambda: None))
     account = _make_test_account("sticky-opportunistic")
     state = AccountState(
         account.id,

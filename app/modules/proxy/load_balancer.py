@@ -1552,11 +1552,13 @@ def _select_account_preferring_budget_safe(
     prefer_earlier_reset: bool,
     routing_strategy: RoutingStrategy,
     budget_threshold_pct: float,
+    secondary_budget_threshold_pct: float = 100.0,
     allow_backoff_fallback: bool = True,
     deterministic_probe: bool = False,
     traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
     ignore_standard_quota: bool = False,
 ) -> SelectionResult:
+    del secondary_budget_threshold_pct
     state_list = list(states)
     burn_first_states = [state for state in state_list if state.routing_policy == ROUTING_POLICY_BURN_FIRST]
     if burn_first_states:
