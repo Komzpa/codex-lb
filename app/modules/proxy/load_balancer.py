@@ -422,13 +422,13 @@ class LoadBalancer:
                     else:
                         stale_account_ids = (
                             await self._persist_selection_state(
-                            repos.accounts,
-                            selected_account_map,
-                            selected_states,
+                                repos.accounts,
+                                selected_account_map,
+                                selected_states,
+                            )
+                            if selection_inputs.persist_standard_quota_status
+                            else set()
                         )
-                        if selection_inputs.persist_standard_quota_status
-                        else set()
-                    )
                 stale_account_ids = stale_account_ids or set()
                 if selected_snapshot is not None and selected_snapshot.id in stale_account_ids:
                     selected_snapshot = None
@@ -1657,12 +1657,12 @@ def _select_account_preferring_budget_safe(
         return select_account(
             state_list,
             prefer_earlier_reset=prefer_earlier_reset,
-        routing_strategy=routing_strategy,
-        allow_backoff_fallback=allow_backoff_fallback,
-        deterministic_probe=deterministic_probe,
-        usage_weighted_order="primary_first",
-        traffic_class=traffic_class,
-        ignore_standard_quota=ignore_standard_quota,
+            routing_strategy=routing_strategy,
+            allow_backoff_fallback=allow_backoff_fallback,
+            deterministic_probe=deterministic_probe,
+            usage_weighted_order="primary_first",
+            traffic_class=traffic_class,
+            ignore_standard_quota=ignore_standard_quota,
         )
     return select_account(
         state_list,
