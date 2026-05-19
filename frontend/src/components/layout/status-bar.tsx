@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, ArrowRightLeft, Github, Tag } from "lucide-react";
+import { Activity, ArrowRightLeft, GitFork, Tag } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { getDashboardOverview } from "@/features/dashboard/api";
@@ -82,7 +82,7 @@ export function StatusBar() {
           target="_blank"
           title="GitHub"
         >
-          <Github className="h-3.5 w-3.5" aria-hidden="true" />
+          <GitFork className="h-3.5 w-3.5" aria-hidden="true" />
         </a>
       </div>
     </footer>
