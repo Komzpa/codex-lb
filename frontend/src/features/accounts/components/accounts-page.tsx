@@ -9,7 +9,7 @@ import { AccountDetail } from "@/features/accounts/components/account-detail";
 import { AccountList } from "@/features/accounts/components/account-list";
 import { AccountsSkeleton } from "@/features/accounts/components/accounts-skeleton";
 import { ImportDialog } from "@/features/accounts/components/import-dialog";
-import { useAccounts } from "@/features/accounts/hooks/use-accounts";
+import { useAccountRoutingPolicyMutation, useAccounts } from "@/features/accounts/hooks/use-accounts";
 import { sortAccountsForDisplay } from "@/features/accounts/sorting";
 import { useOauth } from "@/features/accounts/hooks/use-oauth";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
@@ -30,6 +30,7 @@ export function AccountsPage() {
     deleteMutation,
     exportMutation,
   } = useAccounts();
+  const routingPolicyMutation = useAccountRoutingPolicyMutation();
   const oauth = useOauth();
 
   const importDialog = useDialogState();
@@ -67,6 +68,7 @@ export function AccountsPage() {
   );
 
   const mutationBusy =
+    routingPolicyMutation.isPending ||
     importMutation.isPending ||
     pauseMutation.isPending ||
     resumeMutation.isPending ||
@@ -74,6 +76,7 @@ export function AccountsPage() {
     exportMutation.isPending;
 
   const mutationError =
+    getErrorMessageOrNull(routingPolicyMutation.error) ||
     getErrorMessageOrNull(importMutation.error) ||
     getErrorMessageOrNull(pauseMutation.error) ||
     getErrorMessageOrNull(resumeMutation.error) ||
@@ -113,6 +116,9 @@ export function AccountsPage() {
             onPause={(accountId) => void pauseMutation.mutateAsync(accountId)}
             onResume={(accountId) => void resumeMutation.mutateAsync(accountId)}
             onDelete={(accountId) => deleteDialog.show(accountId)}
+            onRoutingPolicyChange={(accountId, routingPolicy) =>
+              void routingPolicyMutation.mutateAsync({ accountId, routingPolicy })
+            }
             onReauth={() => oauthDialog.show()}
             onExport={(accountId) => void exportMutation.mutateAsync(accountId)}
           />

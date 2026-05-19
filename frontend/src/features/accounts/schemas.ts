@@ -45,6 +45,7 @@ export const AccountAdditionalQuotaSchema = z.object({
   limitName: z.string(),
   meteredFeature: z.string(),
   displayLabel: z.string().nullable().optional(),
+  routingPolicy: z.enum(["inherit", "burn_first", "normal", "preserve"]).default("inherit"),
   primaryWindow: AccountAdditionalWindowSchema.nullable().optional(),
   secondaryWindow: AccountAdditionalWindowSchema.nullable().optional(),
 });
@@ -54,6 +55,7 @@ export const AccountSummarySchema = z.object({
   email: z.string(),
   displayName: z.string(),
   planType: z.string(),
+  routingPolicy: z.enum(["normal", "burn_first", "preserve"]).optional(),
   status: z.string(),
   usage: AccountUsageSchema.nullable().optional(),
   resetAtPrimary: z.string().datetime({ offset: true }).nullable().optional(),
@@ -83,6 +85,15 @@ export const AccountImportResponseSchema = z.object({
   email: z.string(),
   planType: z.string(),
   status: z.string(),
+});
+
+export const AccountRoutingPolicyUpdateSchema = z.object({
+  routingPolicy: z.enum(["normal", "burn_first", "preserve"]),
+});
+
+export const AccountRoutingPolicyResponseSchema = z.object({
+  status: z.string(),
+  routingPolicy: z.enum(["normal", "burn_first", "preserve"]),
 });
 
 export const AccountActionResponseSchema = z.object({
@@ -160,6 +171,7 @@ export const ImportStateSchema = z.object({
 export type UsageTrendPoint = z.infer<typeof UsageTrendPointSchema>;
 export type AccountUsageTrend = z.infer<typeof AccountUsageTrendSchema>;
 export type AccountSummary = z.infer<typeof AccountSummarySchema>;
+export type AccountRoutingPolicy = NonNullable<AccountSummary["routingPolicy"]>;
 export type AccountExportResponse = z.infer<typeof AccountExportResponseSchema>;
 export type AccountAdditionalWindow = z.infer<typeof AccountAdditionalWindowSchema>;
 export type AccountAdditionalQuota = z.infer<typeof AccountAdditionalQuotaSchema>;
