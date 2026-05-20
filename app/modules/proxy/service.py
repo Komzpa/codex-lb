@@ -4466,22 +4466,14 @@ class ProxyService:
             return None
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             message = str(exc) or "Request to upstream timed out"
-            await self._emit_websocket_connect_failure(
-                websocket,
-                client_send_lock=client_send_lock,
-                account_id=account.id,
-                api_key=api_key,
-                request_state=request_state,
-                status_code=502,
-                payload=openai_error(
+            raise ProxyResponseError(
+                502,
+                openai_error(
                     "upstream_unavailable",
                     message,
                     error_type="server_error",
                 ),
-                error_code="upstream_unavailable",
-                error_message=message,
-            )
-            return None
+            ) from exc
 
     async def _retry_websocket_connect_after_401(
         self,
@@ -4531,22 +4523,14 @@ class ProxyService:
             return None
         except (aiohttp.ClientError, asyncio.TimeoutError) as refresh_transport_exc:
             message = str(refresh_transport_exc) or "Request to upstream timed out"
-            await self._emit_websocket_connect_failure(
-                websocket,
-                client_send_lock=client_send_lock,
-                account_id=account.id,
-                api_key=api_key,
-                request_state=request_state,
-                status_code=502,
-                payload=openai_error(
+            raise ProxyResponseError(
+                502,
+                openai_error(
                     "upstream_unavailable",
                     message,
                     error_type="server_error",
                 ),
-                error_code="upstream_unavailable",
-                error_message=message,
-            )
-            return None
+            ) from refresh_transport_exc
 
         try:
             remaining_budget = _remaining_budget_seconds(deadline)
@@ -4630,10 +4614,13 @@ class ProxyService:
         *,
         timeout_seconds: float,
     ) -> UpstreamResponsesWebSocket:
+        started_at = time.monotonic()
         try:
             with anyio.fail_after(timeout_seconds):
                 return await self._open_upstream_websocket(account, headers)
         except TimeoutError:
+            if time.monotonic() - started_at < timeout_seconds:
+                raise
             _raise_proxy_budget_exhausted()
 
     async def _open_upstream_websocket(
