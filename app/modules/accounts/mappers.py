@@ -165,6 +165,7 @@ def _limit_warmup_to_status(entry: AccountLimitWarmup | None) -> AccountLimitWar
         error_message=entry.error_message,
     )
 
+
 def _effective_status_from_usage(
     account: Account,
     primary_usage: UsageHistory | None,
