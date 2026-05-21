@@ -42,6 +42,18 @@ pytestmark = pytest.mark.unit
 _UNSET = object()
 
 
+@pytest.fixture(autouse=True)
+def _stub_additional_quota_routing_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _load_empty_overrides() -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr(
+        load_balancer_module,
+        "_load_dashboard_additional_quota_routing_overrides",
+        _load_empty_overrides,
+    )
+
+
 def _make_account(account_id: str, email: str = "a@example.com") -> Account:
     encryptor = TokenEncryptor()
     return Account(

@@ -8,6 +8,7 @@ export const UsageTrendPointSchema = z.object({
 export const AccountUsageTrendSchema = z.object({
   primary: z.array(UsageTrendPointSchema),
   secondary: z.array(UsageTrendPointSchema),
+  secondaryScheduled: z.array(UsageTrendPointSchema).default([]),
 });
 
 export const AccountUsageSchema = z.object({
@@ -84,6 +85,7 @@ export const AccountTrendsResponseSchema = z.object({
   accountId: z.string(),
   primary: z.array(UsageTrendPointSchema),
   secondary: z.array(UsageTrendPointSchema),
+  secondaryScheduled: z.array(UsageTrendPointSchema).default([]),
 });
 
 export const AccountsResponseSchema = z.object({

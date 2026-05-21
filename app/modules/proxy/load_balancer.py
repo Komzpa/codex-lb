@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Iterable
@@ -114,11 +114,25 @@ class _SelectionInputs:
 
 
 SelectionInputs = _SelectionInputs
+AdditionalQuotaRoutingOverridesProvider = Callable[[], Awaitable[dict[str, str]]]
+
+
+async def _load_dashboard_additional_quota_routing_overrides() -> dict[str, str]:
+    dashboard_settings = await get_settings_cache().get()
+    return parse_additional_quota_routing_policies(dashboard_settings.additional_quota_routing_policies_json)
 
 
 class LoadBalancer:
-    def __init__(self, repo_factory: ProxyRepoFactory) -> None:
+    def __init__(
+        self,
+        repo_factory: ProxyRepoFactory,
+        *,
+        additional_quota_routing_overrides_provider: AdditionalQuotaRoutingOverridesProvider | None = None,
+    ) -> None:
         self._repo_factory = repo_factory
+        self._additional_quota_routing_overrides_provider = (
+            additional_quota_routing_overrides_provider or _load_dashboard_additional_quota_routing_overrides
+        )
         self._runtime: dict[str, RuntimeState] = {}
         self._runtime_lock = asyncio.Lock()
         self._account_locks: dict[str, asyncio.Lock] = {}
@@ -457,10 +471,7 @@ class LoadBalancer:
             ignore_standard_quota_status = effective_limit_name is not None
             routing_policy_override: str | None = None
             if effective_limit_name:
-                dashboard_settings = await get_settings_cache().get()
-                routing_overrides = parse_additional_quota_routing_policies(
-                    dashboard_settings.additional_quota_routing_policies_json
-                )
+                routing_overrides = await self._additional_quota_routing_overrides_provider()
                 additional_routing_policy = get_additional_quota_routing_policy(
                     effective_limit_name,
                     overrides=routing_overrides,

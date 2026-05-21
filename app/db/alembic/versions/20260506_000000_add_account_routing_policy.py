@@ -4,7 +4,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260506_000000_add_account_routing_policy"
-down_revision = "20260424_000000_merge_dashboard_session_ttl_and_request_log_heads"
+down_revision = "20260520_010000_add_request_logs_api_key_account_index"
 branch_labels = None
 depends_on = None
 
