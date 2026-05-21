@@ -205,6 +205,8 @@ def select_account(
                 state.used_percent = 0.0
                 state.error_count = 0
                 state.reset_at = None
+            elif state.reset_at and current < state.reset_at:
+                continue
             elif not ignore_standard_quota:
                 continue
         if state.status == AccountStatus.QUOTA_EXCEEDED and not ignore_standard_quota:
