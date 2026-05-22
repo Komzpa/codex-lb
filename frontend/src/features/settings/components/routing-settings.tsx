@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { mergeAdditionalQuotaRoutingPolicy } from "@/features/settings/additional-quota-routing";
 import { buildSettingsUpdateRequest } from "@/features/settings/payload";
 import type {
   AdditionalQuotaRoutingPolicy,
@@ -40,15 +41,17 @@ export function RoutingSettings({ settings, busy, onSave }: RoutingSettingsProps
   const [limitWarmupModel, setLimitWarmupModel] = useState(settings.limitWarmupModel);
   const [limitWarmupPrompt, setLimitWarmupPrompt] = useState(settings.limitWarmupPrompt);
   const [limitWarmupCooldown, setLimitWarmupCooldown] = useState(String(settings.limitWarmupCooldownSeconds));
+  const [additionalQuotaRoutingPolicies, setAdditionalQuotaRoutingPolicies] = useState(
+    settings.additionalQuotaRoutingPolicies,
+  );
 
   const save = (patch: Partial<SettingsUpdateRequest>) =>
     void onSave(buildSettingsUpdateRequest(settings, patch));
   const saveAdditionalQuotaPolicy = (quotaKey: string, routingPolicy: AdditionalQuotaRoutingPolicy) => {
-    save({
-      additionalQuotaRoutingPolicies: {
-        ...settings.additionalQuotaRoutingPolicies,
-        [quotaKey]: routingPolicy,
-      },
+    setAdditionalQuotaRoutingPolicies((currentPolicies) => {
+      const nextPolicies = mergeAdditionalQuotaRoutingPolicy(currentPolicies, quotaKey, routingPolicy);
+      save({ additionalQuotaRoutingPolicies: nextPolicies });
+      return nextPolicies;
     });
   };
 
@@ -396,7 +399,7 @@ export function RoutingSettings({ settings, busy, onSave }: RoutingSettingsProps
                       ) : null}
                     </div>
                     <Select
-                      value={policy.routingPolicy}
+                      value={additionalQuotaRoutingPolicies[policy.quotaKey] ?? policy.routingPolicy}
                       onValueChange={(value) =>
                         saveAdditionalQuotaPolicy(policy.quotaKey, value as AdditionalQuotaRoutingPolicy)
                       }

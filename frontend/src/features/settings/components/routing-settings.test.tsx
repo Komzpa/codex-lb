@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { mergeAdditionalQuotaRoutingPolicy } from "@/features/settings/additional-quota-routing";
 import { RoutingSettings } from "@/features/settings/components/routing-settings";
 import type { DashboardSettings } from "@/features/settings/schemas";
 
@@ -216,5 +217,22 @@ describe("RoutingSettings", () => {
 
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("merges quick additional quota routing edits from current client state", () => {
+    const firstEdit = mergeAdditionalQuotaRoutingPolicy(
+      {
+        codex: "inherit",
+        deep_research: "inherit",
+      },
+      "codex",
+      "burn_first",
+    );
+    const secondEdit = mergeAdditionalQuotaRoutingPolicy(firstEdit, "deep_research", "preserve");
+
+    expect(secondEdit).toEqual({
+      codex: "burn_first",
+      deep_research: "preserve",
+    });
   });
 });
