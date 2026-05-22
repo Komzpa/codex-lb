@@ -11,7 +11,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { mergeAdditionalQuotaRoutingPolicy } from "@/features/settings/additional-quota-routing";
+import {
+  currentAdditionalQuotaRoutingPolicies,
+  mergeAdditionalQuotaRoutingPolicy,
+} from "@/features/settings/additional-quota-routing";
 import { buildSettingsUpdateRequest } from "@/features/settings/payload";
 import type {
   AdditionalQuotaRoutingPolicy,
@@ -42,16 +45,30 @@ export function RoutingSettings({ settings, busy, onSave }: RoutingSettingsProps
   const [limitWarmupPrompt, setLimitWarmupPrompt] = useState(settings.limitWarmupPrompt);
   const [limitWarmupCooldown, setLimitWarmupCooldown] = useState(String(settings.limitWarmupCooldownSeconds));
   const [additionalQuotaRoutingPolicies, setAdditionalQuotaRoutingPolicies] = useState(
+    () => ({
+      base: settings.additionalQuotaRoutingPolicies,
+      policies: settings.additionalQuotaRoutingPolicies,
+    }),
+  );
+  const effectiveAdditionalQuotaRoutingPolicies = currentAdditionalQuotaRoutingPolicies(
+    additionalQuotaRoutingPolicies,
     settings.additionalQuotaRoutingPolicies,
   );
 
   const save = (patch: Partial<SettingsUpdateRequest>) =>
     void onSave(buildSettingsUpdateRequest(settings, patch));
   const saveAdditionalQuotaPolicy = (quotaKey: string, routingPolicy: AdditionalQuotaRoutingPolicy) => {
-    setAdditionalQuotaRoutingPolicies((currentPolicies) => {
+    setAdditionalQuotaRoutingPolicies((currentState) => {
+      const currentPolicies = currentAdditionalQuotaRoutingPolicies(
+        currentState,
+        settings.additionalQuotaRoutingPolicies,
+      );
       const nextPolicies = mergeAdditionalQuotaRoutingPolicy(currentPolicies, quotaKey, routingPolicy);
       save({ additionalQuotaRoutingPolicies: nextPolicies });
-      return nextPolicies;
+      return {
+        base: settings.additionalQuotaRoutingPolicies,
+        policies: nextPolicies,
+      };
     });
   };
 
@@ -399,7 +416,7 @@ export function RoutingSettings({ settings, busy, onSave }: RoutingSettingsProps
                       ) : null}
                     </div>
                     <Select
-                      value={additionalQuotaRoutingPolicies[policy.quotaKey] ?? policy.routingPolicy}
+                      value={effectiveAdditionalQuotaRoutingPolicies[policy.quotaKey] ?? policy.routingPolicy}
                       onValueChange={(value) =>
                         saveAdditionalQuotaPolicy(policy.quotaKey, value as AdditionalQuotaRoutingPolicy)
                       }

@@ -2,7 +2,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { mergeAdditionalQuotaRoutingPolicy } from "@/features/settings/additional-quota-routing";
+import {
+  currentAdditionalQuotaRoutingPolicies,
+  mergeAdditionalQuotaRoutingPolicy,
+} from "@/features/settings/additional-quota-routing";
 import { RoutingSettings } from "@/features/settings/components/routing-settings";
 import type { DashboardSettings } from "@/features/settings/schemas";
 
@@ -234,5 +237,16 @@ describe("RoutingSettings", () => {
       codex: "burn_first",
       deep_research: "preserve",
     });
+  });
+
+  it("uses refreshed settings policies when local quota routing state is based on older props", () => {
+    const originalPolicies = { codex: "inherit" as const };
+    const refreshedPolicies = { codex: "preserve" as const, deep_research: "normal" as const };
+    const localState = {
+      base: originalPolicies,
+      policies: { codex: "burn_first" as const },
+    };
+
+    expect(currentAdditionalQuotaRoutingPolicies(localState, refreshedPolicies)).toBe(refreshedPolicies);
   });
 });

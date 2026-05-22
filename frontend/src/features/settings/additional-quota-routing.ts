@@ -1,7 +1,14 @@
 import type { AdditionalQuotaRoutingPolicy, DashboardSettings } from "@/features/settings/schemas";
 
+type AdditionalQuotaRoutingPolicies = DashboardSettings["additionalQuotaRoutingPolicies"];
+
+export type AdditionalQuotaRoutingPolicyState = {
+  base: AdditionalQuotaRoutingPolicies;
+  policies: AdditionalQuotaRoutingPolicies;
+};
+
 export function mergeAdditionalQuotaRoutingPolicy(
-  policies: DashboardSettings["additionalQuotaRoutingPolicies"],
+  policies: AdditionalQuotaRoutingPolicies,
   quotaKey: string,
   routingPolicy: AdditionalQuotaRoutingPolicy,
 ) {
@@ -9,4 +16,11 @@ export function mergeAdditionalQuotaRoutingPolicy(
     ...policies,
     [quotaKey]: routingPolicy,
   };
+}
+
+export function currentAdditionalQuotaRoutingPolicies(
+  state: AdditionalQuotaRoutingPolicyState,
+  settingsPolicies: AdditionalQuotaRoutingPolicies,
+) {
+  return state.base === settingsPolicies ? state.policies : settingsPolicies;
 }
