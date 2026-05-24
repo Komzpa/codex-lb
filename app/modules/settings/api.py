@@ -196,9 +196,7 @@ async def update_settings(
                     else current.limit_warmup_windows
                 ),
                 limit_warmup_model=(
-                    payload.limit_warmup_model
-                    if payload.limit_warmup_model is not None
-                    else current.limit_warmup_model
+                    payload.limit_warmup_model if payload.limit_warmup_model is not None else current.limit_warmup_model
                 ),
                 limit_warmup_prompt=(
                     payload.limit_warmup_prompt
