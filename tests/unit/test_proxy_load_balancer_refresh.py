@@ -263,9 +263,12 @@ def _additional_entry(
     recorded_at: datetime | None = None,
     limit_name: str = "GPT-5.3-Codex-Spark",
     quota_key: str = "codex_spark",
-    reset_at: int = 1741500000,
+    reset_at: int | None = None,
 ) -> AdditionalUsageHistory:
     now = recorded_at or utcnow()
+    effective_reset_at = reset_at
+    if effective_reset_at is None:
+        effective_reset_at = int(now.replace(tzinfo=timezone.utc).timestamp()) + 300
     return AdditionalUsageHistory(
         id=entry_id,
         account_id=account_id,
@@ -274,7 +277,7 @@ def _additional_entry(
         metered_feature="codex_bengalfox",
         window=window,
         used_percent=used_percent,
-        reset_at=reset_at,
+        reset_at=effective_reset_at,
         window_minutes=5 if window == "primary" else 10080,
         recorded_at=now,
     )
