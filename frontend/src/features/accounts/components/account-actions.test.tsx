@@ -18,6 +18,7 @@ describe("AccountActions", () => {
         onDelete={vi.fn()}
         onReauth={vi.fn()}
         onExport={vi.fn()}
+        onExportOpenCodeAuth={vi.fn()}
         onRoutingPolicyChange={onRoutingPolicyChange}
       />,
     );
