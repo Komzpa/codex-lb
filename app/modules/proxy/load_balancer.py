@@ -226,7 +226,6 @@ class LoadBalancer:
                     relative_availability_power=relative_availability_power,
                     relative_availability_top_k=relative_availability_top_k,
                     budget_threshold_pct=budget_threshold_pct,
-                    ignore_standard_quota=selection_inputs.ignore_standard_quota_status,
                 )
 
                 selected_account_map = account_map
@@ -371,7 +370,6 @@ class LoadBalancer:
                         relative_availability_power=relative_availability_power,
                         relative_availability_top_k=relative_availability_top_k,
                         sticky_repo=repos.sticky_sessions,
-                        ignore_standard_quota=selection_inputs.ignore_standard_quota_status,
                     )
                     selected_account_map = account_map
                     selected_states = []

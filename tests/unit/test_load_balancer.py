@@ -15,8 +15,9 @@ from app.core.balancer import (
     select_account,
 )
 from app.core.usage.quota import apply_usage_quota
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
 from app.modules.proxy.load_balancer import (
+    LoadBalancer,
     RuntimeState,
     _additional_quota_applies_to_plan,
     _build_states,
@@ -276,6 +277,51 @@ def test_build_states_marks_only_gated_accounts_for_standard_quota_bypass():
 
     flags = {state.account_id: state.ignore_standard_quota for state in states}
     assert flags == {"gated-pro": True, "exempt-plus": False}
+
+
+@pytest.mark.asyncio
+async def test_load_balancer_standard_quota_bypass_stays_per_account_for_gated_models():
+    from unittest.mock import AsyncMock, MagicMock
+
+    future_reset = int(time.time() + 3600)
+    pro = _make_test_account("gated-pro", status=AccountStatus.RATE_LIMITED, reset_at=future_reset)
+    pro.plan_type = "pro"
+    plus = _make_test_account("exempt-plus", status=AccountStatus.RATE_LIMITED, reset_at=future_reset)
+    plus.plan_type = "plus"
+
+    primary = _make_test_additional_usage(
+        "gated-pro",
+        window="primary",
+        used_percent=90.0,
+        reset_at=future_reset,
+    )
+    secondary = _make_test_additional_usage(
+        "gated-pro",
+        window="secondary",
+        used_percent=90.0,
+        reset_at=future_reset,
+    )
+
+    async def latest_by_quota_key(quota_key, window, *, account_ids=None, since=None):
+        assert quota_key == "codex_spark"
+        assert account_ids == ["gated-pro", "exempt-plus"]
+        return {"gated-pro": primary if window == "primary" else secondary}
+
+    mock_repos = MagicMock()
+    mock_repos.accounts.list_accounts = AsyncMock(return_value=[pro, plus])
+    mock_repos.additional_usage.latest_by_quota_key = AsyncMock(side_effect=latest_by_quota_key)
+    mock_repos.__aenter__ = AsyncMock(return_value=mock_repos)
+    mock_repos.__aexit__ = AsyncMock(return_value=None)
+
+    balancer = LoadBalancer(
+        repo_factory=lambda: mock_repos,
+        additional_quota_routing_overrides_provider=AsyncMock(return_value={}),
+    )
+
+    result = await balancer.select_account(model="gpt-5.3-codex-spark", routing_strategy="usage_weighted")
+
+    assert result.account is not None
+    assert result.account.id == "gated-pro"
 
 
 def test_select_account_can_ignore_standard_rate_limit_without_active_reset_for_additional_pool():
@@ -795,6 +841,28 @@ def _make_test_usage(
         credits_has=credits_has,
         credits_unlimited=credits_unlimited,
         credits_balance=credits_balance,
+    )
+
+
+def _make_test_additional_usage(
+    account_id: str,
+    *,
+    window: str,
+    used_percent: float = 10.0,
+    reset_at: int | None = None,
+    recorded_at: datetime | None = None,
+) -> AdditionalUsageHistory:
+    return AdditionalUsageHistory(
+        id=1,
+        account_id=account_id,
+        quota_key="codex_spark",
+        limit_name="codex_spark",
+        metered_feature="codex_bengalfox",
+        window=window,
+        used_percent=used_percent,
+        reset_at=reset_at,
+        window_minutes=10080,
+        recorded_at=recorded_at or datetime(2025, 1, 1),
     )
 
 
