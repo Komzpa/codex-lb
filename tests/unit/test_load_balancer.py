@@ -19,6 +19,7 @@ from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.proxy.load_balancer import (
     RuntimeState,
     _additional_quota_applies_to_plan,
+    _build_states,
     _select_account_preferring_budget_safe,
     _state_above_sticky_budget_threshold,
     _state_from_account,
@@ -232,6 +233,49 @@ def test_select_account_can_ignore_active_standard_rate_limit_for_additional_poo
 
     assert result.account is not None
     assert result.account.account_id == "spark"
+
+
+def test_select_account_uses_per_account_standard_quota_bypass():
+    now = time.time()
+    states = [
+        AccountState(
+            "gated-pro",
+            AccountStatus.RATE_LIMITED,
+            used_percent=100.0,
+            reset_at=int(now + 3600),
+            ignore_standard_quota=True,
+        ),
+        AccountState(
+            "exempt-plus",
+            AccountStatus.RATE_LIMITED,
+            used_percent=100.0,
+            reset_at=int(now + 3600),
+            ignore_standard_quota=False,
+        ),
+    ]
+
+    result = select_account(states, now=now, routing_strategy="usage_weighted")
+
+    assert result.account is not None
+    assert result.account.account_id == "gated-pro"
+
+
+def test_build_states_marks_only_gated_accounts_for_standard_quota_bypass():
+    pro = _make_test_account("gated-pro", status=AccountStatus.RATE_LIMITED, reset_at=1_700_003_600)
+    pro.plan_type = "pro"
+    plus = _make_test_account("exempt-plus", status=AccountStatus.RATE_LIMITED, reset_at=1_700_003_600)
+    plus.plan_type = "plus"
+
+    states, _ = _build_states(
+        accounts=[pro, plus],
+        latest_primary={},
+        latest_secondary={},
+        runtime={},
+        ignore_standard_quota_account_ids=frozenset({pro.id}),
+    )
+
+    flags = {state.account_id: state.ignore_standard_quota for state in states}
+    assert flags == {"gated-pro": True, "exempt-plus": False}
 
 
 def test_select_account_can_ignore_standard_rate_limit_without_active_reset_for_additional_pool():

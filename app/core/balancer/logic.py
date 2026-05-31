@@ -87,6 +87,7 @@ class AccountState:
     capacity_credits: float | None = None
     health_tier: int = 0
     routing_policy: str = ROUTING_POLICY_NORMAL
+    ignore_standard_quota: bool = False
 
 
 @dataclass
@@ -195,6 +196,7 @@ def select_account(
     all_states = list(states)
 
     for state in all_states:
+        state_ignores_standard_quota = ignore_standard_quota or state.ignore_standard_quota
         if state.status == AccountStatus.DEACTIVATED:
             continue
         if state.status == AccountStatus.PAUSED:
@@ -205,11 +207,11 @@ def select_account(
                 state.used_percent = 0.0
                 state.error_count = 0
                 state.reset_at = None
-            elif state.reset_at and current < state.reset_at and not ignore_standard_quota:
+            elif state.reset_at and current < state.reset_at and not state_ignores_standard_quota:
                 continue
-            elif not ignore_standard_quota:
+            elif not state_ignores_standard_quota:
                 continue
-        if state.status == AccountStatus.QUOTA_EXCEEDED and not ignore_standard_quota:
+        if state.status == AccountStatus.QUOTA_EXCEEDED and not state_ignores_standard_quota:
             if state.reset_at and current >= state.reset_at:
                 state.status = AccountStatus.ACTIVE
                 state.used_percent = 0.0
