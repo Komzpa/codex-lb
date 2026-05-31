@@ -46,6 +46,18 @@ function applySession(set: (next: Partial<AuthState>) => void, session: AuthSess
   return session;
 }
 
+let unauthorizedRefreshInFlight: Promise<void> | null = null;
+
+function clearUnauthorizedState(): void {
+  useAuthStore.setState({
+    authenticated: false,
+    totpRequiredOnLogin: false,
+    passwordSessionActive: false,
+    initialized: true,
+    error: null,
+  });
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
   passwordRequired: false,
   authenticated: false,
@@ -124,10 +136,19 @@ export const useAuthStore = create<AuthState>((set) => ({
 }));
 
 setUnauthorizedHandler(() => {
-  useAuthStore.setState((state) => ({
-    ...state,
-    authenticated: false,
-    initialized: true,
-    error: null,
-  }));
+  const state = useAuthStore.getState();
+  if (state.totpRequiredOnLogin && state.passwordSessionActive) {
+    unauthorizedRefreshInFlight ??= state
+      .refreshSession()
+      .then(() => undefined)
+      .catch(() => {
+        clearUnauthorizedState();
+      })
+      .finally(() => {
+        unauthorizedRefreshInFlight = null;
+      });
+    return;
+  }
+
+  clearUnauthorizedState();
 });
