@@ -217,7 +217,7 @@ def test_select_account_can_ignore_standard_quota_for_additional_pool():
     assert result.account.account_id == "spark"
 
 
-def test_select_account_does_not_ignore_active_rate_limit_reset_for_additional_pool():
+def test_select_account_can_ignore_active_standard_rate_limit_for_additional_pool():
     now = time.time()
     states = [
         AccountState(
@@ -230,7 +230,8 @@ def test_select_account_does_not_ignore_active_rate_limit_reset_for_additional_p
 
     result = select_account(states, now=now, routing_strategy="usage_weighted", ignore_standard_quota=True)
 
-    assert result.account is None
+    assert result.account is not None
+    assert result.account.account_id == "spark"
 
 
 def test_select_account_can_ignore_standard_rate_limit_without_active_reset_for_additional_pool():
