@@ -6,7 +6,7 @@ import time
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, cast
 
 from app.core import usage as usage_core
 from app.core.balancer import (
@@ -1181,9 +1181,12 @@ def _state_from_account(
 
     secondary_used = effective_secondary_entry.used_percent if effective_secondary_entry else None
     secondary_reset = effective_secondary_entry.reset_at if effective_secondary_entry else None
-    credits_has = _first_not_none(primary_entry, effective_secondary_entry, "credits_has")
-    credits_unlimited = _first_not_none(primary_entry, effective_secondary_entry, "credits_unlimited")
-    credits_balance = _first_not_none(primary_entry, effective_secondary_entry, "credits_balance")
+    credits_has = cast(bool | None, _first_not_none(primary_entry, effective_secondary_entry, "credits_has"))
+    credits_unlimited = cast(
+        bool | None,
+        _first_not_none(primary_entry, effective_secondary_entry, "credits_unlimited"),
+    )
+    credits_balance = cast(float | None, _first_not_none(primary_entry, effective_secondary_entry, "credits_balance"))
 
     # If the usage window has reset (reset_at is in the past) but the last
     # recorded sample still shows 100 % usage, the data is stale.  Zero it
@@ -1466,9 +1469,9 @@ def _first_not_none(
     return None
 
 
-def _clone_usage_history(entry: UsageHistory | AdditionalUsageHistory | None) -> UsageHistory | AdditionalUsageHistory | None:
-    if entry is None:
-        return None
+def _clone_usage_history(
+    entry: UsageHistory | AdditionalUsageHistory,
+) -> UsageHistory | AdditionalUsageHistory:
     if isinstance(entry, AdditionalUsageHistory):
         data = {column.name: getattr(entry, column.name) for column in AdditionalUsageHistory.__table__.columns}
         return AdditionalUsageHistory(**data)
