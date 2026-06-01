@@ -1458,11 +1458,11 @@ def _first_not_none(
     field: str,
 ) -> object | None:
     if primary_entry is not None:
-        value = getattr(primary_entry, field)
+        value = getattr(primary_entry, field, None)
         if value is not None:
             return value
     if secondary_entry is not None:
-        return getattr(secondary_entry, field)
+        return getattr(secondary_entry, field, None)
     return None
 
 
