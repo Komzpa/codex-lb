@@ -16,7 +16,11 @@ import type {
   AccountUsageResetCredits,
 } from "@/features/accounts/schemas";
 import { useAccountTrends } from "@/features/accounts/hooks/use-accounts";
-import type { AccountProxyBindingRequest, UpstreamProxyAdmin } from "@/features/settings/schemas";
+import type {
+  AccountProxyBindingRequest,
+  UpstreamProxyAdmin,
+  UpstreamProxyEndpointTestResponse,
+} from "@/features/settings/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import { formatSlug } from "@/utils/formatters";
 
@@ -45,6 +49,7 @@ export type AccountDetailProps = {
   resetCredits?: AccountUsageResetCredits | null;
   resetCreditsLoading?: boolean;
   resetCreditsUnavailable?: boolean;
+  onProxyEndpointTest?: (endpointId: string) => Promise<UpstreamProxyEndpointTestResponse>;
 };
 
 export function AccountDetail({
@@ -69,6 +74,7 @@ export function AccountDetail({
   resetCredits = null,
   resetCreditsLoading = false,
   resetCreditsUnavailable = false,
+  onProxyEndpointTest,
 }: AccountDetailProps) {
   const { data: trends } = useAccountTrends(account?.accountId ?? null);
   const blurred = usePrivacyStore((s) => s.blurred);
@@ -149,6 +155,7 @@ export function AccountDetail({
           busy={busy}
           readOnly={readOnly}
           onSave={onProxyBindingSave}
+          onTestEndpoint={onProxyEndpointTest}
         />
       ) : null}
       <AccountUsagePanel
