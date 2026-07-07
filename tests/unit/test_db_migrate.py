@@ -1412,6 +1412,26 @@ def test_run_upgrade_auto_remaps_legacy_routing_security_merge_head(tmp_path: Pa
     assert result.current_revision == initial.current_revision
 
 
+def test_run_upgrade_auto_remaps_legacy_automation_weekly_merge_head(tmp_path: Path) -> None:
+    db_path = tmp_path / "automation-weekly-remap.db"
+    url = _db_url(db_path)
+
+    run_upgrade(url, "20260630_050000_add_automation_run_prompt_snapshot", bootstrap_legacy=False)
+
+    sync_url = to_sync_database_url(url)
+    with create_engine(sync_url, future=True).begin() as connection:
+        connection.execute(
+            text("UPDATE alembic_version SET version_num = :legacy"),
+            {"legacy": "20260706_000000_merge_automation_prompt_and_weekly_pace_heads"},
+        )
+
+    result = run_upgrade(url, "head", bootstrap_legacy=False)
+    assert result.current_revision == "20260707_020000_add_automation_job_account_scope"
+
+    drift = check_schema_drift(url)
+    assert drift == ()
+
+
 def test_run_upgrade_without_auto_remap_fails_for_legacy_revision_ids(tmp_path: Path) -> None:
     db_path = tmp_path / "no-remap.db"
     url = _db_url(db_path)
