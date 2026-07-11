@@ -499,14 +499,21 @@ Fast Mode and service-tier behavior is documented in [Responses API compatibilit
 ## Development
 
 ```bash
-# Docker
-docker compose watch
+# Prepare pinned dependencies and dashboard assets (safe to repeat).
+bin/setup
 
-# Local
-uv sync && cd frontend && bun install && cd ..
-uv run fastapi run app/main.py --reload        # backend :2455
-cd frontend && bun run dev                     # frontend :5173
+# Run the loopback-only service and follow its aggregate log.
+bin/dev
+bin/logs
+
+# Fast, merge-base-aware iteration; then the full gate before delivery.
+bin/test --diff origin/main
+bin/test
 ```
+
+See [repository readiness](docs/repo-readiness.md) for the short operational
+path and [architecture](ARCHITECTURE.md) for module and trust boundaries.
+Observable behavior remains specified under [`openspec/`](openspec/).
 
 ## Contributors ✨
 
@@ -637,6 +644,8 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/e
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/zepx"><img src="https://avatars.githubusercontent.com/u/1377772?v=4?s=100" width="100px;" alt="Choong Jun Jin"/><br /><sub><b>Choong Jun Jin</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=zepx" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=zepx" title="Tests">⚠️</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/leventov"><img src="https://avatars.githubusercontent.com/u/609240?v=4?s=100" width="100px;" alt="Roman Leventov"/><br /><sub><b>Roman Leventov</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=leventov" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://t.me/Tofighi_Times"><img src="https://avatars.githubusercontent.com/u/3256261?v=4?s=100" width="100px;" alt="AliReza Tofighi"/><br /><sub><b>AliReza Tofighi</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=ATofighi" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/dmdfami"><img src="https://avatars.githubusercontent.com/u/222630288?v=4?s=100" width="100px;" alt="DOMANHDUC"/><br /><sub><b>DOMANHDUC</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=dmdfami" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/haziqazizi"><img src="https://avatars.githubusercontent.com/u/7590703?v=4?s=100" width="100px;" alt="Haziq Azizi Bin Ahmad Zakir"/><br /><sub><b>Haziq Azizi Bin Ahmad Zakir</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=haziqazizi" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=haziqazizi" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=haziqazizi" title="Documentation">📖</a> <a href="#infra-haziqazizi" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
     </tr>
   </tbody>
 </table>
