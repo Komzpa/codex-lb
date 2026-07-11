@@ -315,6 +315,7 @@ from app.modules.proxy._service.support import (
     _StreamSettlement,
     _wait_for_websocket_continuity_gap,
     _websocket_full_replay_should_wait_for_continuity,
+    _websocket_request_can_replay_before_visible_output,
     _WebSocketConnectFailureEmitted,
     _WebSocketContinuityState,
     _WebSocketReceiveTimeout,
@@ -372,6 +373,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _pop_terminal_websocket_request_state,
     _prepare_websocket_request_state_for_account_switch,
     _prepare_websocket_request_state_for_auth_replay,
+    _prepare_websocket_request_state_for_visible_output_replay,
     _record_websocket_continuity_completion,
     _record_websocket_responses_lite_acceptance,
     _release_websocket_response_create_gate,
@@ -1929,6 +1931,9 @@ class _WebSocketMixin:
                 raise
 
             account = selection.account
+            request_state.require_security_work_authorized = (
+                request_state.require_security_work_authorized or selection.requires_security_work_authorized
+            )
             if account is not None:
                 break
 
@@ -2014,7 +2019,10 @@ class _WebSocketMixin:
             return None
         error_code = selection.error_code or "no_accounts"
         error_message = selection.error_message or "No active accounts available"
-        if require_security_work_authorized and error_code == _facade()._NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE:
+        if (
+            request_state.require_security_work_authorized
+            and error_code == _facade()._NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE
+        ):
             await proxy._emit_websocket_security_work_missing_pool(
                 websocket,
                 client_send_lock=client_send_lock,
@@ -3379,9 +3387,7 @@ class _WebSocketMixin:
                 can_retry_security_work = (
                     not account.security_work_authorized
                     and not has_other_pending_requests
-                    and request_state.response_id is None
-                    and request_state.replay_count < 1
-                    and bool(request_state.request_text)
+                    and _websocket_request_can_replay_before_visible_output(request_state)
                     and not request_state.file_required_preferred_account
                     and (
                         request_state.previous_response_id is None
@@ -3392,25 +3398,13 @@ class _WebSocketMixin:
                     )
                 )
                 if can_retry_security_work:
-                    retry_text = request_state.request_text
-                    if request_state.previous_response_id is not None:
-                        retry_text = request_state.fresh_upstream_request_text
+                    retry_text = _prepare_websocket_request_state_for_visible_output_replay(request_state)
                     if retry_text:
-                        request_state.replay_count += 1
-                        request_state.response_id = None
-                        request_state.awaiting_response_created = True
                         request_state.require_security_work_authorized = True
                         request_state.error_code_override = _facade()._SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE
                         request_state.error_message_override = terminal_error_message
                         request_state.error_type_override = error.type if error else None
                         request_state.error_param_override = error.param if error else None
-                        if retry_text != request_state.request_text:
-                            request_state.previous_response_id = None
-                            request_state.proxy_injected_previous_response_id = False
-                            request_state.request_text = retry_text
-                            request_state.responses_lite_model = (
-                                request_state.fresh_upstream_request_responses_lite_model
-                            )
                         upstream_control.reconnect_requested = True
                         upstream_control.suppress_downstream_event = True
                         await _release_websocket_response_create_gate(request_state, response_create_gate)
@@ -3429,6 +3423,8 @@ class _WebSocketMixin:
                         ]
                         upstream_control.replay_request_state = request_state
                         return downstream_text
+                request_state.require_security_work_authorized = True
+                upstream_control.reconnect_requested = True
 
         await proxy._finalize_websocket_request_state(
             request_state,

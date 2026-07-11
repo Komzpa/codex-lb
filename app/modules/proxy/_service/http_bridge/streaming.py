@@ -756,6 +756,13 @@ class _HTTPBridgeStreamingMixin:
         previous_response_trimmed_input_fingerprint: str | None = None
         durable_full_resend_anchor_count: int | None = None
         durable_full_resend_anchor_fingerprint: str | None = None
+        require_security_work_authorized = bool(
+            durable_lookup is not None and durable_lookup.requires_security_work_authorized
+        )
+        if not require_security_work_authorized:
+            require_security_work_authorized = await self._security_lineage_requires_security_work_authorized(
+                _sticky_key_from_session_header(headers)
+            )
         durable_model_transition_lookup = (
             durable_lookup
             if durable_lookup is not None and not _http_bridge_models_compatible(durable_lookup.model, payload.model)
@@ -783,6 +790,7 @@ class _HTTPBridgeStreamingMixin:
                 key=bridge_session_key,
                 incoming_turn_state=incoming_turn_state_header,
                 api_key=api_key,
+                require_security_work_authorized=require_security_work_authorized,
             )
             forwards_to_active_owner = await self._http_bridge_can_forward_to_active_owner(durable_lookup)
             durable_anchor_trimmable = _input_prefix_matches_stored_context(
@@ -859,13 +867,7 @@ class _HTTPBridgeStreamingMixin:
             payload=effective_payload,
             durable_lookup=durable_lookup,
         )
-        request_state.require_security_work_authorized = bool(
-            durable_lookup is not None and durable_lookup.requires_security_work_authorized
-        )
-        if not request_state.require_security_work_authorized:
-            request_state.require_security_work_authorized = (
-                await self._security_lineage_requires_security_work_authorized(request_state.security_lineage_id)
-            )
+        request_state.require_security_work_authorized = require_security_work_authorized
         request_state.preferred_account_id = (
             durable_lookup.account_id
             if (

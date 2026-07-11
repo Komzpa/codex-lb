@@ -21,6 +21,20 @@ The classifier MUST recognize both the legacy cybersecurity-risk message and the
 - **THEN** codex-lb emits a non-terminal `codex_lb.warning` with `code="no_security_work_authorized_accounts"`
 - **AND** codex-lb returns the original security-work authorization error without selecting an ordinary account
 
+#### Scenario: Classified Codex lineage remains classified after routing cleanup
+
+- **WHEN** a root Codex session has been classified as requiring security-work authorization
+- **AND** its ordinary account-affinity row is removed because no authorized account can currently be selected
+- **THEN** codex-lb MUST retain a separate durable security-work marker for that lineage
+- **AND** later turns and child turns MUST remain restricted to security-work-authorized accounts
+
+#### Scenario: Failed authorized reconnect preserves classification
+
+- **WHEN** codex-lb has durably classified a session as requiring security-work authorization
+- **AND** reconnecting that session to an authorized account fails
+- **THEN** codex-lb MUST preserve the durable security-work requirement
+- **AND** a later retry MUST NOT return the session to the ordinary account pool
+
 #### Scenario: Unrooted request has no authorized account
 
 - **WHEN** an unrooted request attempts a security-work-authorized retry
@@ -41,3 +55,18 @@ The classifier MUST recognize both the legacy cybersecurity-risk message and the
 - **WHEN** a downstream websocket request is eligible for security-work replay
 - **THEN** codex-lb releases the request's response-create gate before scheduling the replay
 - **AND** the replay can acquire the gate instead of blocking behind the failed first attempt
+
+#### Scenario: Non-replayable WebSocket denial retires the ordinary connection
+
+- **WHEN** a direct WebSocket request receives a security-work authorization denial after replay is no longer safe
+- **THEN** codex-lb forwards the terminal denial for that request
+- **AND** codex-lb MUST retire the ordinary upstream connection before accepting another turn for the classified lineage
+- **AND** the next turn MUST pass through security-work-authorized account selection
+
+#### Scenario: Classified local bridge cannot satisfy ordinary reuse
+
+- **GIVEN** a local HTTP bridge session is marked as requiring security-work authorization
+- **AND** its current account is not security-work-authorized
+- **WHEN** durable reattach checks whether the bridge can preserve local continuity
+- **THEN** codex-lb MUST treat the local bridge as non-reusable
+- **AND** it MUST preserve or inject the durable response anchor before selecting an authorized bridge

@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Iterator, Literal, Protocol, Self, cast
 from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import call as mock_call
 
 import aiohttp
 import anyio
@@ -38,7 +39,7 @@ from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute
 from app.core.utils.request_id import get_request_id, reset_request_id, set_request_id
 from app.core.utils.sse import parse_sse_data_json
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, StickySession, StickySessionKind
 from app.modules.accounts import auth_manager as auth_manager_module
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
@@ -11398,7 +11399,7 @@ async def test_http_bridge_retries_security_work_warning_on_authorized_account(m
 
 
 @pytest.mark.asyncio
-async def test_http_bridge_failed_security_reconnect_rolls_back_new_durable_requirement(monkeypatch):
+async def test_http_bridge_failed_security_reconnect_preserves_durable_requirement(monkeypatch):
     service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     account = _make_account("acc_bridge_security_rollback")
     request_state = proxy_service._WebSocketRequestState(
@@ -11441,9 +11442,9 @@ async def test_http_bridge_failed_security_reconnect_rolls_back_new_durable_requ
 
     assert retried is False
     require_security.assert_awaited_once_with(session_id="durable-security-rollback")
-    clear_security.assert_awaited_once_with(session_id="durable-security-rollback")
-    assert request_state.require_security_work_authorized is False
-    assert session.requires_security_work_authorized is False
+    clear_security.assert_not_awaited()
+    assert request_state.require_security_work_authorized is True
+    assert session.requires_security_work_authorized is True
 
 
 @pytest.mark.asyncio
@@ -11817,7 +11818,7 @@ async def test_http_bridge_replays_previous_response_from_validated_full_resend_
 
 
 @pytest.mark.asyncio
-async def test_websocket_keeps_previous_response_pinned_security_work_error(monkeypatch):
+async def test_websocket_replays_created_only_previous_response_security_work_error(monkeypatch):
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     handle_stream_error = AsyncMock()
@@ -11830,12 +11831,15 @@ async def test_websocket_keeps_previous_response_pinned_security_work_error(monk
         reasoning_effort=None,
         api_key_reservation=None,
         started_at=1.0,
-        awaiting_response_created=True,
         request_text='{"type":"response.create","previous_response_id":"resp_anchor","input":"tail"}',
         previous_response_id="resp_anchor",
         preferred_account_id="acc_ws_security_original_owner",
         fresh_upstream_request_text='{"type":"response.create","input":"full resend"}',
         fresh_upstream_request_is_retry_safe=True,
+        response_id="resp_created_security_previous",
+        awaiting_response_created=False,
+        response_event_count=1,
+        downstream_visible=False,
     )
     pending_requests = deque([request_state])
     upstream_control = proxy_service._WebSocketUpstreamControl()
@@ -11874,7 +11878,64 @@ async def test_websocket_keeps_previous_response_pinned_security_work_error(monk
     assert request_state.replay_count == 1
     assert request_state.previous_response_id is None
     assert request_state.require_security_work_authorized is True
+    assert request_state.replay_downstream_response_id == "resp_created_security_previous"
+    assert request_state.suppress_next_created_downstream is True
     handle_stream_error.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_websocket_retires_nonreplayable_security_work_connection(monkeypatch):
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    account = _make_account("acc_ws_security_visible")
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="ws_req_security_visible",
+        model="gpt-5.6-sol",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        request_text='{"type":"response.create","input":"security review"}',
+        response_id="resp_security_visible",
+        awaiting_response_created=False,
+        response_event_count=2,
+        downstream_visible=True,
+        security_lineage_id="root-security-visible",
+    )
+    pending_requests = deque([request_state])
+    upstream_control = proxy_service._WebSocketUpstreamControl()
+    payload = {
+        "type": "response.failed",
+        "response": {
+            "id": "resp_security_visible",
+            "status": "failed",
+            "error": {
+                "code": "invalid_request_error",
+                "type": "invalid_request_error",
+                "message": (
+                    "This content can't be shown. We take extra caution with cybersecurity requests. "
+                    "Trusted Access: https://openai.com/form/enterprise-trusted-access-for-cyber/"
+                ),
+            },
+        },
+    }
+
+    downstream_text = await service._process_upstream_websocket_text(
+        json.dumps(payload, separators=(",", ":")),
+        account=account,
+        account_id_value=account.id,
+        pending_requests=pending_requests,
+        pending_lock=anyio.Lock(),
+        api_key=None,
+        upstream_control=upstream_control,
+        response_create_gate=asyncio.Semaphore(1),
+    )
+
+    assert '"type":"response.failed"' in downstream_text
+    assert upstream_control.reconnect_requested is True
+    assert upstream_control.suppress_downstream_event is False
+    assert upstream_control.replay_request_state is None
+    assert request_state.require_security_work_authorized is True
+    assert list(pending_requests) == []
 
 
 @pytest.mark.asyncio
@@ -12247,6 +12308,63 @@ async def test_connect_proxy_websocket_passes_sticky_kind_to_load_balancer(monke
     assert await_args is not None
     assert await_args.kwargs["sticky_key"] == "codex-session-1"
     assert await_args.kwargs["sticky_kind"] == proxy_service.StickySessionKind.CODEX_SESSION
+
+
+@pytest.mark.asyncio
+async def test_select_websocket_connect_account_uses_lineage_derived_security_requirement(monkeypatch):
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    select_account = AsyncMock(
+        return_value=AccountSelection(
+            account=None,
+            error_message="No accounts marked as authorized for security work",
+            error_code="no_security_work_authorized_accounts",
+        )
+    )
+    missing_pool = AsyncMock()
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(proxy_service, "_remaining_budget_seconds", lambda _deadline: 10.0)
+    monkeypatch.setattr(service._load_balancer, "select_account", select_account)
+    monkeypatch.setattr(service, "_security_lineage_requires_security_work_authorized", AsyncMock(return_value=True))
+    monkeypatch.setattr(service, "_emit_websocket_security_work_missing_pool", missing_pool)
+
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="ws_req_lineage_missing_security_pool",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        security_lineage_id="root-security-lineage-missing-pool",
+    )
+
+    selected_account = await service._select_websocket_connect_account(
+        123.0,
+        sticky_key="root-security-lineage-missing-pool",
+        sticky_kind=proxy_service.StickySessionKind.CODEX_SESSION,
+        prefer_earlier_reset=False,
+        prefer_earlier_reset_window="secondary",
+        routing_strategy="usage_weighted",
+        model="gpt-5.1",
+        request_state=request_state,
+        api_key=None,
+        client_send_lock=anyio.Lock(),
+        websocket=cast(WebSocket, SimpleNamespace(send_text=AsyncMock())),
+        reallocate_sticky=False,
+        sticky_max_age_seconds=None,
+        exclude_account_ids=set(),
+        preferred_account_id=None,
+        require_security_work_authorized=False,
+    )
+
+    assert selected_account is None
+    assert request_state.require_security_work_authorized is True
+    assert select_account.await_args is not None
+    assert select_account.await_args.kwargs["require_security_work_authorized"] is True
+    missing_pool.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -24530,6 +24648,128 @@ async def test_select_account_with_budget_forwards_estimated_lease_tokens(monkey
 
 
 @pytest.mark.asyncio
+async def test_bind_security_lineage_selection_releases_selected_lease_when_marking_fails(monkeypatch):
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    account = _make_account("acc_security_lineage_mark_fail")
+    account.security_work_authorized = True
+    lease = AccountLease(
+        lease_id="lease_security_lineage_mark_fail",
+        account_id=account.id,
+        kind="stream",
+        acquired_at=1.0,
+    )
+    selection = AccountSelection(account=account, error_message=None, lease=lease)
+    mark_requirement = AsyncMock(side_effect=RuntimeError("sticky write failed"))
+    release_account_lease = AsyncMock()
+    monkeypatch.setattr(service, "_mark_security_lineage_requirement", mark_requirement)
+    monkeypatch.setattr(service._load_balancer, "release_account_lease", release_account_lease)
+
+    with pytest.raises(RuntimeError, match="sticky write failed"):
+        await service._bind_security_lineage_selection(
+            "root-security-lineage-mark-fail",
+            selection,
+            require_security_work_authorized=True,
+        )
+
+    assert selection.requires_security_work_authorized is True
+    mark_requirement.assert_awaited_once_with(
+        "root-security-lineage-mark-fail",
+        account_id=account.id,
+    )
+    release_account_lease.assert_awaited_once_with(lease)
+
+    ordinary_selection = AccountSelection(account=account, error_message=None, lease=lease)
+    returned = await service._bind_security_lineage_selection(
+        "root-security-lineage-mark-fail",
+        ordinary_selection,
+        require_security_work_authorized=False,
+    )
+    assert returned is ordinary_selection
+    assert ordinary_selection.requires_security_work_authorized is False
+    assert mark_requirement.await_count == 1
+    release_account_lease.assert_awaited_once_with(lease)
+
+
+@pytest.mark.asyncio
+async def test_security_lineage_marker_survives_routing_row_cleanup():
+    request_logs = _RequestLogsRecorder()
+    sticky_sessions = AsyncMock()
+    marker = StickySession(
+        key="security-work:root-security-lineage-cleanup",
+        kind=StickySessionKind.CODEX_SESSION,
+        account_id="acc_security_lineage_cleanup",
+        requires_security_work_authorized=True,
+    )
+    sticky_sessions.get_entry.side_effect = [marker]
+
+    class _StickyRepoContext:
+        async def __aenter__(self) -> ProxyRepositories:
+            return ProxyRepositories(
+                accounts=cast(AccountsRepository, AsyncMock()),
+                usage=cast(UsageRepository, AsyncMock()),
+                request_logs=cast(RequestLogsRepository, request_logs),
+                sticky_sessions=cast(StickySessionsRepository, sticky_sessions),
+                api_keys=cast(ApiKeysRepository, AsyncMock()),
+                additional_usage=cast(AdditionalUsageRepository, AsyncMock()),
+            )
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    service = proxy_service.ProxyService(cast(proxy_service.ProxyRepoFactory, lambda: _StickyRepoContext()))
+
+    required = await service._security_lineage_requires_security_work_authorized("root-security-lineage-cleanup")
+
+    assert required is True
+    sticky_sessions.get_entry.assert_awaited_once_with(
+        "security-work:root-security-lineage-cleanup",
+        kind=StickySessionKind.CODEX_SESSION,
+    )
+
+
+@pytest.mark.asyncio
+async def test_mark_security_lineage_requirement_persists_dedicated_marker():
+    request_logs = _RequestLogsRecorder()
+    sticky_sessions = AsyncMock()
+
+    class _StickyRepoContext:
+        async def __aenter__(self) -> ProxyRepositories:
+            return ProxyRepositories(
+                accounts=cast(AccountsRepository, AsyncMock()),
+                usage=cast(UsageRepository, AsyncMock()),
+                request_logs=cast(RequestLogsRepository, request_logs),
+                sticky_sessions=cast(StickySessionsRepository, sticky_sessions),
+                api_keys=cast(ApiKeysRepository, AsyncMock()),
+                additional_usage=cast(AdditionalUsageRepository, AsyncMock()),
+            )
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    service = proxy_service.ProxyService(cast(proxy_service.ProxyRepoFactory, lambda: _StickyRepoContext()))
+
+    await service._mark_security_lineage_requirement(
+        "root-security-lineage-marker",
+        account_id="acc_security_lineage_marker",
+    )
+
+    assert sticky_sessions.upsert.await_args_list == [
+        mock_call(
+            "security-work:root-security-lineage-marker",
+            "acc_security_lineage_marker",
+            kind=StickySessionKind.CODEX_SESSION,
+            requires_security_work_authorized=True,
+        ),
+        mock_call(
+            "root-security-lineage-marker",
+            "acc_security_lineage_marker",
+            kind=StickySessionKind.CODEX_SESSION,
+            requires_security_work_authorized=True,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("request_stage", "expected_reserve"),
     [("first_turn", 3), ("follow_up", 3), ("bootstrap_rebind", 3), ("reattach", 0)],
@@ -25434,8 +25674,8 @@ async def test_stream_http_bridge_or_retry_routes_input_file_file_id_without_rej
     assert calls == [(payload, "acc_doc")]
 
 
-def test_classify_upstream_close_retries_clean_close_before_any_response_event():
-    assert proxy_service._classify_upstream_close(1000, response_events_seen=0) == "transient"
+def test_classify_upstream_close_preserves_clean_startup_rejection():
+    assert proxy_service._classify_upstream_close(1000, response_events_seen=0) == "rejected"
     assert proxy_service._classify_upstream_close(1000, response_events_seen=1) == "transient"
     assert proxy_service._classify_upstream_close(1011, response_events_seen=0) == "transient"
     assert proxy_service._classify_upstream_close(1008, response_events_seen=0) == "rejected"
@@ -25561,6 +25801,115 @@ async def test_reconnect_http_bridge_skips_extra_same_account_retry_after_keepal
         force_owner_epoch_advance=True,
         claim_account_id=account_b.id,
     )
+
+
+@pytest.mark.asyncio
+async def test_reconnect_http_bridge_session_sets_security_requirement_before_durable_claim(monkeypatch):
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    account_a = _make_account("acc_bridge_reconnect_security_a")
+    account_b = _make_account("acc_bridge_reconnect_security_b")
+    account_b.security_work_authorized = True
+    old_upstream = AsyncMock()
+    new_upstream = SimpleNamespace(response_header=lambda _name: None)
+    claim_saw_security_requirement = False
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(proxy_service.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        service._load_balancer,
+        "select_account",
+        AsyncMock(return_value=AccountSelection(account=account_b, error_message=None)),
+    )
+    monkeypatch.setattr(service, "_ensure_fresh_with_budget", AsyncMock(return_value=account_b))
+    monkeypatch.setattr(service, "_open_upstream_websocket_with_budget", AsyncMock(return_value=new_upstream))
+
+    async def claim_durable(session_arg, **kwargs):
+        nonlocal claim_saw_security_requirement
+        assert kwargs["claim_account_id"] == account_b.id
+        claim_saw_security_requirement = session_arg.requires_security_work_authorized
+
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock(side_effect=claim_durable))
+
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req_bridge_reconnect_security_claim",
+        model="gpt-5.5",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=10.0,
+    )
+    session = proxy_service._HTTPBridgeSession(
+        key=proxy_service._HTTPBridgeSessionKey("prompt_cache", "bridge-security-key", None),
+        headers={},
+        affinity=proxy_service._AffinityPolicy(key="bridge-security-key"),
+        request_model="gpt-5.5",
+        account=account_a,
+        upstream=old_upstream,
+        upstream_control=proxy_service._WebSocketUpstreamControl(),
+        pending_requests=deque([request_state]),
+        pending_lock=anyio.Lock(),
+        response_create_gate=asyncio.Semaphore(1),
+        queued_request_count=1,
+        last_used_at=0.0,
+        idle_ttl_seconds=30.0,
+        durable_session_id="durable-reconnect-security",
+        durable_owner_epoch=1,
+    )
+
+    await service._reconnect_http_bridge_session(
+        session,
+        request_state=request_state,
+        require_security_work_authorized=True,
+    )
+
+    assert claim_saw_security_requirement is True
+    assert session.requires_security_work_authorized is True
+    assert session.account == account_b
+    assert session.upstream is new_upstream
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("requires_security_work_authorized", [False, True])
+async def test_refresh_durable_http_bridge_session_persists_security_requirement(
+    monkeypatch,
+    requires_security_work_authorized,
+):
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    account = _make_account("acc_bridge_refresh_security")
+    renew_live_session = AsyncMock(return_value=SimpleNamespace(owner_epoch=2))
+
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service._durable_bridge, "renew_live_session", renew_live_session)
+
+    session = proxy_service._HTTPBridgeSession(
+        key=proxy_service._HTTPBridgeSessionKey("session_header", "bridge-refresh-security", None),
+        headers={},
+        affinity=proxy_service._AffinityPolicy(key="bridge-refresh-security"),
+        request_model="gpt-5.5",
+        account=account,
+        upstream=cast(proxy_service.UpstreamResponsesWebSocket, SimpleNamespace()),
+        upstream_control=proxy_service._WebSocketUpstreamControl(),
+        pending_requests=deque(),
+        pending_lock=anyio.Lock(),
+        response_create_gate=asyncio.Semaphore(1),
+        queued_request_count=0,
+        last_used_at=0.0,
+        idle_ttl_seconds=30.0,
+        durable_session_id="durable-refresh-security",
+        durable_owner_epoch=1,
+        requires_security_work_authorized=requires_security_work_authorized,
+    )
+
+    await service._refresh_durable_http_bridge_session(session)
+
+    assert renew_live_session.await_args is not None
+    assert (
+        renew_live_session.await_args.kwargs["requires_security_work_authorized"] is requires_security_work_authorized
+    )
+    assert session.durable_owner_epoch == 2
 
 
 @pytest.mark.asyncio
@@ -27811,7 +28160,7 @@ async def test_retry_http_bridge_request_on_fresh_upstream_uses_archive_request_
 
 
 @pytest.mark.asyncio
-async def test_retry_http_bridge_precreated_request_retries_clean_close(monkeypatch):
+async def test_retry_http_bridge_precreated_request_rejects_clean_startup_close(monkeypatch):
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     send_text = AsyncMock()
@@ -27846,10 +28195,10 @@ async def test_retry_http_bridge_precreated_request_retries_clean_close(monkeypa
 
     retried = await service._retry_http_bridge_precreated_request(session)
 
-    assert retried is True
-    reconnect.assert_awaited_once_with(session, request_state=request_state)
-    send_text.assert_awaited_once()
-    assert request_state.error_code_override is None
+    assert retried is False
+    reconnect.assert_not_awaited()
+    send_text.assert_not_awaited()
+    assert request_state.error_code_override == "upstream_rejected_input"
 
 
 @pytest.mark.asyncio

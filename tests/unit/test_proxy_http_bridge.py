@@ -103,10 +103,22 @@ def test_http_bridge_reuse_honors_security_requirement_stored_on_session() -> No
     assert not http_bridge_helpers_module._http_bridge_session_meets_security_requirement(
         session, require_security_work_authorized=False
     )
+    assert not http_bridge_helpers_module._http_bridge_session_reusable_for_request(
+        session=session,
+        key=session.key,
+        incoming_turn_state=None,
+        previous_response_id=None,
+    )
 
     session.account.security_work_authorized = True
     assert http_bridge_helpers_module._http_bridge_session_meets_security_requirement(
         session, require_security_work_authorized=False
+    )
+    assert http_bridge_helpers_module._http_bridge_session_reusable_for_request(
+        session=session,
+        key=session.key,
+        incoming_turn_state=None,
+        previous_response_id=None,
     )
 
 
@@ -4279,7 +4291,7 @@ def test_durable_bridge_lookup_active_owner_accepts_naive_datetime() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_via_http_bridge_injects_durable_previous_response_anchor(
+async def test_stream_via_http_bridge_preserves_anchor_when_security_lineage_rejects_local_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
@@ -4332,6 +4344,7 @@ async def test_stream_via_http_bridge_injects_durable_previous_response_anchor(
         last_used_at=1.0,
         idle_ttl_seconds=120.0,
     )
+    service._http_bridge_sessions[session.key] = session
 
     monkeypatch.setattr(
         proxy_service,
@@ -4351,6 +4364,11 @@ async def test_stream_via_http_bridge_injects_durable_previous_response_anchor(
         ),
     )
     monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
+    monkeypatch.setattr(
+        service,
+        "_security_lineage_requires_security_work_authorized",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(
         service._durable_bridge,
         "lookup_request_targets",
@@ -15446,6 +15464,54 @@ async def test_http_bridge_startup_timeout_retires_bridge_with_healthy_sibling(
     assert list(session.pending_requests) == [healthy_request]
     assert session.queued_request_count == 0
     assert session.closed is True
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_startup_timeout_retires_bridge_when_single_replay_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    expired_request = proxy_service._WebSocketRequestState(
+        request_id="req-startup-expired-replay-failed",
+        model="gpt-5.6-sol",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        upstream_sent_at=1.0,
+        awaiting_response_created=True,
+    )
+    session = _make_bridge_session(
+        pending_requests=deque([expired_request]),
+        queued_request_count=1,
+    )
+    session.upstream = cast(UpstreamResponsesWebSocket, SimpleNamespace(receive=AsyncMock(), close=AsyncMock()))
+    next_timeout = AsyncMock(
+        return_value=proxy_service._WebSocketReceiveTimeout(
+            timeout_seconds=0.0,
+            error_code="response_created_timeout",
+            error_message="Upstream did not create a response within the startup window",
+            response_created_request_ids=frozenset({expired_request.request_id}),
+        )
+    )
+
+    async def fail_expired_requests(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        session.pending_requests.clear()
+        session.queued_request_count = 0
+
+    retire = AsyncMock()
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
+    monkeypatch.setattr(service, "_next_websocket_receive_timeout", next_timeout)
+    monkeypatch.setattr(service, "_retry_http_bridge_precreated_request", AsyncMock(return_value=False))
+    monkeypatch.setattr(service, "_fail_response_created_timeout_requests", fail_expired_requests)
+    monkeypatch.setattr(service, "_fail_pending_websocket_requests", AsyncMock())
+    monkeypatch.setattr(service, "_retire_stale_pending_http_bridge_session", retire)
+
+    await service._relay_http_bridge_upstream_messages(session)
+
+    assert session.closed is True
+    retire.assert_awaited_once_with(session, detail="response_created_timeout")
 
 
 @pytest.mark.asyncio

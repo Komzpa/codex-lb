@@ -34,6 +34,10 @@ _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
 )
 
 
+def _security_lineage_marker_key(security_lineage_id: str) -> str:
+    return f"security-work:{security_lineage_id}"
+
+
 def _is_security_work_authorization_required_error(code: str | None, message: str | None) -> bool:
     normalized_code = (code or "").strip().lower()
     if normalized_code in {
@@ -61,6 +65,12 @@ class _SecurityLineageMixin:
             sticky_sessions = getattr(repos, "sticky_sessions", None)
             if sticky_sessions is None:
                 return False
+            marker_entry = await sticky_sessions.get_entry(
+                _security_lineage_marker_key(security_lineage_id),
+                kind=StickySessionKind.CODEX_SESSION,
+            )
+            if isinstance(marker_entry, StickySession) and marker_entry.requires_security_work_authorized:
+                return True
             entry = await sticky_sessions.get_entry(
                 security_lineage_id,
                 kind=StickySessionKind.CODEX_SESSION,
@@ -81,6 +91,12 @@ class _SecurityLineageMixin:
             return
         async with self._repo_factory() as repos:
             await repos.sticky_sessions.upsert(
+                _security_lineage_marker_key(security_lineage_id),
+                account_id,
+                kind=StickySessionKind.CODEX_SESSION,
+                requires_security_work_authorized=True,
+            )
+            await repos.sticky_sessions.upsert(
                 security_lineage_id,
                 account_id,
                 kind=StickySessionKind.CODEX_SESSION,
@@ -94,13 +110,20 @@ class _SecurityLineageMixin:
         *,
         require_security_work_authorized: bool,
     ) -> AccountSelection:
+        selection.requires_security_work_authorized = require_security_work_authorized
         if (
             require_security_work_authorized
             and selection.account is not None
             and selection.account.security_work_authorized
         ):
-            await self._mark_security_lineage_requirement(
-                security_lineage_id,
-                account_id=selection.account.id,
-            )
+            try:
+                await self._mark_security_lineage_requirement(
+                    security_lineage_id,
+                    account_id=selection.account.id,
+                )
+            except BaseException:
+                load_balancer = getattr(self, "_load_balancer", None)
+                if load_balancer is not None:
+                    await load_balancer.release_account_lease(selection.lease)
+                raise
         return selection
