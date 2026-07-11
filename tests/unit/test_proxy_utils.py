@@ -11482,6 +11482,7 @@ async def test_http_bridge_owner_error_replays_validated_full_resend_on_availabl
         request_text='{"type":"response.create","previous_response_id":"resp_anchor","input":[]}',
         previous_response_id="resp_anchor",
         preferred_account_id=owner.id,
+        proxy_injected_previous_response_id=True,
         fresh_upstream_request_text='{"type":"response.create","input":[]}',
         fresh_upstream_request_is_retry_safe=True,
     )
