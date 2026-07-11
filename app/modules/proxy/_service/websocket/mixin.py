@@ -1436,6 +1436,9 @@ class _WebSocketMixin:
         request_state.useragent = useragent
         request_state.useragent_group = useragent_group
         request_state.client_ip = client_ip
+        # Keep the root independently of per-turn WebSocket affinity. Codex
+        # subagents carry the shared session-id but a distinct turn-state.
+        request_state.security_lineage_id = _sticky_key_from_session_header(headers)
         request_state.responses_lite_model = next_responses_lite_model
         request_state.expose_stale_previous_response_classifier = codex_session_affinity
         original_full_resend_input: JsonValue | None = None
@@ -1780,12 +1783,13 @@ class _WebSocketMixin:
                     prefer_earlier_reset_window=prefer_earlier_reset_window,
                     routing_strategy=routing_strategy,
                     model=model,
+                    request_stage=request_state.request_stage,
                     service_tier=request_state.requested_service_tier,
                     exclude_account_ids=exclude_account_ids,
                     preferred_account_id=preferred_account_id,
                     require_security_work_authorized=require_security_work_authorized,
+                    security_lineage_id=request_state.security_lineage_id,
                     lease_kind="stream",
-                    request_stage=request_state.request_stage,
                     estimated_lease_tokens=_facade()._estimated_lease_tokens_from_request_usage_budget(
                         request_state.request_usage_budget
                     ),
@@ -3211,13 +3215,17 @@ class _WebSocketMixin:
             )
             terminal_error_message = error.message if error else None
             if _facade()._is_security_work_authorization_required_error(terminal_error_code, terminal_error_message):
+                await proxy._mark_security_lineage_requirement(
+                    request_state.security_lineage_id,
+                    account_id=account.id,
+                )
                 can_retry_security_work = (
                     not account.security_work_authorized
                     and not has_other_pending_requests
                     and request_state.response_id is None
                     and request_state.replay_count < 1
                     and bool(request_state.request_text)
-                    and request_state.preferred_account_id != account.id
+                    and not request_state.file_required_preferred_account
                     and (
                         request_state.previous_response_id is None
                         or (
@@ -3320,6 +3328,7 @@ class _WebSocketMixin:
         pending_lock: anyio.Lock,
         proxy_request_budget_seconds: float,
         stream_idle_timeout_seconds: float,
+        response_created_timeout_seconds: float | None = None,
     ) -> _WebSocketReceiveTimeout | None:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
@@ -3329,11 +3338,39 @@ class _WebSocketMixin:
                 for request_state in pending_requests
                 if _http_bridge_request_counts_against_queue(request_state)
             ]
-        return _websocket_receive_timeout_for_pending_requests(
+            response_created_deadlines = [
+                (
+                    request_state.upstream_sent_at + response_created_timeout_seconds,
+                    request_state.request_id,
+                )
+                for request_state in pending_requests
+                if response_created_timeout_seconds is not None
+                and request_state.upstream_sent_at is not None
+                and request_state.response_id is None
+                and request_state.awaiting_response_created
+                and _http_bridge_request_counts_against_queue(request_state)
+            ]
+        receive_timeout = _websocket_receive_timeout_for_pending_requests(
             started_ats,
             proxy_request_budget_seconds=proxy_request_budget_seconds,
             stream_idle_timeout_seconds=stream_idle_timeout_seconds,
         )
+        if not response_created_deadlines:
+            return receive_timeout
+        next_response_created_deadline = min(deadline for deadline, _request_id in response_created_deadlines)
+        response_created_timeout = _WebSocketReceiveTimeout(
+            timeout_seconds=max(0.0, next_response_created_deadline - time.monotonic()),
+            error_code="response_created_timeout",
+            error_message="Upstream did not create a response within the startup window",
+            response_created_request_ids=frozenset(
+                request_id
+                for deadline, request_id in response_created_deadlines
+                if deadline == next_response_created_deadline
+            ),
+        )
+        if receive_timeout is None or response_created_timeout.timeout_seconds < receive_timeout.timeout_seconds:
+            return response_created_timeout
+        return receive_timeout
 
     async def _emit_pending_websocket_keepalive(
         self,
