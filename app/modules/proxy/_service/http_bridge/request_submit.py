@@ -1434,6 +1434,24 @@ class _HTTPBridgeRequestSubmitMixin:
             return False
         if not _websocket_request_can_replay_before_visible_output(request_state):
             return False
+        previous_response_id = request_state.previous_response_id
+        previous_proxy_injected_response_id = request_state.proxy_injected_previous_response_id
+        previous_request_text = request_state.request_text
+        previous_responses_lite_model = request_state.responses_lite_model
+        previous_fresh_upstream_request_is_retry_safe = request_state.fresh_upstream_request_is_retry_safe
+        previous_input_item_count = request_state.input_item_count
+        previous_input_full_fingerprint = request_state.input_full_fingerprint
+        previous_preferred_account_id = request_state.preferred_account_id
+        previous_excluded_account_ids = set(request_state.excluded_account_ids)
+        previous_replay_count = request_state.replay_count
+        previous_response_id_value = request_state.response_id
+        previous_response_event_count = request_state.response_event_count
+        previous_replay_downstream_response_id = request_state.replay_downstream_response_id
+        previous_suppress_next_created_downstream = request_state.suppress_next_created_downstream
+        previous_awaiting_response_created = request_state.awaiting_response_created
+        previous_force_refresh_account_id = request_state.force_refresh_account_id
+        previous_request_security_requirement = request_state.require_security_work_authorized
+        previous_session_security_requirement = session.requires_security_work_authorized
         retry_text = request_state.request_text
         if not retry_text:
             return False
@@ -1458,21 +1476,6 @@ class _HTTPBridgeRequestSubmitMixin:
         # In particular, the terminal-event handler needs the original owner
         # affinity to rewrite a failed migration as owner-unavailable.  Do not
         # leave a failed reconnect looking like a successful fresh replay.
-        previous_response_id = request_state.previous_response_id
-        previous_proxy_injected_response_id = request_state.proxy_injected_previous_response_id
-        previous_request_text = request_state.request_text
-        previous_responses_lite_model = request_state.responses_lite_model
-        previous_preferred_account_id = request_state.preferred_account_id
-        previous_excluded_account_ids = set(request_state.excluded_account_ids)
-        previous_replay_count = request_state.replay_count
-        previous_response_id_value = request_state.response_id
-        previous_response_event_count = request_state.response_event_count
-        previous_replay_downstream_response_id = request_state.replay_downstream_response_id
-        previous_suppress_next_created_downstream = request_state.suppress_next_created_downstream
-        previous_awaiting_response_created = request_state.awaiting_response_created
-        previous_force_refresh_account_id = request_state.force_refresh_account_id
-        previous_request_security_requirement = request_state.require_security_work_authorized
-        previous_session_security_requirement = session.requires_security_work_authorized
         if require_security_work_authorized:
             session.requires_security_work_authorized = True
             request_state.require_security_work_authorized = True
@@ -1540,6 +1543,9 @@ class _HTTPBridgeRequestSubmitMixin:
                 request_state.proxy_injected_previous_response_id = previous_proxy_injected_response_id
                 request_state.request_text = previous_request_text
                 request_state.responses_lite_model = previous_responses_lite_model
+                request_state.fresh_upstream_request_is_retry_safe = previous_fresh_upstream_request_is_retry_safe
+                request_state.input_item_count = previous_input_item_count
+                request_state.input_full_fingerprint = previous_input_full_fingerprint
                 request_state.preferred_account_id = previous_preferred_account_id
                 request_state.excluded_account_ids = previous_excluded_account_ids
                 request_state.replay_count = previous_replay_count
