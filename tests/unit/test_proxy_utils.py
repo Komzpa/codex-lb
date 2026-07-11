@@ -11740,6 +11740,7 @@ async def test_http_bridge_replays_previous_response_from_validated_full_resend_
         request_text='{"type":"response.create","previous_response_id":"resp_anchor","input":"tail"}',
         previous_response_id="resp_anchor",
         preferred_account_id=account.id,
+        proxy_injected_previous_response_id=True,
         fresh_upstream_request_text='{"type":"response.create","input":"full resend"}',
         fresh_upstream_request_is_retry_safe=True,
     )

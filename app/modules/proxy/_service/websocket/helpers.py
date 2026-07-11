@@ -379,7 +379,11 @@ def _prepare_websocket_request_state_for_account_switch(
     """Return an unsent request body only when moving accounts is proven safe."""
     if request_state.previous_response_id is None:
         return request_state.request_text
-    if not (request_state.fresh_upstream_request_is_retry_safe and request_state.fresh_upstream_request_text):
+    if not (
+        request_state.proxy_injected_previous_response_id
+        and request_state.fresh_upstream_request_is_retry_safe
+        and request_state.fresh_upstream_request_text
+    ):
         return None
     try:
         fresh_payload = json.loads(request_state.fresh_upstream_request_text)
@@ -749,7 +753,11 @@ def _websocket_auth_request_can_switch_account(request_state: _WebSocketRequestS
         return False
     if request_state.previous_response_id is None:
         return True
-    if not (request_state.fresh_upstream_request_is_retry_safe and request_state.fresh_upstream_request_text):
+    if not (
+        request_state.proxy_injected_previous_response_id
+        and request_state.fresh_upstream_request_is_retry_safe
+        and request_state.fresh_upstream_request_text
+    ):
         return False
     return not _websocket_fresh_request_blocks_account_switch(request_state)
 
