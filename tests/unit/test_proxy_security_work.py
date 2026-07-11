@@ -405,6 +405,7 @@ async def test_previous_response_recovery_applies_security_account_gate(
     current_key = proxy_service._HTTPBridgeSessionKey("session_header", "security-current", None)
     previous_key = proxy_service._HTTPBridgeSessionKey("session_header", "security-previous", None)
     previous_session = _make_bridge_session(key=previous_key)
+    previous_session.request_model = "gpt-5.6-sol"
     previous_session.account = _make_account("acc-security-previous-ordinary")
     previous_session.previous_response_ids = {"resp-security-previous"}
     authorized_session = _make_bridge_session(key=current_key)
