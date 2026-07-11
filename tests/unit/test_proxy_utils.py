@@ -3031,6 +3031,201 @@ def test_response_create_client_metadata_promotes_multi_agent_headers_per_reques
     }
 
 
+@pytest.mark.asyncio
+async def test_compact_turn_state_owner_lookup_is_api_key_scoped_and_fails_closed() -> None:
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    turn_state = "turn-owner"
+    owner_key = proxy_service._http_bridge_turn_state_alias_key(turn_state, "key-owner")
+    service._http_bridge_turn_state_index[owner_key] = "bridge-owner"  # type: ignore[assignment]
+    service._http_bridge_sessions["bridge-owner"] = SimpleNamespace(account=SimpleNamespace(id="account-owner"))  # type: ignore[index]
+    service._durable_bridge = SimpleNamespace(lookup_turn_state_target=AsyncMock(return_value=None))
+
+    assert (
+        await service._resolve_compact_turn_state_owner(
+            turn_state=turn_state,
+            api_key=cast(Any, SimpleNamespace(id="key-owner")),
+        )
+        == "account-owner"
+    )
+
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        await service._resolve_compact_turn_state_owner(
+            turn_state=turn_state,
+            api_key=cast(Any, SimpleNamespace(id="key-other")),
+        )
+
+    assert _proxy_error_code(exc_info.value) == "turn_state_owner_unavailable"
+    service._durable_bridge.lookup_turn_state_target.assert_awaited_once_with(
+        turn_state=turn_state,
+        api_key_id="key-other",
+    )
+
+
+@pytest.mark.asyncio
+async def test_compact_turn_state_owner_never_falls_back_to_unscoped_sticky_sessions() -> None:
+    def fail_repo_factory():
+        raise AssertionError("turn-state owner resolution must not query unscoped sticky sessions")
+
+    service = proxy_service.ProxyService(fail_repo_factory)
+    service._durable_bridge = SimpleNamespace(lookup_turn_state_target=AsyncMock(return_value=None))
+
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        await service._resolve_compact_turn_state_owner(
+            turn_state="turn-from-another-api-key-scope",
+            api_key=None,
+        )
+
+    assert _proxy_error_code(exc_info.value) == "turn_state_owner_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_compact_turn_state_owner_is_a_strict_selection_constraint(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    owner = _make_account("acc_compact_turn_owner")
+    turn_state = "turn-compact-owner"
+    alias_key = proxy_service._http_bridge_turn_state_alias_key(turn_state, None)
+    service._http_bridge_turn_state_index[alias_key] = "bridge-owner"  # type: ignore[assignment]
+    service._http_bridge_sessions["bridge-owner"] = SimpleNamespace(account=owner)  # type: ignore[index]
+    seen_selection: dict[str, object] = {}
+
+    async def select_account(_deadline: float, **kwargs: object) -> AccountSelection:
+        seen_selection.update(kwargs)
+        return AccountSelection(account=owner, error_message=None)
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "_select_account_with_budget_compatible", select_account)
+    monkeypatch.setattr(service, "_ensure_fresh", AsyncMock(return_value=owner))
+    monkeypatch.setattr(service, "_settle_compact_api_key_usage", AsyncMock())
+    monkeypatch.setattr(
+        proxy_service,
+        "core_compact_responses",
+        AsyncMock(return_value=CompactResponsePayload.model_validate({"object": "response.compaction", "output": []})),
+    )
+
+    payload = ResponsesCompactRequest.model_validate({"model": "gpt-5.1", "instructions": "hi", "input": []})
+    await service.compact_responses(payload, {"x-codex-turn-state": turn_state})
+
+    assert seen_selection["preferred_account_id"] == owner.id
+    assert seen_selection["fallback_on_preferred_account_unavailable"] is False
+
+
+@pytest.mark.asyncio
+async def test_compact_registered_synthesized_turn_state_is_a_strict_selection_constraint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    owner = _make_account("acc_compact_http_turn_owner")
+    turn_state = "http_turn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    alias_key = proxy_service._http_bridge_turn_state_alias_key(turn_state, None)
+    service._http_bridge_turn_state_index[alias_key] = "bridge-owner"  # type: ignore[assignment]
+    service._http_bridge_sessions["bridge-owner"] = SimpleNamespace(account=owner)  # type: ignore[index]
+    seen_selection: dict[str, object] = {}
+
+    async def select_account(_deadline: float, **kwargs: object) -> AccountSelection:
+        seen_selection.update(kwargs)
+        return AccountSelection(account=owner, error_message=None)
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "_select_account_with_budget_compatible", select_account)
+    monkeypatch.setattr(service, "_ensure_fresh", AsyncMock(return_value=owner))
+    monkeypatch.setattr(service, "_settle_compact_api_key_usage", AsyncMock())
+    monkeypatch.setattr(
+        proxy_service,
+        "core_compact_responses",
+        AsyncMock(return_value=CompactResponsePayload.model_validate({"object": "response.compaction", "output": []})),
+    )
+
+    payload = ResponsesCompactRequest.model_validate({"model": "gpt-5.1", "instructions": "hi", "input": []})
+    await service.compact_responses(payload, {"x-codex-turn-state": turn_state})
+
+    assert seen_selection["preferred_account_id"] == owner.id
+    assert seen_selection["fallback_on_preferred_account_unavailable"] is False
+
+
+@pytest.mark.asyncio
+async def test_compact_synthesized_turn_state_allows_file_pin_routing(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    account = _make_account("acc_compact_file_pin_synth")
+    seen_selection: dict[str, object] = {}
+
+    async def select_account(_deadline: float, **kwargs: object) -> AccountSelection:
+        seen_selection.update(kwargs)
+        return AccountSelection(account=account, error_message=None)
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "_select_account_with_budget_compatible", select_account)
+    owner_lookup = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        service,
+        "_resolve_compact_turn_state_owner",
+        owner_lookup,
+    )
+    monkeypatch.setattr(service, "_resolve_file_account_for_responses", AsyncMock(return_value=account.id))
+    monkeypatch.setattr(service, "_ensure_fresh_with_budget", AsyncMock(return_value=account))
+    monkeypatch.setattr(service, "_settle_compact_api_key_usage", AsyncMock())
+    monkeypatch.setattr(
+        proxy_service,
+        "core_compact_responses",
+        AsyncMock(return_value=CompactResponsePayload.model_validate({"object": "response.compaction", "output": []})),
+    )
+
+    payload = ResponsesCompactRequest.model_validate(
+        {
+            "model": "gpt-5.1",
+            "instructions": "hi",
+            "input": [{"type": "input_file", "file_id": "file_pinned"}],
+        }
+    )
+
+    turn_state = proxy_affinity.ensure_http_downstream_turn_state({})
+    result = await service.compact_responses(payload, {"x-codex-turn-state": turn_state})
+
+    assert result.model_extra == {"output": []}
+    assert seen_selection["preferred_account_id"] == account.id
+    assert seen_selection["fallback_on_preferred_account_unavailable"] is False
+    owner_lookup.assert_awaited_once_with(
+        turn_state=turn_state,
+        api_key=None,
+        fail_on_missing=False,
+    )
+    assert request_logs.calls[0]["status"] == "success"
+    assert request_logs.calls[0]["account_id"] == account.id
+
+
+@pytest.mark.asyncio
+async def test_compact_real_turn_state_still_blocks_file_pin_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    account = _make_account("acc_compact_file_pin_real")
+    selection = AsyncMock()
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "_select_account_with_budget_compatible", selection)
+    monkeypatch.setattr(service, "_resolve_file_account_for_responses", AsyncMock(return_value=account.id))
+
+    payload = ResponsesCompactRequest.model_validate(
+        {
+            "model": "gpt-5.1",
+            "instructions": "hi",
+            "input": [{"type": "input_file", "file_id": "file_pinned"}],
+        }
+    )
+
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        await service.compact_responses(payload, {"x-codex-turn-state": "client-turn-state-123"})
+
+    assert _proxy_error_code(exc_info.value) == "turn_state_owner_unavailable"
+    selection.assert_not_awaited()
+
+
 def test_response_create_client_metadata_ignores_blank_multi_agent_headers():
     metadata = proxy_service._response_create_client_metadata(
         {},
@@ -8152,6 +8347,50 @@ def test_owner_lookup_session_id_from_headers_prefers_turn_state_then_session_al
     assert proxy_service._owner_lookup_session_id_from_headers({"session-id": "sid_4"}) == "sid_4"
     assert proxy_service._owner_lookup_session_id_from_headers({"thread-id": "thread_5"}) == "thread_5"
     assert proxy_service._owner_lookup_session_id_from_headers({}) is None
+
+
+def test_owner_lookup_session_id_from_headers_ignores_current_handshake_generated_turn_state():
+    headers = {
+        "x-codex-turn-state": "turn_0123456789abcdef0123456789abcdef",
+        "session_id": "sid_1",
+    }
+
+    assert proxy_service._owner_lookup_session_id_from_headers(headers) == headers["x-codex-turn-state"]
+    assert (
+        proxy_service._owner_lookup_session_id_from_headers(
+            headers,
+            synthesized_turn_state=headers["x-codex-turn-state"],
+        )
+        == "sid_1"
+    )
+
+
+def test_sticky_key_for_responses_request_prefers_session_over_current_handshake_generated_turn_state():
+    payload = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.6-sol",
+            "instructions": "hi",
+            "input": [],
+            "prompt_cache_key": "cache-owner",
+        }
+    )
+    headers = {
+        "x-codex-turn-state": "turn_0123456789abcdef0123456789abcdef",
+        "session_id": "session-owner",
+    }
+
+    policy = proxy_service._sticky_key_for_responses_request(
+        payload,
+        headers=headers,
+        codex_session_affinity=True,
+        openai_cache_affinity=True,
+        openai_cache_affinity_max_age_seconds=300,
+        sticky_threads_enabled=True,
+        synthesized_turn_state=headers["x-codex-turn-state"],
+    )
+
+    assert policy.key == "session-owner"
+    assert policy.kind == proxy_service.StickySessionKind.CODEX_SESSION
 
 
 def test_sticky_key_for_responses_request_derives_prompt_cache_before_codex_session_return():
@@ -15476,6 +15715,50 @@ def test_websocket_continuity_state_reuses_codex_session_scope():
     assert unscoped is not first
 
 
+def test_websocket_continuity_state_seeds_generated_turn_state_alias():
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    generated_turn_state = "turn_0123456789abcdef0123456789abcdef"
+
+    first = service._websocket_continuity_state_for_request(
+        {"x-codex-turn-state": generated_turn_state},
+        api_key=None,
+        codex_session_affinity=True,
+        synthesized_turn_state=generated_turn_state,
+    )
+    first.last_completed_response_id = "resp_generated_anchor"
+
+    echoed = service._websocket_continuity_state_for_request(
+        {"x-codex-turn-state": generated_turn_state},
+        api_key=None,
+        codex_session_affinity=True,
+    )
+
+    assert echoed is first
+    assert echoed.last_completed_response_id == "resp_generated_anchor"
+
+
+def test_websocket_continuity_state_does_not_seed_generated_turn_state_when_affinity_disabled():
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    generated_turn_state = "turn_0123456789abcdef0123456789abcdef"
+
+    unscoped = service._websocket_continuity_state_for_request(
+        {"x-codex-turn-state": generated_turn_state},
+        api_key=None,
+        codex_session_affinity=False,
+        synthesized_turn_state=generated_turn_state,
+    )
+    unscoped.last_completed_response_id = "resp_unscoped"
+
+    echoed = service._websocket_continuity_state_for_request(
+        {"x-codex-turn-state": generated_turn_state},
+        api_key=None,
+        codex_session_affinity=True,
+    )
+
+    assert echoed is not unscoped
+    assert echoed.last_completed_response_id is None
+
+
 def test_record_websocket_continuity_completion_keeps_anchor_fields_in_sync():
     continuity_state = proxy_service._WebSocketContinuityState(
         last_completed_input_count=2,
@@ -16610,6 +16893,7 @@ async def test_finalize_websocket_request_state_updates_balancer_state(monkeypat
         "response": {
             "id": "resp_ws_incomplete",
             "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
             "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
         },
     }
@@ -16641,6 +16925,8 @@ async def test_finalize_websocket_request_state_updates_balancer_state(monkeypat
     handle_stream_error.assert_not_awaited()
     assert incomplete_upstream_control.reconnect_requested is False
     assert request_logs.calls[-1]["status"] == "error"
+    assert request_logs.calls[-1]["error_code"] == "max_output_tokens"
+    assert request_logs.calls[-1]["error_message"] == "max_output_tokens"
 
 
 @pytest.mark.asyncio
