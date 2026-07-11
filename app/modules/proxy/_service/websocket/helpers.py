@@ -50,6 +50,7 @@ from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
+    extract_input_file_ids,
 )
 from app.core.types import JsonValue
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
@@ -363,6 +364,39 @@ def _prepare_websocket_request_state_for_visible_output_replay(
     request_state.suppress_next_created_downstream = downstream_response_id is not None
     _clear_websocket_request_error_overrides(request_state)
     return request_text
+
+
+def _prepare_websocket_request_state_for_account_switch(
+    request_state: "_WebSocketRequestState",
+) -> str | None:
+    """Return an unsent request body only when moving accounts is proven safe."""
+    if request_state.previous_response_id is None:
+        return request_state.request_text
+    if not (
+        request_state.proxy_injected_previous_response_id
+        and request_state.fresh_upstream_request_is_retry_safe
+        and request_state.fresh_upstream_request_text
+    ):
+        return None
+    try:
+        fresh_payload = json.loads(request_state.fresh_upstream_request_text)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    fresh_input = fresh_payload.get("input") if isinstance(fresh_payload, dict) else None
+    if extract_input_file_ids(fresh_input):
+        # A retained full body can be replay-safe for text continuity while
+        # still naming an account-scoped uploaded file.  Keep its injected
+        # anchor instead of moving that file reference to another account.
+        return None
+
+    request_state.request_text = request_state.fresh_upstream_request_text
+    request_state.previous_response_id = None
+    request_state.preferred_account_id = None
+    request_state.proxy_injected_previous_response_id = False
+    request_state.fresh_upstream_request_is_retry_safe = False
+    request_state.responses_lite_model = request_state.fresh_upstream_request_responses_lite_model
+    _refresh_websocket_request_input_fingerprint_from_text(request_state)
+    return request_state.request_text
 
 
 def _websocket_continuity_anchor_for_payload(
