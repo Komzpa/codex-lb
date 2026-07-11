@@ -74,6 +74,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _service_tier_from_event_payload,
     _service_time,
     _upstream_websocket_disconnect_message,
+    _websocket_auth_request_can_switch_account,
     _websocket_event_error_code,
     _websocket_event_error_message,
     _websocket_event_error_param,
@@ -976,6 +977,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                     not owner_is_security_work_authorized
                     and not has_other_pending_requests
                     and _websocket_request_can_replay_before_visible_output(terminal_request_state)
+                    and _websocket_auth_request_can_switch_account(terminal_request_state)
                 )
                 if terminal_request_state.event_queue is not None:
                     await terminal_request_state.event_queue.put(
