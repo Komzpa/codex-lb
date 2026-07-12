@@ -65,6 +65,7 @@ from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
+    extract_input_file_ids,
 )
 from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
@@ -581,6 +582,18 @@ def _websocket_enforce_response_create_text_size(
         _facade()._enforce_response_create_size_limit(request_state)
     finally:
         request_state.request_text = original_request_text
+
+
+def _websocket_retry_text_contains_input_file_ids(text: str | None) -> bool:
+    if text is None:
+        return True
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return True
+    if not isinstance(payload, Mapping):
+        return True
+    return bool(extract_input_file_ids(payload.get("input")))
 
 
 class _WebSocketMixin:
@@ -3227,11 +3240,18 @@ class _WebSocketMixin:
                     request_state.security_lineage_id,
                     account_id=account.id,
                 )
+                security_retry_text = (
+                    request_state.fresh_upstream_request_text
+                    if request_state.previous_response_id is not None
+                    else request_state.request_text
+                )
+                security_retry_has_file_ids = _websocket_retry_text_contains_input_file_ids(security_retry_text)
                 can_retry_security_work = (
                     not account.security_work_authorized
                     and not has_other_pending_requests
                     and _websocket_request_can_replay_before_visible_output(request_state)
                     and not request_state.file_required_preferred_account
+                    and not security_retry_has_file_ids
                     and (
                         request_state.previous_response_id is None
                         or (
@@ -3266,7 +3286,7 @@ class _WebSocketMixin:
                         ]
                         upstream_control.replay_request_state = request_state
                         return downstream_text
-                if not request_state.file_required_preferred_account:
+                if not request_state.file_required_preferred_account and not security_retry_has_file_ids:
                     request_state.require_security_work_authorized = True
                     upstream_control.reconnect_requested = True
 

@@ -993,3 +993,62 @@ async def test_process_websocket_security_retry_never_migrates_file_pinned_owner
     assert upstream_control.replay_request_state is None
     assert upstream_control.reconnect_requested is False
     assert request_state.require_security_work_authorized is False
+
+
+@pytest.mark.asyncio
+async def test_process_websocket_security_retry_detects_file_id_in_fresh_retry_text() -> None:
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    account = _make_account("acc_ws_security_file_body")
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="ws_req_security_file_body",
+        model="gpt-5.6-sol",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        awaiting_response_created=True,
+        transport="websocket",
+        previous_response_id="resp_ws_file_body",
+        preferred_account_id=account.id,
+        file_required_preferred_account=False,
+        request_text=(
+            '{"type":"response.create","model":"gpt-5.6-sol","previous_response_id":"resp_ws_file_body","input":[]}'
+        ),
+        fresh_upstream_request_text=(
+            '{"type":"response.create","model":"gpt-5.6-sol","input":[{"type":"input_file","file_id":"file_123"}]}'
+        ),
+        fresh_upstream_request_is_retry_safe=True,
+    )
+    upstream_control = proxy_service._WebSocketUpstreamControl()
+    text = json.dumps(
+        {
+            "type": "response.failed",
+            "response": {
+                "id": "resp_ws_security_file_body",
+                "status": "failed",
+                "error": {
+                    "code": "cyber_policy",
+                    "type": "invalid_request_error",
+                    "message": "denied by Trusted Access",
+                },
+            },
+        },
+        separators=(",", ":"),
+    )
+
+    await service._process_upstream_websocket_text(
+        text,
+        account=account,
+        account_id_value=account.id,
+        pending_requests=deque([request_state]),
+        pending_lock=anyio.Lock(),
+        api_key=None,
+        upstream_control=upstream_control,
+        response_create_gate=asyncio.Semaphore(1),
+    )
+
+    assert upstream_control.replay_request_state is None
+    assert upstream_control.reconnect_requested is False
+    assert request_state.require_security_work_authorized is False
+    assert request_state.previous_response_id == "resp_ws_file_body"
+    assert request_state.fresh_upstream_request_is_retry_safe is True
