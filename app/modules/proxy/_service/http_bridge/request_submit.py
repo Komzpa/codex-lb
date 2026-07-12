@@ -1371,11 +1371,14 @@ class _HTTPBridgeRequestSubmitMixin:
         self: Any,
         session: "_HTTPBridgeSession",
         request_state: _WebSocketRequestState,
+        *,
+        durable_security_requirement_persisted: bool = False,
     ) -> bool:
         return await self._retry_http_bridge_owner_failover_request(
             session,
             request_state,
             require_security_work_authorized=True,
+            durable_security_requirement_persisted=durable_security_requirement_persisted,
         )
 
     async def _claim_http_bridge_replacement_before_swap(
@@ -1410,6 +1413,7 @@ class _HTTPBridgeRequestSubmitMixin:
         request_state: _WebSocketRequestState,
         *,
         require_security_work_authorized: bool,
+        durable_security_requirement_persisted: bool = False,
     ) -> bool:
         retry_text = request_state.request_text
         assert retry_text is not None
@@ -1433,7 +1437,11 @@ class _HTTPBridgeRequestSubmitMixin:
         owner_account_id = session.account.id
         if require_security_work_authorized and getattr(session.account, "security_work_authorized", False):
             return False
-        if require_security_work_authorized and session.durable_session_id is not None:
+        if (
+            require_security_work_authorized
+            and not durable_security_requirement_persisted
+            and session.durable_session_id is not None
+        ):
             durable_lookup = await self._durable_bridge.require_security_work_authorized(
                 session_id=session.durable_session_id
             )

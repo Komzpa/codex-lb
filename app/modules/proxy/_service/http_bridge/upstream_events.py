@@ -961,7 +961,11 @@ class _HTTPBridgeUpstreamEventsMixin:
                         )
                     )
                 if can_retry_security_work:
-                    retried = await self._retry_http_bridge_security_work_request(session, terminal_request_state)
+                    retried = await self._retry_http_bridge_security_work_request(
+                        session,
+                        terminal_request_state,
+                        durable_security_requirement_persisted=session.durable_session_id is not None,
+                    )
                     if retried:
                         return
 
