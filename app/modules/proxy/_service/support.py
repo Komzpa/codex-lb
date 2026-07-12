@@ -460,6 +460,7 @@ class _WebSocketRequestState:
     useragent_group: str | None = None
     client_ip: str | None = None
     downstream_visible: bool = False
+    last_downstream_sequence_number: int | None = None
     suppress_next_created_downstream: bool = False
     replay_downstream_response_id: str | None = None
     draining_until_terminal: bool = False
@@ -562,8 +563,17 @@ def _http_bridge_session_supports_service_tier(
         if callable(is_suppressed_model) and is_suppressed_model(request_model):
             return False
         return True
+    account_indexes_cover_owner = True
+    get_snapshot = getattr(registry, "get_snapshot", None)
+    if callable(get_snapshot):
+        snapshot = get_snapshot()
+        account_indexes_cover_owner = snapshot is not None and session.account.id in snapshot.account_plans
     account_ids_for_model = getattr(registry, "account_ids_for_model", None)
-    model_account_ids = account_ids_for_model(request_model) if callable(account_ids_for_model) else None
+    model_account_ids = (
+        account_ids_for_model(request_model)
+        if callable(account_ids_for_model) and account_indexes_cover_owner
+        else None
+    )
     if model_account_ids is not None and session.account.id not in model_account_ids:
         return False
     # Keep bridge reuse aligned with account selection: clients commonly send
@@ -573,7 +583,11 @@ def _http_bridge_session_supports_service_tier(
     if normalized_service_tier in {None, "auto", "default"}:
         allowed_plans = model_allowed_plans
     else:
-        allowed_account_ids = registry.account_ids_for_model_service_tier(request_model, request_service_tier)
+        allowed_account_ids = (
+            registry.account_ids_for_model_service_tier(request_model, request_service_tier)
+            if account_indexes_cover_owner
+            else None
+        )
         if allowed_account_ids is not None:
             return session.account.id in allowed_account_ids
 
@@ -607,6 +621,8 @@ class _WebSocketUpstreamControl:
     suppress_downstream_event: bool = False
     replay_request_state: _WebSocketRequestState | None = None
     downstream_texts: list[str] | None = None
+    downstream_sequence_request_state: _WebSocketRequestState | None = None
+    downstream_sequence_number: int | None = None
     seen_tool_call_keys: dict[ToolCallDedupeKey, None] = field(default_factory=dict)
 
 
@@ -643,6 +659,8 @@ def _websocket_request_can_replay_before_visible_output(request_state: _WebSocke
     if not request_state.request_text:
         return False
     if request_state.replay_count >= 1:
+        return False
+    if request_state.last_downstream_sequence_number is not None:
         return False
     if request_state.downstream_visible:
         return False

@@ -638,6 +638,7 @@ class ModelRegistry:
         """
         async with self._lock:
             self._snapshot = None
+            self._metadata_models = None
 
     async def update(
         self,
@@ -759,6 +760,8 @@ class ModelRegistry:
                         if plan_type is not None:
                             account_plans[account_id] = plan_type
                     for slug, account_ids in previous.model_accounts.items():
+                        if slug not in previous.models:
+                            continue
                         stale_model_accounts = account_ids & stale_account_ids
                         if not stale_model_accounts:
                             continue
@@ -770,6 +773,8 @@ class ModelRegistry:
                             if plan_type is not None:
                                 model_plans.setdefault(slug, set()).add(plan_type)
                     for slug, tier_accounts in previous.model_service_tier_accounts.items():
+                        if slug not in previous.models:
+                            continue
                         for service_tier, account_ids in tier_accounts.items():
                             stale_tier_accounts = account_ids & stale_account_ids
                             if stale_tier_accounts:
@@ -805,6 +810,8 @@ class ModelRegistry:
                     for account_id, (plan_type, account_models) in per_account_results.items():
                         account_plans[account_id] = plan_type
                         for model in account_models:
+                            if model.slug not in models:
+                                continue
                             model_accounts.setdefault(model.slug, set()).add(account_id)
                             for service_tier in _model_service_tier_keys(model):
                                 model_service_tier_accounts.setdefault(model.slug, {}).setdefault(
@@ -827,7 +834,15 @@ class ModelRegistry:
                     active_account_plans or per_account_results
                 ).issubset(account_plans)
 
-                if authoritative_account_catalogs and previous is not None:
+                if authoritative_account_catalogs:
+                    for slug in self._bootstrap_models:
+                        if slug not in models:
+                            suppressed_model_slugs.add(slug)
+                    for _plan_type, account_models in (per_account_results or {}).values():
+                        for model in account_models:
+                            if model.slug not in models:
+                                suppressed_model_slugs.add(model.slug)
+                if previous is not None:
                     for slug, previous_account_ids in previous.model_accounts.items():
                         if slug in models or not previous_account_ids:
                             continue

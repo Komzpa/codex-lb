@@ -162,6 +162,9 @@ from app.modules.proxy._service.warmup import (
 from app.modules.proxy._service.warmup import (
     _WarmupUsageSnapshot as _WarmupUsageSnapshot,
 )
+from app.modules.proxy._service.websocket.helpers import (
+    _websocket_fresh_request_blocks_account_switch,
+)
 from app.modules.proxy.affinity import (
     _extract_model_class,
     _owner_lookup_session_id_from_headers,
@@ -1455,8 +1458,19 @@ class _HTTPBridgeRequestSubmitMixin:
         retry_text = request_state.request_text
         if not retry_text:
             return False
+        if request_state.file_required_preferred_account:
+            return False
         if request_state.previous_response_id is not None:
-            retry_text = _prepare_websocket_request_state_for_account_switch(request_state)
+            if require_security_work_authorized:
+                if (
+                    not request_state.fresh_upstream_request_is_retry_safe
+                    or not request_state.fresh_upstream_request_text
+                    or _websocket_fresh_request_blocks_account_switch(request_state)
+                ):
+                    return False
+                retry_text = request_state.fresh_upstream_request_text
+            else:
+                retry_text = _prepare_websocket_request_state_for_account_switch(request_state)
             if retry_text is None:
                 return False
 

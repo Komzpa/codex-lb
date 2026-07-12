@@ -509,7 +509,7 @@ async def test_per_account_bundled_model_refreshes_metadata_without_availability
     live_sol = replace(
         _model("gpt-5.6-sol"),
         base_instructions="live per-account sol metadata",
-        raw={"use_responses_lite": False},
+        raw={"use_responses_lite": False, "service_tiers": [{"slug": "priority"}]},
     )
     registry = ModelRegistry(ttl_seconds=60.0)
 
@@ -524,6 +524,11 @@ async def test_per_account_bundled_model_refreshes_metadata_without_availability
     snapshot = registry.get_snapshot()
     assert snapshot is not None
     assert "gpt-5.6-sol" not in snapshot.models
+    assert "gpt-5.6-sol" not in snapshot.model_accounts
+    assert "gpt-5.6-sol" not in snapshot.model_service_tier_accounts
+    assert registry.account_ids_for_model("gpt-5.6-sol") == frozenset()
+    assert registry.account_ids_for_model_service_tier("gpt-5.6-sol", "priority") == frozenset()
+    assert registry.is_suppressed_model("gpt-5.6-sol") is True
     metadata_sol = registry.get_models_for_metadata()["gpt-5.6-sol"]
     assert metadata_sol.base_instructions == "live per-account sol metadata"
     assert metadata_sol.raw["use_responses_lite"] is False
@@ -611,6 +616,48 @@ async def test_partial_update_preserves_stale_plans():
 
 
 @pytest.mark.asyncio
+async def test_partial_update_does_not_promote_metadata_only_stale_catalog() -> None:
+    registry = ModelRegistry(ttl_seconds=60.0)
+    routable = _model("pro-routable")
+    metadata_only = replace(
+        _model("pro-metadata-only"),
+        raw={"service_tiers": [{"slug": "priority"}]},
+    )
+    shared = _model("gpt-5.4")
+
+    await registry.update(
+        {"pro": [routable], "plus": [shared]},
+        per_account_results={
+            "account-pro": ("pro", [routable, metadata_only]),
+            "account-plus": ("plus", [shared]),
+        },
+        active_account_plans={"account-pro": "pro", "account-plus": "plus"},
+    )
+    first = registry.get_snapshot()
+    assert first is not None
+    assert "pro-metadata-only" not in first.models
+    assert registry.plan_types_for_model("pro-metadata-only") == frozenset()
+
+    await registry.update(
+        {"plus": [shared]},
+        per_account_results={"account-plus": ("plus", [shared])},
+        active_account_plans={"account-pro": "pro", "account-plus": "plus"},
+    )
+
+    snapshot = registry.get_snapshot()
+    assert snapshot is not None
+    assert snapshot.account_catalogs_authoritative is True
+    assert "pro-metadata-only" not in snapshot.models
+    assert "pro-metadata-only" not in snapshot.model_accounts
+    assert "pro-metadata-only" not in snapshot.model_service_tier_accounts
+    assert registry.plan_types_for_model("pro-metadata-only") == frozenset()
+    assert registry.plan_types_for_model_service_tier("pro-metadata-only", "priority") == frozenset()
+    assert registry.account_ids_for_model("pro-metadata-only") == frozenset()
+    assert registry.account_ids_for_model_service_tier("pro-metadata-only", "priority") == frozenset()
+    assert registry.is_suppressed_model("pro-metadata-only") is True
+
+
+@pytest.mark.asyncio
 async def test_partial_update_drops_capabilities_for_inactive_accounts():
     registry = ModelRegistry(ttl_seconds=60.0)
     sol = _model("gpt-5.6-sol")
@@ -690,21 +737,21 @@ async def test_stale_plan_drops_models_only_removed_account_advertised():
 async def test_stale_plan_drops_removed_advertiser_model_when_previous_non_authoritative():
     # Regression for the third Codex P2: the drop-dead-model carryover invariant must
     # hold even when the PREVIOUS snapshot was NON-authoritative. First refresh: pro
-    # account-a succeeds advertising a private model gpt-5.6-sol, while same-plan
+    # account-a succeeds advertising a private model, while same-plan
     # account-b fails (no per-account catalog) -> snapshot is non-authoritative. Then
     # account-a is removed while account-b stays active and pro fails again during
     # plus's refresh. account-a's exclusive model must leave discovery: per last-known
     # per-account catalogs, no currently-active account advertises it.
     registry = ModelRegistry(ttl_seconds=60.0)
-    sol = _model("gpt-5.6-sol")
+    private = _model("private-nonauthoritative-removed")
     shared = _model("gpt-5.4")
 
     await registry.update(
-        {"pro": [sol], "plus": [shared]},
+        {"pro": [private], "plus": [shared]},
         # account-b (pro) failed this pass -> not in per_account_results, so coverage
         # is incomplete and the snapshot is non-authoritative.
         per_account_results={
-            "account-a": ("pro", [sol]),
+            "account-a": ("pro", [private]),
             "account-plus": ("plus", [shared]),
         },
         active_account_plans={"account-a": "pro", "account-b": "pro", "account-plus": "plus"},
@@ -712,7 +759,7 @@ async def test_stale_plan_drops_removed_advertiser_model_when_previous_non_autho
     first = registry.get_snapshot()
     assert first is not None
     assert first.account_catalogs_authoritative is False
-    assert "gpt-5.6-sol" in first.models
+    assert "private-nonauthoritative-removed" in first.models
 
     # Second refresh: account-a is removed; account-b (pro) stays active but pro is
     # not refreshed (stale); plus refreshes.
@@ -724,14 +771,15 @@ async def test_stale_plan_drops_removed_advertiser_model_when_previous_non_autho
 
     snapshot = registry.get_snapshot()
     assert snapshot is not None
-    assert "gpt-5.6-sol" not in snapshot.models
-    assert "gpt-5.6-sol" in registry.get_models_with_fallback()
-    assert "gpt-5.6-sol" not in snapshot.plan_models.get("pro", frozenset())
-    assert registry.plan_types_for_model("gpt-5.6-sol") == EXPECTED_GPT56_MODEL_PLANS
+    assert "private-nonauthoritative-removed" not in snapshot.models
+    assert "private-nonauthoritative-removed" not in registry.get_models_with_fallback()
+    assert "private-nonauthoritative-removed" not in snapshot.plan_models.get("pro", frozenset())
+    assert registry.plan_types_for_model("private-nonauthoritative-removed") == frozenset()
+    assert registry.is_suppressed_model("private-nonauthoritative-removed") is True
 
 
 @pytest.mark.asyncio
-async def test_unknown_account_keeps_bootstrap_model_until_authoritative_readvertise():
+async def test_unknown_account_keeps_removed_catalog_model_suppressed_until_readvertise():
     registry = ModelRegistry(ttl_seconds=60.0)
     sol = _model("gpt-5.6-sol")
     shared = _model("gpt-5.4")
@@ -754,8 +802,8 @@ async def test_unknown_account_keeps_bootstrap_model_until_authoritative_readver
     second = registry.get_snapshot()
     assert second is not None
     assert second.bootstrap_floor_active is True
-    assert "gpt-5.6-sol" in registry.get_models_with_fallback()
-    assert "gpt-5.6-sol" not in second.suppressed_model_slugs
+    assert "gpt-5.6-sol" not in registry.get_models_with_fallback()
+    assert "gpt-5.6-sol" in second.suppressed_model_slugs
 
     await registry.update(
         {"plus": [shared]},
@@ -766,10 +814,10 @@ async def test_unknown_account_keeps_bootstrap_model_until_authoritative_readver
     third = registry.get_snapshot()
     assert third is not None
     assert third.bootstrap_floor_active is True
-    assert "gpt-5.6-sol" in registry.get_models_with_fallback()
-    assert registry.plan_types_for_model("gpt-5.6-sol") == EXPECTED_GPT56_MODEL_PLANS
-    assert registry.is_suppressed_model("gpt-5.6-sol") is False
-    assert "gpt-5.6-sol" not in third.suppressed_model_slugs
+    assert "gpt-5.6-sol" not in registry.get_models_with_fallback()
+    assert registry.plan_types_for_model("gpt-5.6-sol") == frozenset()
+    assert registry.is_suppressed_model("gpt-5.6-sol") is True
+    assert "gpt-5.6-sol" in third.suppressed_model_slugs
 
     await registry.update(
         {"pro": [sol], "plus": [shared]},
@@ -831,6 +879,60 @@ async def test_authoritative_catalog_does_not_suppress_never_known_operator_mapp
 
     assert registry.plan_types_for_model("operator-mapped-never-known") == frozenset()
     assert registry.is_suppressed_model("operator-mapped-never-known") is False
+
+
+@pytest.mark.asyncio
+async def test_first_authoritative_catalog_suppresses_omitted_bootstrap_model() -> None:
+    registry = ModelRegistry(ttl_seconds=60.0)
+    advertised = _model("gpt-5.6-terra")
+
+    await registry.update(
+        {"pro": [advertised]},
+        per_account_results={"account-pro": ("pro", [advertised])},
+        active_account_plans={"account-pro": "pro"},
+    )
+
+    snapshot = registry.get_snapshot()
+    assert snapshot is not None
+    assert snapshot.account_catalogs_authoritative is True
+    assert snapshot.bootstrap_floor_active is False
+    assert "gpt-5.6-terra" in snapshot.models
+    assert "gpt-5.6-sol" not in snapshot.models
+    assert registry.plan_types_for_model("gpt-5.6-sol") == frozenset()
+    assert registry.account_ids_for_model("gpt-5.6-sol") == frozenset()
+    assert registry.is_suppressed_model("gpt-5.6-sol") is True
+    assert registry.is_suppressed_model("operator-mapped-never-known") is False
+
+
+@pytest.mark.asyncio
+async def test_authoritative_empty_catalog_drops_and_suppresses_stale_model() -> None:
+    registry = ModelRegistry(ttl_seconds=60.0)
+    stale_private = _model("private-empty-removed")
+
+    await registry.update(
+        {"pro": [stale_private]},
+        per_account_results={"account-pro": ("pro", [stale_private])},
+        active_account_plans={"account-pro": "pro"},
+    )
+    assert registry.account_ids_for_model("private-empty-removed") == frozenset({"account-pro"})
+
+    await registry.update(
+        {"pro": []},
+        per_account_results={"account-pro": ("pro", [])},
+        active_account_plans={"account-pro": "pro"},
+    )
+
+    snapshot = registry.get_snapshot()
+    assert snapshot is not None
+    assert snapshot.account_catalogs_authoritative is True
+    assert snapshot.bootstrap_floor_active is False
+    assert snapshot.models == {}
+    assert snapshot.account_plans == {"account-pro": "pro"}
+    assert "private-empty-removed" not in snapshot.model_accounts
+    assert registry.plan_types_for_model("private-empty-removed") == frozenset()
+    assert registry.account_ids_for_model("private-empty-removed") == frozenset()
+    assert registry.is_suppressed_model("private-empty-removed") is True
+    assert registry.is_suppressed_model("gpt-5.6-sol") is True
 
 
 @pytest.mark.asyncio
@@ -990,7 +1092,9 @@ async def test_clear_falls_back_to_bootstrap_floor():
     # still plan-gated (not treated as absent). Bootstrap is the floor whenever there
     # is no authoritative account coverage.
     registry = ModelRegistry(ttl_seconds=60.0)
-    await registry.update({"plus": [_model("gpt-5.4")]})
+    live_only_model = _model("live-only-after-clear")
+    await registry.update({"plus": [_model("gpt-5.4"), live_only_model]})
+    assert "live-only-after-clear" in registry.get_models_for_metadata()
 
     await registry.clear()
 
@@ -1007,6 +1111,7 @@ async def test_clear_falls_back_to_bootstrap_floor():
     # back to plan-level gating instead of excluding every account.
     assert registry.account_ids_for_model("gpt-5.6-sol") is None
     assert registry.account_ids_for_model_service_tier("gpt-5.6-sol", "priority") is None
+    assert "live-only-after-clear" not in registry.get_models_for_metadata()
 
 
 def test_needs_refresh_true_initially():
