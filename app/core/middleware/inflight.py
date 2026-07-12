@@ -45,10 +45,12 @@ class InFlightMiddleware:
         if shutdown_state.is_draining() and path not in _DRAIN_ALLOWED_HTTP_PATHS:
             response = JSONResponse(
                 status_code=503,
+                headers={"Retry-After": "1"},
                 content={
                     "error": {
                         "type": "service_unavailable",
                         "message": "Server is draining",
+                        "code": "server_draining",
                     }
                 },
             )

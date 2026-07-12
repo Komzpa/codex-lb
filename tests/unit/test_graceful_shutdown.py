@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from importlib import import_module
 
 import pytest
@@ -89,6 +90,52 @@ async def test_in_flight_middleware_increments_and_decrements() -> None:
 
     assert in_flight_during_app == 1
     assert shutdown_state.get_in_flight() == 0
+
+
+@pytest.mark.asyncio
+async def test_in_flight_middleware_marks_drain_rejection_retryable() -> None:
+    shutdown_state.set_draining(True)
+    app_called = False
+
+    async def inner_app(scope, receive, send):  # noqa: ANN001, ARG001
+        nonlocal app_called
+        app_called = True
+
+    middleware = InFlightMiddleware(inner_app)
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/backend-api/codex/responses",
+        "raw_path": b"/backend-api/codex/responses",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [],
+        "client": ("127.0.0.1", 50000),
+        "server": ("testserver", 80),
+    }
+
+    async def receive():  # noqa: ANN202
+        return {"type": "http.request", "body": b"{}", "more_body": False}
+
+    sent_messages: list[dict] = []
+
+    async def send(msg):  # noqa: ANN001, ANN202
+        sent_messages.append(msg)
+
+    await middleware(scope, receive, send)
+
+    assert app_called is False
+    assert sent_messages[0]["status"] == 503
+    headers = dict(sent_messages[0]["headers"])
+    assert headers[b"retry-after"] == b"1"
+    body = json.loads(sent_messages[1]["body"])
+    assert body["error"] == {
+        "type": "service_unavailable",
+        "message": "Server is draining",
+        "code": "server_draining",
+    }
 
 
 @pytest.mark.asyncio
