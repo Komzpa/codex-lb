@@ -1034,7 +1034,42 @@ def _compact_required_indices(
         preserved_indices = _compact_state_anchor_indices(input_value)
     required_indices = set(preserved_indices)
     if input_value:
-        required_indices.add(len(input_value) - 1)
+        latest_index = len(input_value) - 1
+        latest_item = input_value[latest_index]
+        latest_mapping = _json_mapping_or_none(latest_item)
+        latest_type = latest_mapping.get("type") if latest_mapping is not None else None
+        if latest_type not in _COMPACT_TOOL_CALL_ITEM_TYPES | _COMPACT_TOOL_CALL_OUTPUT_ITEM_TYPES:
+            required_indices.add(latest_index)
+        elif latest_mapping is not None and _compact_item_is_state_anchor(latest_mapping):
+            required_indices.add(latest_index)
+        elif latest_mapping is not None and _compact_item_has_elidable_inline_image(latest_mapping):
+            required_indices.update(
+                _compact_reconciled_tool_call_indices(
+                    input_value,
+                    {latest_index},
+                    token_counts=token_counts,
+                    token_budget=sum(token_counts),
+                    required_indices={latest_index},
+                )
+            )
+        elif latest_type in _COMPACT_TOOL_CALL_ITEM_TYPES:
+            paired_tail = _compact_reconciled_tool_call_indices(
+                input_value,
+                {latest_index},
+                token_counts=token_counts,
+                token_budget=_MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS,
+            )
+            if latest_index in paired_tail or token_counts[latest_index] <= _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS:
+                required_indices.update(paired_tail or {latest_index})
+        else:
+            paired_tail = _compact_reconciled_tool_call_indices(
+                input_value,
+                {latest_index},
+                token_counts=token_counts,
+                token_budget=_MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS,
+            )
+            if latest_index in paired_tail:
+                required_indices.update(paired_tail)
     return _compact_reconciled_tool_call_indices(
         input_value,
         required_indices,
@@ -1042,6 +1077,11 @@ def _compact_required_indices(
         token_budget=sum(token_counts),
         required_indices=required_indices,
     )
+
+
+def _compact_item_has_elidable_inline_image(item: JsonValue) -> bool:
+    _, changed = _compact_elide_inline_images(item)
+    return changed
 
 
 def _compact_elide_required_tool_output_images(
