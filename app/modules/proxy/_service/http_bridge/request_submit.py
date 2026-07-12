@@ -39,6 +39,7 @@ from app.core.errors import (
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
+    extract_input_file_ids,
 )
 from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
@@ -174,6 +175,17 @@ from app.modules.proxy.helpers import (
 from app.modules.proxy.tool_call_dedupe import (
     dedupe_replayed_side_effect_input_items,
 )
+
+
+def _http_bridge_request_contains_input_file_ids(text: str) -> bool:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return True
+    if not isinstance(payload, Mapping):
+        return True
+    return bool(extract_input_file_ids(payload.get("input")))
+
 
 logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
@@ -1399,13 +1411,6 @@ class _HTTPBridgeRequestSubmitMixin:
         *,
         require_security_work_authorized: bool,
     ) -> bool:
-        # Uploaded file ids are scoped to the account that registered them.
-        # Never mark or migrate the lineage before proving the request is
-        # replayable on another account.
-        if request_state.file_required_preferred_account:
-            return False
-        if not _websocket_request_can_replay_before_visible_output(request_state):
-            return False
         retry_text = request_state.request_text
         assert retry_text is not None
         if request_state.previous_response_id is not None:
@@ -1415,6 +1420,15 @@ class _HTTPBridgeRequestSubmitMixin:
             ):
                 return False
             retry_text = request_state.fresh_upstream_request_text
+        if _http_bridge_request_contains_input_file_ids(retry_text):
+            return False
+        # Uploaded file ids are scoped to the account that registered them.
+        # Never mark or migrate the lineage before proving the request is
+        # replayable on another account.
+        if request_state.file_required_preferred_account:
+            return False
+        if not _websocket_request_can_replay_before_visible_output(request_state):
+            return False
 
         owner_account_id = session.account.id
         if require_security_work_authorized and getattr(session.account, "security_work_authorized", False):

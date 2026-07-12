@@ -516,6 +516,70 @@ async def test_http_bridge_authorized_cyber_denial_persists_durable_requirement_
 
 
 @pytest.mark.asyncio
+async def test_http_bridge_unapproved_cyber_denial_also_persists_durable_requirement_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    owner_account = _make_account("acc-http-unapproved-cyber-denial")
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="http-unapproved-cyber-denial",
+        model="gpt-5.6-sol",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        awaiting_response_created=True,
+        downstream_visible=True,
+        event_queue=asyncio.Queue(),
+        request_text='{"type":"response.create","input":[]}',
+        transport="http",
+        security_lineage_id="root-http-unapproved-cyber-denial",
+        skip_request_log=True,
+    )
+    session = _make_bridge_session(pending_requests=deque([request_state]), queued_request_count=1)
+    session.account = owner_account
+    session.durable_session_id = "durable-http-unapproved-cyber-denial"
+    persist_lineage = AsyncMock()
+    persist_durable = AsyncMock(return_value=SimpleNamespace(session_id=session.durable_session_id))
+    retry_security_work = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "_mark_security_lineage_requirement", persist_lineage)
+    monkeypatch.setattr(service._durable_bridge, "require_security_work_authorized", persist_durable)
+    monkeypatch.setattr(service, "_retry_http_bridge_security_work_request", retry_security_work)
+
+    await service._process_http_bridge_upstream_text(
+        session,
+        json.dumps(
+            {
+                "type": "response.failed",
+                "response": {
+                    "id": "resp-http-unapproved-cyber-denial",
+                    "status": "failed",
+                    "error": {"code": "cyber_policy", "message": "denied by Trusted Access"},
+                },
+            },
+            separators=(",", ":"),
+        ),
+    )
+
+    persist_lineage.assert_awaited_once_with(
+        "root-http-unapproved-cyber-denial",
+        account_id=owner_account.id,
+    )
+    persist_durable.assert_awaited_once_with(session_id="durable-http-unapproved-cyber-denial")
+    retry_security_work.assert_not_awaited()
+    assert request_state.require_security_work_authorized is True
+    assert session.requires_security_work_authorized is True
+    assert request_state.event_queue is not None
+    advisory_event = await request_state.event_queue.get()
+    assert advisory_event is not None
+    assert "forward_original_security_work_error" in advisory_event
+    terminal_event = await request_state.event_queue.get()
+    assert terminal_event is not None
+    assert "cyber_policy" in terminal_event
+    assert await request_state.event_queue.get() is None
+
+
+@pytest.mark.asyncio
 async def test_http_bridge_reconnect_claims_durable_owner_before_publishing_account_swap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -684,6 +748,64 @@ async def test_http_bridge_security_retry_after_response_created_requires_no_vis
         assert request_state.require_security_work_authorized is True
         assert session.requires_security_work_authorized is True
         assert session.account is authorized_account
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("require_security_work_authorized", [False, True])
+async def test_http_bridge_owner_failover_never_migrates_on_file_id_in_fresh_retry_text(
+    monkeypatch: pytest.MonkeyPatch,
+    require_security_work_authorized: bool,
+) -> None:
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    owner_account = _make_account("acc_http_owner_file_retry_text")
+    session = _make_bridge_session()
+    session.account = owner_account
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="http-owner-failover-file-retry-text",
+        model="gpt-5.6-sol",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        transport="http",
+        awaiting_response_created=False,
+        response_id="resp-created-owner",
+        response_event_count=1,
+        previous_response_id="resp-owner",
+        preferred_account_id=owner_account.id,
+        excluded_account_ids={"acc-already-excluded"},
+        request_text='{"type":"response.create","previous_response_id":"resp-owner","input":["follow-up"]}',
+        responses_lite_model="gpt-5.6-sol",
+        fresh_upstream_request_text=(
+            '{"type":"response.create","input":[{"type":"input_file","file_id":"file_123"},{"type":"input_text","text":"retry"}]}'
+        ),
+        fresh_upstream_request_is_retry_safe=True,
+        fresh_upstream_request_responses_lite_model="gpt-5.6-sol-mini",
+    )
+    session.pending_requests.append(request_state)
+    session.queued_request_count = 1
+    reconnect = AsyncMock(side_effect=RuntimeError("replacement connect unexpected"))
+    monkeypatch.setattr(service, "_reconnect_http_bridge_session", reconnect)
+
+    assert not await service._retry_http_bridge_owner_failover_request(
+        session,
+        request_state,
+        require_security_work_authorized=require_security_work_authorized,
+    )
+
+    reconnect.assert_not_awaited()
+    assert request_state.previous_response_id == "resp-owner"
+    assert request_state.proxy_injected_previous_response_id is False
+    assert request_state.request_text == (
+        '{"type":"response.create","previous_response_id":"resp-owner","input":["follow-up"]}'
+    )
+    assert request_state.responses_lite_model == "gpt-5.6-sol"
+    assert request_state.preferred_account_id == owner_account.id
+    assert request_state.excluded_account_ids == {"acc-already-excluded"}
+    assert request_state.require_security_work_authorized is False
+    assert session.requires_security_work_authorized is False
+    assert list(session.pending_requests) == [request_state]
+    assert session.queued_request_count == 1
 
 
 @pytest.mark.asyncio
