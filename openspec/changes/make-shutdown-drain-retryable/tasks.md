@@ -1,0 +1,2 @@
+- [x] Return a stable retryable error code and delay hint during shutdown drain.
+- [x] Add middleware regression coverage for the exact Responses route shape.
