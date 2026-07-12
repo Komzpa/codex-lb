@@ -1,0 +1,3 @@
+- [x] Add a monotonic bounded lease for internal drain requests.
+- [x] Report lease TTL and expiry from drain start and status.
+- [x] Cover lease renewal, explicit stop, automatic expiry, and middleware recovery.

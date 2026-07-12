@@ -435,17 +435,18 @@ async def test_internal_drain_start_sets_draining_and_marks_bridge_sessions():
         app=SimpleNamespace(state=SimpleNamespace(proxy_service=proxy_service)),
     )
 
-    with (
-        patch("app.core.shutdown.set_bridge_drain_active") as set_bridge_drain_active,
-        patch("app.core.shutdown.set_draining") as set_draining,
-    ):
+    with patch("app.core.shutdown.start_internal_drain_lease", return_value=130.0) as start_lease:
         response = await start_internal_drain(cast(Any, request))
 
-    set_bridge_drain_active.assert_called_once_with(True)
-    set_draining.assert_called_once_with(True)
+    start_lease.assert_called_once_with()
     proxy_service.mark_http_bridge_draining.assert_awaited_once()
     assert response.status == "ok"
-    assert response.checks == {"draining": "ok"}
+    assert response.checks == {
+        "draining": "true",
+        "bridge_drain_active": "true",
+        "drain_lease_ttl_seconds": "30",
+        "drain_lease_expires_at_monotonic": "130.000000",
+    }
 
 
 @pytest.mark.asyncio
@@ -469,14 +470,10 @@ async def test_internal_drain_stop_clears_draining_flags():
 
     request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
 
-    with (
-        patch("app.core.shutdown.set_bridge_drain_active") as set_bridge_drain_active,
-        patch("app.core.shutdown.set_draining") as set_draining,
-    ):
+    with patch("app.core.shutdown.clear_internal_drain_lease") as clear_lease:
         response = await stop_internal_drain(cast(Any, request))
 
-    set_draining.assert_called_once_with(False)
-    set_bridge_drain_active.assert_called_once_with(False)
+    clear_lease.assert_called_once_with()
     assert response.status == "ok"
     assert response.checks == {"draining": "false"}
 
@@ -515,9 +512,8 @@ async def test_internal_drain_status_reports_shutdown_state():
     request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
 
     with (
-        patch("app.core.shutdown.is_draining", return_value=True),
-        patch("app.core.shutdown.is_bridge_drain_active", return_value=True),
         patch("app.core.shutdown.get_in_flight", return_value=2),
+        patch("app.core.shutdown.get_internal_drain_status", return_value=(True, True, 30.0, 130.0)),
     ):
         response = await internal_drain_status(cast(Any, request))
 
@@ -526,6 +522,8 @@ async def test_internal_drain_status_reports_shutdown_state():
         "draining": "true",
         "bridge_drain_active": "true",
         "in_flight": "2",
+        "drain_lease_ttl_seconds": "30",
+        "drain_lease_expires_at_monotonic": "130.000000",
     }
 
 
