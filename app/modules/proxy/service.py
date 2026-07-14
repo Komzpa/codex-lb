@@ -226,9 +226,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_prewarm_canary_bucket as _http_bridge_prewarm_canary_bucket,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_request_budget_seconds as _http_bridge_request_budget_seconds,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_request_counts_against_queue as _http_bridge_request_counts_against_queue,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -236,6 +233,9 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_requires_cluster_registration as _http_bridge_requires_cluster_registration,
+)
+from app.modules.proxy._service.http_bridge.helpers import (
+    _http_bridge_response_create_gate_timeout_seconds as _http_bridge_response_create_gate_timeout_seconds,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_runtime_config as _http_bridge_runtime_config,
@@ -1275,39 +1275,12 @@ class ProxyService(
     ) -> None:
         timeout_seconds = _proxy_admission_wait_timeout_seconds()
         if bridge_session is not None:
-            settings = get_settings()
-            stale_threshold = float(
-                getattr(settings, "http_responses_session_bridge_stuck_gate_retire_after_seconds", 300.0)
+            timeout_seconds = await _http_bridge_response_create_gate_timeout_seconds(
+                bridge_session,
+                request_state,
+                initial_timeout_seconds=timeout_seconds,
+                settings=get_settings(),
             )
-            now = time.monotonic()
-            async with bridge_session.pending_lock:
-                gate_holders = [
-                    state
-                    for state in bridge_session.pending_requests
-                    if state.response_create_gate_acquired and state.awaiting_response_created
-                ]
-            silent_remaining = [
-                max(0.0, stale_threshold - max(0.0, now - state.started_at))
-                for state in gate_holders
-                if state.latency_first_upstream_event_ms is None and state.latency_response_created_ms is None
-            ]
-            if silent_remaining:
-                timeout_seconds = max(timeout_seconds, min(silent_remaining))
-            elif gate_holders:
-                timeout_seconds = max(
-                    timeout_seconds,
-                    float(getattr(settings, "stream_idle_timeout_seconds", 7200.0)),
-                )
-            # Bridged requests retry gate acquisition within the bridge
-            # request budget; a final attempt must not run past it, so each
-            # acquisition wait is clamped to the remaining budget. Retry
-            # states carry the original deadline because their started_at
-            # is reset when they are re-prepared.
-            deadline = request_state.bridge_request_deadline
-            if deadline is None:
-                deadline = request_state.started_at + _http_bridge_request_budget_seconds(get_settings())
-            remaining_budget = deadline - time.monotonic()
-            timeout_seconds = max(0.0, min(timeout_seconds, remaining_budget))
         request_state.response_create_gate = response_create_gate
         request_state.response_create_gate_wait_started_at = time.monotonic()
         if account_id is not None:

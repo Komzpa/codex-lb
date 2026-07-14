@@ -2040,6 +2040,40 @@ def _http_bridge_request_budget_seconds(settings: object) -> float:
     )
 
 
+async def _http_bridge_response_create_gate_timeout_seconds(
+    session: _HTTPBridgeSession,
+    request_state: _WebSocketRequestState,
+    *,
+    initial_timeout_seconds: float,
+    settings: object,
+) -> float:
+    """Respect a live holder's window without exceeding the request deadline."""
+
+    timeout_seconds = initial_timeout_seconds
+    stale_threshold = float(getattr(settings, "http_responses_session_bridge_stuck_gate_retire_after_seconds", 300.0))
+    now = time.monotonic()
+    async with session.pending_lock:
+        gate_holders = [
+            state
+            for state in session.pending_requests
+            if state.response_create_gate_acquired and state.awaiting_response_created
+        ]
+    silent_remaining = [
+        max(0.0, stale_threshold - max(0.0, now - state.started_at))
+        for state in gate_holders
+        if state.latency_first_upstream_event_ms is None and state.latency_response_created_ms is None
+    ]
+    if silent_remaining:
+        timeout_seconds = max(timeout_seconds, min(silent_remaining))
+    elif gate_holders:
+        timeout_seconds = max(timeout_seconds, float(getattr(settings, "stream_idle_timeout_seconds", 7200.0)))
+
+    deadline = request_state.bridge_request_deadline
+    if deadline is None:
+        deadline = request_state.started_at + _http_bridge_request_budget_seconds(settings)
+    return max(0.0, min(timeout_seconds, deadline - time.monotonic()))
+
+
 def _http_bridge_owner_check_required(
     key: _HTTPBridgeSessionKey,
     *,
