@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import re
 import time
@@ -17,6 +18,7 @@ from app.core.balancer.types import UpstreamError
 from app.core.clients.proxy_websocket import UpstreamResponsesWebSocket
 from app.core.openai.model_registry import get_model_registry
 from app.core.openai.models import OpenAIEvent
+from app.core.openai.requests import extract_input_file_ids
 from app.core.plan_types import account_plan_matches_allowed
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
@@ -683,6 +685,17 @@ def _websocket_request_can_replay_before_visible_output(request_state: _WebSocke
     if precreated_pending and request_state.response_event_count > 0:
         return False
     return precreated_pending or created_only_pending
+
+
+def _websocket_fresh_request_blocks_account_switch(request_state: _WebSocketRequestState) -> bool:
+    try:
+        fresh_payload = json.loads(request_state.fresh_upstream_request_text or "null")
+    except (TypeError, json.JSONDecodeError):
+        return True
+    if not isinstance(fresh_payload, dict):
+        return True
+    fresh_input = fresh_payload.get("input")
+    return bool(extract_input_file_ids(fresh_input))
 
 
 def _record_websocket_route_metadata(

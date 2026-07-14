@@ -126,6 +126,7 @@ from app.modules.proxy._service.support import (
     _event_type_from_payload,
     _HTTPBridgeSession,
     _request_log_useragent_fields,
+    _websocket_fresh_request_blocks_account_switch,
     _websocket_request_can_replay_before_visible_output,
     _WebSocketRequestState,
 )
@@ -161,9 +162,6 @@ from app.modules.proxy._service.warmup import (
 )
 from app.modules.proxy._service.warmup import (
     _WarmupUsageSnapshot as _WarmupUsageSnapshot,
-)
-from app.modules.proxy._service.websocket.helpers import (
-    _websocket_fresh_request_blocks_account_switch,
 )
 from app.modules.proxy.affinity import (
     _extract_model_class,
