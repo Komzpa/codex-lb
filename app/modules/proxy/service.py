@@ -810,6 +810,7 @@ _ACCOUNT_RECOVERY_RETRY_CODES = frozenset(
 )
 _TRANSIENT_RETRY_CODES = frozenset(
     {
+        "overloaded_error",
         "server_error",
         "server_is_overloaded",
         "stream_incomplete",
