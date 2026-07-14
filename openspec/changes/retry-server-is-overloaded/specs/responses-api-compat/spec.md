@@ -2,8 +2,9 @@
 
 ### Requirement: Upstream overload envelopes are classified as retryable transient failures
 
-When `classify_upstream_failure` observes an upstream error envelope whose
-`code` is `overloaded_error` or `server_is_overloaded`, the system MUST treat it
+The system MUST treat an upstream error envelope observed by
+`classify_upstream_failure` whose `code` is `overloaded_error` or
+`server_is_overloaded`
 as `retryable_transient` regardless of the accompanying HTTP status. Streamed
 Responses API traffic can deliver the overload envelope on a connection that
 has already returned HTTP 200, so a 5xx-only heuristic is insufficient to drive
