@@ -694,9 +694,7 @@ def _returned_row_to_snapshot(row: Row[tuple[object, ...]]) -> DurableBridgeSess
         account_id=mapping[HttpBridgeSessionRecord.account_id],
         model=mapping[HttpBridgeSessionRecord.model],
         service_tier=mapping[HttpBridgeSessionRecord.service_tier],
-        requires_security_work_authorized=bool(
-            mapping[HttpBridgeSessionRecord.requires_security_work_authorized]
-        ),
+        requires_security_work_authorized=bool(mapping[HttpBridgeSessionRecord.requires_security_work_authorized]),
         latest_turn_state=mapping[HttpBridgeSessionRecord.latest_turn_state],
         latest_response_id=mapping[HttpBridgeSessionRecord.latest_response_id],
         latest_input_item_count=mapping[HttpBridgeSessionRecord.latest_input_item_count],
