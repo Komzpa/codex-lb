@@ -711,7 +711,6 @@ async def test_safe_close_outlives_caller_cancellation() -> None:
     started = asyncio.Event()
     release = asyncio.Event()
     closed = asyncio.Event()
-    cleanup_done = asyncio.Event()
 
     class FakeSession:
         async def close(self) -> None:
@@ -719,22 +718,16 @@ async def test_safe_close_outlives_caller_cancellation() -> None:
             await release.wait()
             closed.set()
 
-    async def run_cleanup() -> None:
-        try:
-            await session_module._safe_close(cast(session_module.AsyncSession, FakeSession()))
-        finally:
-            cleanup_done.set()
+    task = asyncio.create_task(session_module._safe_close(cast(session_module.AsyncSession, FakeSession())))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
 
-    async with asyncio.TaskGroup() as group:
-        task = group.create_task(run_cleanup())
-        await started.wait()
-        task.cancel()
-        await asyncio.sleep(0)
-        assert not cleanup_done.is_set()
-        release.set()
-
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
     assert closed.is_set()
-    assert cleanup_done.is_set()
 
 
 @pytest.mark.asyncio
@@ -742,7 +735,6 @@ async def test_safe_rollback_outlives_caller_cancellation() -> None:
     started = asyncio.Event()
     release = asyncio.Event()
     rolled_back = asyncio.Event()
-    cleanup_done = asyncio.Event()
 
     class FakeSession:
         def in_transaction(self) -> bool:
@@ -753,19 +745,13 @@ async def test_safe_rollback_outlives_caller_cancellation() -> None:
             await release.wait()
             rolled_back.set()
 
-    async def run_cleanup() -> None:
-        try:
-            await session_module._safe_rollback(cast(session_module.AsyncSession, FakeSession()))
-        finally:
-            cleanup_done.set()
+    task = asyncio.create_task(session_module._safe_rollback(cast(session_module.AsyncSession, FakeSession())))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
 
-    async with asyncio.TaskGroup() as group:
-        task = group.create_task(run_cleanup())
-        await started.wait()
-        task.cancel()
-        await asyncio.sleep(0)
-        assert not cleanup_done.is_set()
-        release.set()
-
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
     assert rolled_back.is_set()
-    assert cleanup_done.is_set()

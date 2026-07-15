@@ -174,14 +174,14 @@ async def _safe_rollback(session: AsyncSession) -> None:
         return
     try:
         await _shielded(session.rollback())
-    except BaseException:
+    except Exception:
         return
 
 
 async def _safe_close(session: AsyncSession) -> None:
     try:
         await _shielded(session.close())
-    except BaseException:
+    except Exception:
         return
 
 

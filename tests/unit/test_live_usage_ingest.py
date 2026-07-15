@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any
+from contextlib import asynccontextmanager, suppress
+from typing import Any, AsyncIterator, cast
 
 import pytest
 
+import app.db.session as session_module
 from app.core.usage import live_hub
 from app.core.usage.live_snapshots import (
     EVENT_MARKER,
@@ -190,6 +192,63 @@ async def test_ingestor_queue_overflow_drops_oldest() -> None:
         2.0,
         3.0,
     ]
+
+
+@pytest.mark.asyncio
+async def test_ingestor_stop_finishes_when_cancelled_during_session_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_started = asyncio.Event()
+    release_close = asyncio.Event()
+    close_finished = asyncio.Event()
+
+    class FakeSession:
+        def in_transaction(self) -> bool:
+            return False
+
+        async def close(self) -> None:
+            close_started.set()
+            await release_close.wait()
+            close_finished.set()
+
+    @asynccontextmanager
+    async def fake_background_session() -> AsyncIterator[Any]:
+        session = FakeSession()
+        try:
+            yield session
+        finally:
+            await session_module.close_session(cast(session_module.AsyncSession, session))
+
+    class FakeUsageRepository:
+        def __init__(self, session: Any) -> None:
+            del session
+
+        async def add_entry(self, **kwargs: object) -> None:
+            del kwargs
+
+    monkeypatch.setattr(live_ingest, "get_background_session", fake_background_session)
+    monkeypatch.setattr(live_ingest, "UsageRepository", FakeUsageRepository)
+
+    ingestor = live_ingest.LiveUsageIngestor(queue_size=8, write_min_interval_seconds=0.0)
+    ingestor.start()
+    consumer = ingestor._consumer
+    assert consumer is not None
+    ingestor.publish(_snapshot(), account_id="acc-cancel-close")
+    await asyncio.wait_for(close_started.wait(), timeout=1.0)
+
+    stop_task = asyncio.create_task(ingestor.stop())
+    await asyncio.sleep(0)
+    assert consumer.cancelling() > 0
+    release_close.set()
+    done, _ = await asyncio.wait({stop_task}, timeout=1.0)
+    stop_finished = stop_task in done
+    if not stop_finished:
+        stop_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await stop_task
+
+    assert close_finished.is_set()
+    assert stop_finished
 
 
 @pytest.mark.asyncio
