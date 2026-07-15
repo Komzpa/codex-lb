@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -18,6 +20,24 @@ from app.modules.quota_planner.repository import QuotaPlannerRepository
 from app.modules.quota_planner.warmup import QuotaWarmupService, WarmupUsage
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def non_utc_process_timezone():
+    if not hasattr(time, "tzset"):
+        pytest.skip("tzset is required to simulate non-UTC local time")
+
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Tbilisi"
+    time.tzset()
+    try:
+        yield
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time.tzset()
 
 
 @pytest.mark.asyncio
@@ -300,9 +320,9 @@ async def test_quota_planner_warm_now_refuses_weekly_only_account(async_client, 
 
 @pytest.mark.asyncio
 async def test_quota_planner_warm_now_keeps_bootstrap_for_metadata_less_primary_rows(
-    monkeypatch, async_client, db_setup
+    monkeypatch, async_client, db_setup, non_utc_process_timezone
 ):
-    del db_setup
+    del db_setup, non_utc_process_timezone
     encryptor = TokenEncryptor()
     now_epoch = int(utcnow().replace(tzinfo=timezone.utc).timestamp())
     async with SessionLocal() as session:
