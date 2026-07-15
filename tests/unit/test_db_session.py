@@ -809,3 +809,94 @@ async def test_safe_rollback_preserves_caller_cancellation_when_rollback_raises(
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1.0)
     assert rollback_settled.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation_name", ["close", "rollback"])
+@pytest.mark.parametrize("cleanup_raises", [False, True], ids=["cleanup-succeeds", "cleanup-raises"])
+async def test_safe_cleanup_outlives_repeated_caller_cancellation(
+    operation_name: str,
+    cleanup_raises: bool,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    settled = asyncio.Event()
+    interrupted = asyncio.Event()
+
+    async def cleanup() -> None:
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            interrupted.set()
+            raise
+        settled.set()
+        if cleanup_raises:
+            raise RuntimeError("cleanup failed")
+
+    class FakeSession:
+        def in_transaction(self) -> bool:
+            return True
+
+        async def close(self) -> None:
+            await cleanup()
+
+        async def rollback(self) -> None:
+            await cleanup()
+
+    session = cast(session_module.AsyncSession, FakeSession())
+    operation = session_module._safe_close if operation_name == "close" else session_module._safe_rollback
+    task = asyncio.create_task(operation(session))
+    await started.wait()
+
+    task.cancel("first cancellation")
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    task.cancel("second cancellation")
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not task.done()
+    assert not interrupted.is_set()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await asyncio.wait_for(task, timeout=1.0)
+
+    assert cancellation.value.args == ("first cancellation",)
+    assert settled.is_set()
+    assert not interrupted.is_set()
+
+
+@pytest.mark.asyncio
+async def test_shielded_prefers_outer_cancellation_when_cleanup_cancels_itself() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    internally_cancelled = asyncio.Event()
+
+    async def cleanup() -> None:
+        started.set()
+        await release.wait()
+        current_task = asyncio.current_task()
+        assert current_task is not None
+        current_task.cancel("cleanup cancellation")
+        try:
+            await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            internally_cancelled.set()
+            raise
+
+    task = asyncio.create_task(session_module._shielded(cleanup()))
+    await started.wait()
+    task.cancel("caller cancellation")
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await asyncio.wait_for(task, timeout=1.0)
+
+    assert cancellation.value.args == ("caller cancellation",)
+    assert internally_cancelled.is_set()

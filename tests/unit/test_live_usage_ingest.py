@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, cast
 
 import pytest
@@ -196,13 +196,19 @@ async def test_ingestor_queue_overflow_drops_oldest() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("close_raises", [False, True], ids=["close-succeeds", "close-raises"])
-async def test_ingestor_stop_finishes_when_cancelled_during_session_close(
+@pytest.mark.parametrize(
+    "cancellation_mode",
+    ["consumer-once", "consumer-twice", "stop-caller"],
+)
+async def test_ingestor_stop_preserves_session_cleanup_across_cancellation(
     monkeypatch: pytest.MonkeyPatch,
     close_raises: bool,
+    cancellation_mode: str,
 ) -> None:
     close_started = asyncio.Event()
     release_close = asyncio.Event()
     close_finished = asyncio.Event()
+    close_interrupted = asyncio.Event()
 
     class FakeSession:
         def in_transaction(self) -> bool:
@@ -210,7 +216,11 @@ async def test_ingestor_stop_finishes_when_cancelled_during_session_close(
 
         async def close(self) -> None:
             close_started.set()
-            await release_close.wait()
+            try:
+                await release_close.wait()
+            except asyncio.CancelledError:
+                close_interrupted.set()
+                raise
             close_finished.set()
             if close_raises:
                 raise RuntimeError("close failed")
@@ -241,18 +251,31 @@ async def test_ingestor_stop_finishes_when_cancelled_during_session_close(
     await asyncio.wait_for(close_started.wait(), timeout=1.0)
 
     stop_task = asyncio.create_task(ingestor.stop())
-    await asyncio.sleep(0)
+    for _ in range(3):
+        await asyncio.sleep(0)
     assert consumer.cancelling() > 0
+
+    if cancellation_mode == "consumer-twice":
+        consumer.cancel("second consumer cancellation")
+    elif cancellation_mode == "stop-caller":
+        stop_task.cancel("stop caller cancellation")
+
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert not close_interrupted.is_set()
+    assert not stop_task.done()
+
     release_close.set()
-    done, _ = await asyncio.wait({stop_task}, timeout=1.0)
-    stop_finished = stop_task in done
-    if not stop_finished:
-        stop_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await stop_task
+
+    if cancellation_mode == "stop-caller":
+        with pytest.raises(asyncio.CancelledError) as cancellation:
+            await asyncio.wait_for(stop_task, timeout=1.0)
+        assert cancellation.value.args == ("stop caller cancellation",)
+    else:
+        await asyncio.wait_for(stop_task, timeout=1.0)
 
     assert close_finished.is_set()
-    assert stop_finished
+    assert not close_interrupted.is_set()
 
 
 @pytest.mark.asyncio
