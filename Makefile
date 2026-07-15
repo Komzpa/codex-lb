@@ -15,7 +15,7 @@ POSTGRES_PYTEST_TARGETS := \
 	tests/integration/test_data_retention.py
 SHELL := /bin/bash
 
-.PHONY: help
+.PHONY: help setup test test-diff
 help:
 	@printf '%s\n' \
 	  'Common targets:' \
@@ -27,7 +27,19 @@ help:
 	  '  make test-integration-core   integration-core pytest slice' \
 	  '  make package                 build and verify sdist/wheel' \
 	  '  make ci-fast                 lint/type/frontend/unit/package' \
-	  '  make ci                      full local CI gate'
+	  '  make ci                      full local CI gate' \
+	  '  make setup                   locked, idempotent checkout setup' \
+	  '  make test                    alias for the full bin/test gate' \
+	  '  make test-diff BASE=...      merge-base-aware development checks'
+
+setup:
+	bin/setup
+
+test:
+	bin/test
+
+test-diff:
+	bin/test --diff $${BASE:-origin/main}
 
 .PHONY: frontend-install frontend-lint frontend-typecheck frontend-test frontend-test-fast frontend-build
 frontend-install:
@@ -54,7 +66,7 @@ lint: architecture-check
 	uvx ruff format --check .
 
 architecture-check:
-	python scripts/check_proxy_architecture.py
+	uv run python scripts/check_proxy_architecture.py
 
 typecheck:
 	uv sync --dev --frozen
@@ -78,9 +90,9 @@ test-integration-core: frontend-build
 # guards that the shards always partition the full selection exactly.
 test-integration-core-shard: frontend-build
 	uv sync --dev --frozen
-	python .github/scripts/pytest_shards.py --shard-count $(INTEGRATION_CORE_SHARD_COUNT) --verify
+	uv run python .github/scripts/pytest_shards.py --shard-count $(INTEGRATION_CORE_SHARD_COUNT) --verify
 	PYTHONFAULTHANDLER=1 uv run pytest $(PYTEST_ARGS) \
-	  $$(python .github/scripts/pytest_shards.py --shard-count $(INTEGRATION_CORE_SHARD_COUNT) --shard $(SHARD))
+	  $$(uv run python .github/scripts/pytest_shards.py --shard-count $(INTEGRATION_CORE_SHARD_COUNT) --shard $(SHARD))
 
 test-integration-core-1:
 	$(MAKE) test-integration-core-shard SHARD=1
@@ -127,7 +139,7 @@ package: frontend-build
 	uv run python -c "import app; import app.main; print('import ok')"
 	rm -rf build dist *.egg-info
 	uvx --from build==1.3.0 python -m build
-	python scripts/verify-wheel-assets.py
+	uv run python scripts/verify-wheel-assets.py
 
 .PHONY: docker
 docker:

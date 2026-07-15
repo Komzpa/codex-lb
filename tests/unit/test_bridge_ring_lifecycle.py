@@ -144,6 +144,53 @@ async def test_stale_epoch_renewal_is_fenced_against_concurrent_takeover(
 
 
 @pytest.mark.asyncio
+async def test_security_requirement_renewal_respects_owner_epoch_fence(
+    async_session_factory: Callable[[], AsyncSession],
+) -> None:
+    session_a = async_session_factory()
+    session_b = async_session_factory()
+    try:
+        repo_a = DurableBridgeRepository(session_a)
+        repo_b = DurableBridgeRepository(session_b)
+        claimed = await _claim(repo_a, instance_id="instance-a")
+        taken_over = await _claim(repo_b, instance_id="instance-b", allow_takeover=True)
+
+        stale = await repo_a.renew_session(
+            session_id=claimed.id,
+            instance_id="instance-a",
+            owner_epoch=claimed.owner_epoch,
+            lease_ttl_seconds=120.0,
+            requires_security_work_authorized=True,
+        )
+        assert stale is not None
+        assert stale.owner_instance_id == "instance-b"
+        assert stale.requires_security_work_authorized is False
+
+        owned = await repo_b.renew_session(
+            session_id=taken_over.id,
+            instance_id="instance-b",
+            owner_epoch=taken_over.owner_epoch,
+            lease_ttl_seconds=120.0,
+            requires_security_work_authorized=True,
+        )
+        assert owned is not None
+        assert owned.owner_instance_id == "instance-b"
+        assert owned.requires_security_work_authorized is True
+
+        verify_session = async_session_factory()
+        try:
+            row = await verify_session.get(HttpBridgeSessionRecord, claimed.id)
+            assert row is not None
+            assert row.owner_instance_id == "instance-b"
+            assert row.requires_security_work_authorized is True
+        finally:
+            await verify_session.close()
+    finally:
+        await session_a.close()
+        await session_b.close()
+
+
+@pytest.mark.asyncio
 async def test_stale_epoch_release_is_fenced_and_reports_current_owner(
     async_session_factory: Callable[[], AsyncSession],
 ) -> None:

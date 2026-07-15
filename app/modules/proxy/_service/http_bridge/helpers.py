@@ -11,6 +11,7 @@ from hashlib import sha256
 from ipaddress import ip_address
 from typing import Any, Literal, Mapping, TypeVar, cast
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from app.core.balancer.rendezvous_hash import select_node
 from app.core.clients.files import create_file as core_create_file  # noqa: F401
@@ -894,13 +895,44 @@ def _http_bridge_session_account_active(session: "_HTTPBridgeSession") -> bool:
     return session.account.status == AccountStatus.ACTIVE and not is_account_routing_unavailable(session.account.id)
 
 
+def _http_bridge_session_meets_security_requirement(
+    session: "_HTTPBridgeSession", require_security_work_authorized: bool
+) -> bool:
+    effective_requirement = require_security_work_authorized or bool(
+        getattr(session, "requires_security_work_authorized", False)
+    )
+    return not effective_requirement or bool(getattr(session.account, "security_work_authorized", False))
+
+
+def _http_bridge_connect_request_state(
+    *,
+    headers: Mapping[str, str],
+    request_model: str | None,
+    request_service_tier: str | None,
+    started_at: float,
+) -> _WebSocketRequestState:
+    return _WebSocketRequestState(
+        request_id=f"http_bridge_connect_{uuid4().hex}",
+        model=request_model,
+        service_tier=request_service_tier,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=started_at,
+        transport="http",
+        security_lineage_id=_sticky_key_from_session_header(headers),
+    )
+
+
 def _http_bridge_session_reusable_for_request(
     *,
     session: "_HTTPBridgeSession",
     key: "_HTTPBridgeSessionKey",
     incoming_turn_state: str | None,
     previous_response_id: str | None,
+    require_security_work_authorized: bool = False,
 ) -> bool:
+    if not _http_bridge_session_meets_security_requirement(session, require_security_work_authorized):
+        return False
     if session.upstream_control.retire_after_drain:
         return False
     if key.affinity_kind != "prompt_cache":
@@ -910,6 +942,22 @@ def _http_bridge_session_reusable_for_request(
     if previous_response_id is not None:
         return True
     return not session.codex_session
+
+
+def _apply_http_bridge_reuse_metadata(
+    session: "_HTTPBridgeSession",
+    api_key: ApiKeyData | None,
+    request_model: str | None,
+    request_service_tier: str | None,
+    require_security_work_authorized: bool,
+) -> None:
+    session.api_key = api_key
+    session.request_model = request_model
+    session.request_service_tier = request_service_tier
+    session.requires_security_work_authorized = (
+        bool(getattr(session, "requires_security_work_authorized", False)) or require_security_work_authorized
+    )
+    session.last_used_at = _service_time().monotonic()
 
 
 def _http_bridge_session_matches_preferred_account(
@@ -1453,6 +1501,7 @@ async def _renew_durable_http_bridge_lease(
             lease_ttl_seconds=_http_bridge_durable_lease_ttl_seconds(),
             latest_turn_state=session.downstream_turn_state,
             latest_response_id=None,
+            requires_security_work_authorized=bool(getattr(session, "requires_security_work_authorized", False)),
         )
     except Exception:
         logger.warning("Failed to renew durable HTTP bridge session lease", exc_info=True)
@@ -1991,20 +2040,36 @@ def _http_bridge_request_budget_seconds(settings: object) -> float:
     )
 
 
-def _http_bridge_admission_timeout_seconds(
+async def _http_bridge_response_create_gate_timeout_seconds(
+    session: _HTTPBridgeSession,
     request_state: _WebSocketRequestState,
-    admission_timeout_seconds: float,
+    *,
+    initial_timeout_seconds: float,
     settings: object,
 ) -> float:
-    # Bridged requests may retry response-create gate acquisition within one
-    # bridge request budget, so every wait must be clamped to the remaining
-    # time. Re-prepared retry states reset started_at but deliberately retain
-    # the original deadline; using started_at alone would extend the budget.
+    """Respect a silent holder's stale window without exceeding the request deadline."""
+
+    timeout_seconds = initial_timeout_seconds
+    stale_threshold = float(getattr(settings, "http_responses_session_bridge_stuck_gate_retire_after_seconds", 300.0))
+    now = time.monotonic()
+    async with session.pending_lock:
+        gate_holders = [
+            state
+            for state in session.pending_requests
+            if state.response_create_gate_acquired and state.awaiting_response_created
+        ]
+    silent_remaining = [
+        max(0.0, stale_threshold - max(0.0, now - state.started_at))
+        for state in gate_holders
+        if state.latency_response_created_ms is None and state.response_event_count == 0
+    ]
+    if silent_remaining:
+        timeout_seconds = max(timeout_seconds, min(silent_remaining))
+
     deadline = request_state.bridge_request_deadline
     if deadline is None:
         deadline = request_state.started_at + _http_bridge_request_budget_seconds(settings)
-    remaining_budget_seconds = deadline - time.monotonic()
-    return max(0.0, min(admission_timeout_seconds, remaining_budget_seconds))
+    return max(0.0, min(timeout_seconds, deadline - time.monotonic()))
 
 
 def _http_bridge_owner_check_required(

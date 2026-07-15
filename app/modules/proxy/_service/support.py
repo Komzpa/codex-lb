@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import re
 import time
@@ -20,6 +21,7 @@ from app.core.clients.proxy_websocket import UpstreamResponsesWebSocket
 from app.core.errors import openai_error
 from app.core.openai.model_registry import get_model_registry
 from app.core.openai.models import OpenAIEvent
+from app.core.openai.requests import extract_input_file_ids
 from app.core.plan_types import account_plan_matches_allowed
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
@@ -525,6 +527,7 @@ class _WebSocketRequestState:
     latency_first_token_ms: int | None = None
     latency_response_created_ms: int | None = None
     latency_first_upstream_event_ms: int | None = None
+    upstream_sent_at: float | None = None
     latency_response_create_gate_wait_ms: int | None = None
     latency_bridge_queue_wait_ms: int | None = None
     response_create_gate_wait_started_at: float | None = None
@@ -566,6 +569,10 @@ class _WebSocketRequestState:
     skip_request_log: bool = False
     previous_response_id: str | None = None
     session_id: str | None = None
+    # Root Codex session from session-id / parent-thread headers.  This is
+    # deliberately distinct from affinity_policy, whose CODEX_SESSION key may
+    # be a per-turn x-codex-turn-state value.
+    security_lineage_id: str | None = None
     proxy_injected_previous_response_id: bool = False
     expose_stale_previous_response_classifier: bool = False
     fresh_upstream_request_text: str | None = None
@@ -689,6 +696,7 @@ class _HTTPBridgeSession:
     last_pending_tool_calls: dict[str, str] = field(default_factory=dict)
     durable_session_id: str | None = None
     durable_owner_epoch: int | None = None
+    requires_security_work_authorized: bool = False
     upstream_reader: asyncio.Task[None] | None = None
     last_upstream_close_code: int | None = None
     closed: bool = False
@@ -842,6 +850,17 @@ def _websocket_request_can_replay_before_visible_output(request_state: _WebSocke
     return precreated_pending or created_only_pending
 
 
+def _websocket_fresh_request_blocks_account_switch(request_state: _WebSocketRequestState) -> bool:
+    try:
+        fresh_payload = json.loads(request_state.fresh_upstream_request_text or "null")
+    except (TypeError, json.JSONDecodeError):
+        return True
+    if not isinstance(fresh_payload, dict):
+        return True
+    fresh_input = fresh_payload.get("input")
+    return bool(extract_input_file_ids(fresh_input))
+
+
 def _record_websocket_route_metadata(
     request_state: _WebSocketRequestState,
     *,
@@ -912,6 +931,7 @@ class _WebSocketReceiveTimeout:
     error_code: str
     error_message: str
     fail_all_pending: bool = False
+    response_created_request_ids: frozenset[str] = frozenset()
 
 
 def _event_type_from_payload(event: OpenAIEvent | None, payload: dict[str, JsonValue] | None) -> str | None:

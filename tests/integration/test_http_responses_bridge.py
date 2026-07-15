@@ -31,6 +31,7 @@ from app.db.session import SessionLocal
 from app.dependencies import get_proxy_service_for_app
 from app.modules.proxy._service.http_bridge import streaming as http_bridge_streaming_module
 from app.modules.proxy._service.http_bridge.helpers import (
+    _http_bridge_request_budget_seconds,
     _release_http_bridge_unanchored_handoff,
     _reserve_http_bridge_unanchored_handoff,
 )
@@ -6763,7 +6764,7 @@ async def test_v1_responses_http_bridge_gate_wait_is_clamped_to_remaining_budget
     # Age the request so only ~0.2s of the bridge request budget remains:
     # the gate wait must be clamped to that tail, not run the full 5s
     # admission timeout past the budget.
-    budget_seconds = proxy_module._http_bridge_request_budget_seconds(proxy_module.get_settings())
+    budget_seconds = _http_bridge_request_budget_seconds(proxy_module.get_settings())
     request_state.started_at = time.monotonic() - (budget_seconds - 0.2)
 
     started = time.monotonic()

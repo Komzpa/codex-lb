@@ -89,10 +89,12 @@ async def test_live_ingestor_invalidates_rate_limit_header_cache(monkeypatch, db
         await AccountsRepository(session).upsert(_make_account("acc_live_headers", "live-headers@example.com"))
 
     invalidations: list[int] = []
+    invalidated = asyncio.Event()
 
     class _SpyHeadersCache:
         async def invalidate(self) -> None:
             invalidations.append(1)
+            invalidated.set()
 
     monkeypatch.setattr(live_ingest_module, "get_rate_limit_headers_cache", lambda: _SpyHeadersCache())
 
@@ -100,22 +102,10 @@ async def test_live_ingestor_invalidates_rate_limit_header_cache(monkeypatch, db
     ingestor.start()
     try:
         ingestor.publish(_snapshot(), account_id="acc_live_headers")
+        await asyncio.wait_for(invalidated.wait(), timeout=5.0)
         primary, secondary = await _wait_for_rows("acc_live_headers")
-        # The row write and the cache invalidation are two consecutive steps of
-        # the SAME ingest coroutine: the rows commit first, then
-        # _invalidate_caches_now runs and appends here. _wait_for_rows only
-        # proves the write landed, so on a loaded runner the consumer can still
-        # be scheduled between the commit and the invalidation when we observe
-        # the rows. Wait for the invalidation itself before stopping so stop()
-        # cannot cancel the consumer between the two steps and drop the
-        # invalidation (previously flaked as ``assert [] == [1]``). Only one
-        # snapshot is published (and a re-publish would be de-duplicated), so
-        # exactly one immediate invalidation is expected.
-        deadline = asyncio.get_event_loop().time() + 5.0
-        while not invalidations and asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(0.05)
     finally:
-        await ingestor.stop()
+        await asyncio.wait_for(ingestor.stop(), timeout=1.0)
 
     assert primary is not None and secondary is not None
     assert invalidations == [1]

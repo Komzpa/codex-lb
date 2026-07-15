@@ -216,6 +216,7 @@ class LeaderElection:
     def __init__(self, leader_id: str | None = None) -> None:
         self._leader_id = leader_id or str(uuid.uuid4())
         self._is_leader = False
+        self._last_acquire_error: str | None = None
         # Monotonic (event-loop clock) estimate of when the lease we hold
         # expires, set on every successful acquire/renew and cleared on
         # authoritative loss. ``None`` means no lease is currently held. It is
@@ -253,8 +254,13 @@ class LeaderElection:
     def is_leader(self) -> bool:
         return self._is_leader
 
+    @property
+    def last_acquire_error(self) -> str | None:
+        return self._last_acquire_error
+
     async def try_acquire(self) -> bool:
         settings = get_settings()
+        self._last_acquire_error = None
         if not settings.leader_election_enabled:
             self._is_leader = True
             return True
@@ -309,7 +315,8 @@ class LeaderElection:
                         )
                     return False
                 await session.commit()
-        except Exception:
+        except Exception as exc:
+            self._last_acquire_error = type(exc).__name__
             # A transient acquisition failure must not demote a lease this
             # instance already holds and whose locally tracked deadline has
             # not passed. The leader election is a shared singleton across

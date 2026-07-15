@@ -21,24 +21,27 @@ def test_stock_compose_uses_user_defined_default_bridge(compose_name: str) -> No
         assert "dns" not in service
 
 
-def test_standalone_docker_examples_use_named_bridge() -> None:
-    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    standalone_launches = readme.count("docker run -d --name codex-lb")
-    portable_launches = readme.count("--network codex-lb-net")
-    host_network_launches = readme.count("--network host")
+@pytest.mark.parametrize("doc_name", ["README.md", "docs/getting-started.md", "docs/deployment/docker.md"])
+def test_standalone_docker_examples_use_named_bridge(doc_name: str) -> None:
+    documentation = (_REPO_ROOT / doc_name).read_text(encoding="utf-8")
+    standalone_launches = documentation.count("docker run -d --name codex-lb")
+    portable_launches = documentation.count("--network codex-lb-net")
+    host_network_launches = documentation.count("--network host")
 
     assert standalone_launches > 0
     assert portable_launches + host_network_launches == standalone_launches
     assert (
-        readme.count("docker network inspect codex-lb-net >/dev/null 2>&1 || docker network create codex-lb-net")
+        documentation.count("docker network inspect codex-lb-net >/dev/null 2>&1 || docker network create codex-lb-net")
         == portable_launches
     )
-    assert "--dns " not in readme
+    assert "--dns " not in documentation
 
 
 def test_network_switching_guidance_is_cross_platform_and_approachable() -> None:
-    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    switching_section = readme.split("### Switching Wi-Fi or other networks", 1)[1].split("## Remote Setup", 1)[0]
+    docker_doc = (_REPO_ROOT / "docs/deployment/docker.md").read_text(encoding="utf-8")
+    switching_section = docker_doc.split("## Switching Wi-Fi, hotspots, or VPNs", 1)[1].split(
+        "## Auth mode examples", 1
+    )[0]
 
     assert "home Wi-Fi to a phone hotspot" in switching_section
     assert "Linux, macOS, and Windows" in switching_section

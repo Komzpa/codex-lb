@@ -276,6 +276,7 @@ from app.modules.proxy._service.support import (
     _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS,  # noqa: F401
     _clear_websocket_request_error_overrides,
     _event_type_from_payload,
+    _websocket_fresh_request_blocks_account_switch,
     _websocket_request_can_replay_before_visible_output,
     _WebSocketContinuityAnchor,
     _WebSocketContinuityState,
@@ -777,17 +778,6 @@ def _websocket_auth_failure_permanent_code(message: str | None) -> str:
     if _websocket_auth_failure_requires_reauth(message):
         return _facade()._WEBSOCKET_SESSION_EXPIRED_FAILURE_CODE
     return _facade()._WEBSOCKET_AUTH_INVALIDATED_FAILURE_CODE
-
-
-def _websocket_fresh_request_blocks_account_switch(request_state: _WebSocketRequestState) -> bool:
-    try:
-        fresh_payload = json.loads(request_state.fresh_upstream_request_text or "null")
-    except (TypeError, json.JSONDecodeError):
-        return True
-    if not isinstance(fresh_payload, dict):
-        return True
-    fresh_input = fresh_payload.get("input") if isinstance(fresh_payload, dict) else None
-    return bool(extract_input_file_ids(fresh_input))
 
 
 def _websocket_auth_request_can_switch_account(request_state: _WebSocketRequestState) -> bool:
