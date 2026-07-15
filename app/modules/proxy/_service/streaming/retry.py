@@ -734,6 +734,25 @@ class _StreamingRetryMixin:
                                     response_id=request_id,
                                 )
                             yield format_sse_event(event)
+                            if not any_attempt_logged:
+                                await proxy._write_request_log(
+                                    account_id=None,
+                                    api_key=api_key,
+                                    request_id=request_id,
+                                    model=payload.model,
+                                    latency_ms=int((time.monotonic() - start) * 1000),
+                                    status="error",
+                                    error_code=event["response"]["error"]["code"],
+                                    error_message=event["response"]["error"]["message"],
+                                    reasoning_effort=payload.reasoning.effort if payload.reasoning else None,
+                                    transport=request_transport,
+                                    upstream_transport=upstream_stream_transport,
+                                    service_tier=payload.service_tier,
+                                    requested_service_tier=payload.service_tier,
+                                    useragent=useragent,
+                                    useragent_group=useragent_group,
+                                    client_ip=client_ip,
+                                )
                             return
                         _facade().logger.info(
                             "No security-work-authorized account available for unrooted stream retry; "
@@ -1470,10 +1489,6 @@ class _StreamingRetryMixin:
                                 )
                                 error_message = error.message if error else None
                                 if _facade()._is_security_work_authorization_required_error(code, error_message):
-                                    await proxy._mark_security_lineage_requirement(
-                                        security_lineage_id,
-                                        account_id=account.id,
-                                    )
                                     if (
                                         account.security_work_authorized
                                         or account.id == file_preferred_account_id
@@ -1481,6 +1496,10 @@ class _StreamingRetryMixin:
                                         or attempt >= max_attempts - 1
                                     ):
                                         raise
+                                    await proxy._mark_security_lineage_requirement(
+                                        security_lineage_id,
+                                        account_id=account.id,
+                                    )
                                     _facade().logger.info(
                                         "Retrying on security-work-authorized account request_id=%s account_id=%s",
                                         request_id,
@@ -1677,10 +1696,6 @@ class _StreamingRetryMixin:
                     continue  # outer loop: account failover after transient exhaustion
                 except _RetryableStreamError as exc:
                     if _facade()._is_security_work_authorization_required_error(exc.code, exc.error.get("message")):
-                        await proxy._mark_security_lineage_requirement(
-                            security_lineage_id,
-                            account_id=account.id,
-                        )
                         if (
                             account.security_work_authorized
                             or account.id == file_preferred_account_id
@@ -1694,6 +1709,10 @@ class _StreamingRetryMixin:
                             )
                             yield format_sse_event(event)
                             return
+                        await proxy._mark_security_lineage_requirement(
+                            security_lineage_id,
+                            account_id=account.id,
+                        )
                         _facade().logger.info(
                             "Retrying on security-work-authorized account request_id=%s account_id=%s",
                             request_id,
@@ -2112,16 +2131,16 @@ class _StreamingRetryMixin:
                     error_type = error.type if error else None
                     error_param = error.param if error else None
                     if _facade()._is_security_work_authorization_required_error(error_code, error_message):
-                        await proxy._mark_security_lineage_requirement(
-                            security_lineage_id,
-                            account_id=account.id,
-                        )
                         if (
                             not account.security_work_authorized
                             and account.id != file_preferred_account_id
                             and not require_preferred_account
                             and attempt < max_attempts - 1
                         ):
+                            await proxy._mark_security_lineage_requirement(
+                                security_lineage_id,
+                                account_id=account.id,
+                            )
                             _facade().logger.info(
                                 "Retrying on security-work-authorized account request_id=%s account_id=%s",
                                 request_id,
