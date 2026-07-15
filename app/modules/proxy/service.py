@@ -1338,14 +1338,16 @@ class ProxyService(
                         300.0,
                     )
                 )
+                # Leading telemetry records latency without assigning a response
+                # or releasing this gate; only response-created proves progress.
                 should_retire_stuck_session = any(
                     state.transport == _REQUEST_TRANSPORT_HTTP
                     and not state.skip_request_log
                     and state.response_create_gate_acquired
                     and state.awaiting_response_created
                     and not state.downstream_visible
-                    and state.latency_first_upstream_event_ms is None
                     and state.latency_response_created_ms is None
+                    and state.response_event_count == 0
                     and max(0.0, now - state.started_at) >= threshold_seconds
                     for state in pending_states
                 )
