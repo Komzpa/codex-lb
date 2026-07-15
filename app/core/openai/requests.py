@@ -46,6 +46,7 @@ _COMPACT_TOOL_CALL_ITEM_TYPES = frozenset({"function_call", "custom_tool_call", 
 _COMPACT_TOOL_CALL_OUTPUT_ITEM_TYPES = frozenset(
     {"function_call_output", "custom_tool_call_output", "apply_patch_call_output"}
 )
+_COMPACT_SIDE_EFFECT_TOOL_ITEM_TYPES = frozenset({"apply_patch_call", "apply_patch_call_output"})
 _COMPACT_INLINE_IMAGE_DATA_URL_RE = re.compile(r"""data:image/[^,\s]+,[^\s"'<>]+""")
 _GOAL_CONTINUATION_CONTEXT_PREFIX = '<codex_internal_context source="goal">'
 _PLAN_MODE_CONTEXT_PREFIX = "<collaboration_mode># Plan Mode"
@@ -918,13 +919,21 @@ def _trim_compact_input_for_upstream(payload: MutableJsonObject) -> None:
     if total_tokens <= _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS:
         return
 
-    losslessly_trimmed_input = _compact_losslessly_trim_input(input_value)
+    has_previous_response_anchor = _compact_has_previous_response_anchor(payload)
+    losslessly_trimmed_input = _compact_losslessly_trim_input(
+        input_value,
+        has_previous_response_anchor=has_previous_response_anchor,
+    )
     if losslessly_trimmed_input is not None:
         payload["input"] = losslessly_trimmed_input
         return
 
     token_counts = [_estimated_json_array_item_tokens(item) for item in input_value]
-    required_indices = _compact_required_indices(input_value, token_counts)
+    required_indices = _compact_required_indices(
+        input_value,
+        token_counts,
+        has_previous_response_anchor=has_previous_response_anchor,
+    )
     rewritten_input, images_elided = _compact_elide_required_tool_output_images(
         input_value,
         required_indices=required_indices,
@@ -934,7 +943,10 @@ def _trim_compact_input_for_upstream(payload: MutableJsonObject) -> None:
         payload["input"] = input_value
         if _estimated_json_tokens(input_value) <= _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS:
             return
-        losslessly_trimmed_input = _compact_losslessly_trim_input(input_value)
+        losslessly_trimmed_input = _compact_losslessly_trim_input(
+            input_value,
+            has_previous_response_anchor=has_previous_response_anchor,
+        )
         if losslessly_trimmed_input is not None:
             payload["input"] = losslessly_trimmed_input
             return
@@ -945,7 +957,11 @@ def _trim_compact_input_for_upstream(payload: MutableJsonObject) -> None:
     )
 
 
-def _compact_losslessly_trim_input(input_value: list[JsonValue]) -> list[JsonValue] | None:
+def _compact_losslessly_trim_input(
+    input_value: list[JsonValue],
+    *,
+    has_previous_response_anchor: bool = False,
+) -> list[JsonValue] | None:
     """Return a budget-fitting context selection without changing any retained bytes."""
 
     token_counts = [_estimated_json_array_item_tokens(item) for item in input_value]
@@ -966,7 +982,12 @@ def _compact_losslessly_trim_input(input_value: list[JsonValue]) -> list[JsonVal
         token_counts=token_counts,
         token_budget=sum(token_counts),
     )
-    required_indices = _compact_required_indices(input_value, token_counts, preserved_indices=state_anchor_indices)
+    required_indices = _compact_required_indices(
+        input_value,
+        token_counts,
+        preserved_indices=state_anchor_indices,
+        has_previous_response_anchor=has_previous_response_anchor,
+    )
     if required_indices & unusable_side_effect_indices:
         raise ClientPayloadError(
             "Compact input cannot retain a required side-effect call without a usable call_id.",
@@ -1029,54 +1050,109 @@ def _compact_required_indices(
     token_counts: list[int],
     *,
     preserved_indices: set[int] | None = None,
+    has_previous_response_anchor: bool = False,
 ) -> set[int]:
     if preserved_indices is None:
         preserved_indices = _compact_state_anchor_indices(input_value)
-    required_indices = set(preserved_indices)
-    if input_value:
-        latest_index = len(input_value) - 1
-        latest_item = input_value[latest_index]
-        latest_mapping = _json_mapping_or_none(latest_item)
-        latest_type = latest_mapping.get("type") if latest_mapping is not None else None
-        if latest_type not in _COMPACT_TOOL_CALL_ITEM_TYPES | _COMPACT_TOOL_CALL_OUTPUT_ITEM_TYPES:
-            required_indices.add(latest_index)
-        elif latest_mapping is not None and _compact_item_is_state_anchor(latest_mapping):
-            required_indices.add(latest_index)
-        elif latest_mapping is not None and _compact_item_has_elidable_inline_image(latest_mapping):
-            required_indices.update(
-                _compact_reconciled_tool_call_indices(
-                    input_value,
-                    {latest_index},
-                    token_counts=token_counts,
-                    token_budget=sum(token_counts),
-                    required_indices={latest_index},
-                )
-            )
-        elif latest_type in _COMPACT_TOOL_CALL_ITEM_TYPES:
-            paired_tail = _compact_reconciled_tool_call_indices(
-                input_value,
-                {latest_index},
-                token_counts=token_counts,
-                token_budget=_MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS,
-            )
-            if latest_index in paired_tail or token_counts[latest_index] <= _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS:
-                required_indices.update(paired_tail or {latest_index})
-        else:
-            paired_tail = _compact_reconciled_tool_call_indices(
-                input_value,
-                {latest_index},
-                token_counts=token_counts,
-                token_budget=_MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS,
-            )
-            if latest_index in paired_tail:
-                required_indices.update(paired_tail)
-    return _compact_reconciled_tool_call_indices(
+    required_indices = _compact_reconciled_tool_call_indices(
         input_value,
-        required_indices,
+        preserved_indices,
         token_counts=token_counts,
         token_budget=sum(token_counts),
-        required_indices=required_indices,
+        required_indices=preserved_indices,
     )
+    terminal_indices, terminal_is_required = _compact_terminal_required_indices(
+        input_value,
+        token_counts=token_counts,
+        has_previous_response_anchor=has_previous_response_anchor,
+    )
+    if terminal_indices:
+        prospective_required_indices = required_indices | terminal_indices
+        prospective_required_indices = _compact_reconciled_tool_call_indices(
+            input_value,
+            prospective_required_indices,
+            token_counts=token_counts,
+            token_budget=sum(token_counts),
+            required_indices=prospective_required_indices,
+        )
+        prospective_required_input = _compact_trimmed_input_with_markers(
+            input_value,
+            token_counts,
+            prospective_required_indices,
+        )
+        if terminal_is_required or (
+            _estimated_json_tokens(prospective_required_input) <= _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS
+        ):
+            required_indices = prospective_required_indices
+    return required_indices
+
+
+def _compact_has_previous_response_anchor(payload: Mapping[str, JsonValue]) -> bool:
+    previous_response_id = payload.get("previous_response_id")
+    return isinstance(previous_response_id, str) and bool(previous_response_id.strip())
+
+
+def _compact_terminal_required_indices(
+    input_value: list[JsonValue],
+    *,
+    token_counts: list[int],
+    has_previous_response_anchor: bool,
+) -> tuple[set[int], bool]:
+    """Return terminal context and whether it must remain even when oversized."""
+
+    if not input_value:
+        return set(), False
+
+    latest_index = len(input_value) - 1
+    latest_mapping = _json_mapping_or_none(input_value[latest_index])
+    latest_type = latest_mapping.get("type") if latest_mapping is not None else None
+    if latest_type not in _COMPACT_TOOL_CALL_ITEM_TYPES | _COMPACT_TOOL_CALL_OUTPUT_ITEM_TYPES:
+        return {latest_index}, True
+    if latest_mapping is not None and _compact_item_is_state_anchor(latest_mapping):
+        return _compact_reconciled_tool_call_indices(
+            input_value,
+            {latest_index},
+            token_counts=token_counts,
+            token_budget=sum(token_counts),
+            required_indices={latest_index},
+        ), True
+    if latest_mapping is not None and _compact_item_has_elidable_inline_image(latest_mapping):
+        return _compact_reconciled_tool_call_indices(
+            input_value,
+            {latest_index},
+            token_counts=token_counts,
+            token_budget=sum(token_counts),
+            required_indices={latest_index},
+        ), True
+    if latest_type in _COMPACT_SIDE_EFFECT_TOOL_ITEM_TYPES:
+        return _compact_reconciled_tool_call_indices(
+            input_value,
+            {latest_index},
+            token_counts=token_counts,
+            token_budget=sum(token_counts),
+            required_indices={latest_index},
+        ), True
+    if latest_type in _COMPACT_TOOL_CALL_OUTPUT_ITEM_TYPES and has_previous_response_anchor:
+        return _compact_reconciled_tool_call_indices(
+            input_value,
+            {latest_index},
+            token_counts=token_counts,
+            token_budget=sum(token_counts),
+            required_indices={latest_index},
+        ), True
+
+    paired_tail = _compact_reconciled_tool_call_indices(
+        input_value,
+        {latest_index},
+        token_counts=token_counts,
+        token_budget=_MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS,
+    )
+    if latest_type in _COMPACT_TOOL_CALL_ITEM_TYPES:
+        if latest_index in paired_tail or token_counts[latest_index] <= _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS:
+            return paired_tail or {latest_index}, False
+    elif latest_index in paired_tail:
+        return paired_tail, False
+    return set(), False
 
 
 def _compact_item_has_elidable_inline_image(item: JsonValue) -> bool:
@@ -1106,13 +1182,7 @@ def _compact_elide_required_tool_output_images(
 
 
 def _compact_elide_inline_images(value: JsonValue) -> tuple[JsonValue, bool]:
-    """Replace inline image bytes with an explicit compact-only text marker.
-
-    The model has already observed these images during the live turn. Re-sending
-    their data URLs to the compact endpoint can make an otherwise recoverable
-    thread permanently uncompactable, especially when the latest required tool
-    output contains a screenshot. File-backed image references remain intact.
-    """
+    """Replace inline image bytes with an explicit compact-only text marker."""
 
     if is_json_mapping(value):
         if value.get("type") == "input_image":
