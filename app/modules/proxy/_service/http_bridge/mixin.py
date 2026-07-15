@@ -491,8 +491,8 @@ class _HTTPBridgeMixin(
             else None
         )
         old_account_id: str | None = None
-        force_durable_takeover_after_detach = False
-        own_fork_locally = False
+        force_durable_takeover_after_detach = own_fork_locally = used_session_header_fallback = False
+        model_transition_parent_key: _HTTPBridgeSessionKey | None = None
         while True:
             inflight_future: asyncio.Future[_HTTPBridgeSession] | None = None
             capacity_wait_future: asyncio.Future[_HTTPBridgeSession] | None = None
@@ -502,7 +502,6 @@ class _HTTPBridgeMixin(
             owner_forward: _HTTPBridgeOwnerForward | None = None
             force_durable_takeover = force_durable_takeover_after_detach
             missing_turn_state_alias = False
-            used_session_header_fallback = False
             sessions_to_close_before_create: list[_HTTPBridgeSession] = []
             session_to_return_after_close: _HTTPBridgeSession | None = None
             preserve_durable_canonical_key = (
@@ -663,6 +662,7 @@ class _HTTPBridgeMixin(
                     else None
                 )
                 if model_fork_key is not None:
+                    model_transition_parent_key = key
                     key = model_fork_key
                     durable_lookup = None
                     force_durable_takeover_after_detach = False
@@ -1198,6 +1198,8 @@ class _HTTPBridgeMixin(
                         ):
                             evictable_sessions: list[tuple[_HTTPBridgeSessionKey, _HTTPBridgeSession]] = []
                             for candidate_key, candidate_session in self._http_bridge_sessions.items():
+                                if candidate_key == model_transition_parent_key:
+                                    continue
                                 if getattr(candidate_session, "unanchored_reservation_id", None) is not None:
                                     continue
                                 pending_count = self._http_bridge_pending_count_nowait(
