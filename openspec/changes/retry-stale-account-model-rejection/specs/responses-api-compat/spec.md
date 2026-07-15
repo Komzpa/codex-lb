@@ -40,6 +40,14 @@ another proxy-generated failure.
 - **THEN** the client receives the original HTTP 400 `invalid_request_error`
 - **AND** the error is not rewritten to `no_accounts`, `stream_incomplete`, or HTTP 502
 
+#### Scenario: selected replacement failure is surfaced
+
+- **GIVEN** upstream rejects a pre-acceptance request with the exact account/model unsupported envelope
+- **AND** the proxy selects a different compatible replacement account
+- **WHEN** that replacement attempt fails before acceptance
+- **THEN** the client receives the replacement attempt's failure
+- **AND** the skipped account's original HTTP 400 is not used as a fallback
+
 #### Scenario: accepted or visible request is never replayed
 
 - **WHEN** the account/model unsupported envelope arrives after a response id, a nonterminal response event, downstream sequence/output, or an earlier replay
