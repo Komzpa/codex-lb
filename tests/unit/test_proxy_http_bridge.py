@@ -774,8 +774,10 @@ async def test_response_create_gate_timeout_retires_session_with_old_pending_vis
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("downstream_visible", [False, True])
 async def test_response_create_gate_timeout_retires_old_precreated_request_after_rate_limit_telemetry(
     monkeypatch: pytest.MonkeyPatch,
+    downstream_visible: bool,
 ) -> None:
     settings = _make_app_settings(
         proxy_admission_wait_timeout_seconds=0.001,
@@ -797,7 +799,7 @@ async def test_response_create_gate_timeout_retires_old_precreated_request_after
         response_create_gate=session.response_create_gate,
         response_create_gate_acquired=True,
         awaiting_response_created=True,
-        downstream_visible=False,
+        downstream_visible=downstream_visible,
         event_queue=asyncio.Queue(),
     )
     waiter = proxy_service._WebSocketRequestState(
@@ -830,7 +832,7 @@ async def test_response_create_gate_timeout_retires_old_precreated_request_after
     assert old_pending.latency_response_created_ms is None
     assert old_pending.awaiting_response_created is True
     assert old_pending.response_id is None
-    assert old_pending.downstream_visible is False
+    assert old_pending.downstream_visible is downstream_visible
     assert session.response_create_gate.locked() is True
 
     retire_calls: list[str] = []
