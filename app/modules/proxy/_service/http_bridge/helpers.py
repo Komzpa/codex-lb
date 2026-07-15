@@ -2047,7 +2047,7 @@ async def _http_bridge_response_create_gate_timeout_seconds(
     initial_timeout_seconds: float,
     settings: object,
 ) -> float:
-    """Respect a live holder's window without exceeding the request deadline."""
+    """Respect a silent holder's stale window without exceeding the request deadline."""
 
     timeout_seconds = initial_timeout_seconds
     stale_threshold = float(getattr(settings, "http_responses_session_bridge_stuck_gate_retire_after_seconds", 300.0))
@@ -2061,12 +2061,10 @@ async def _http_bridge_response_create_gate_timeout_seconds(
     silent_remaining = [
         max(0.0, stale_threshold - max(0.0, now - state.started_at))
         for state in gate_holders
-        if state.latency_first_upstream_event_ms is None and state.latency_response_created_ms is None
+        if state.latency_response_created_ms is None and state.response_event_count == 0
     ]
     if silent_remaining:
         timeout_seconds = max(timeout_seconds, min(silent_remaining))
-    elif gate_holders:
-        timeout_seconds = max(timeout_seconds, float(getattr(settings, "stream_idle_timeout_seconds", 7200.0)))
 
     deadline = request_state.bridge_request_deadline
     if deadline is None:
