@@ -33,7 +33,6 @@ from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
 from app.core.clients.proxy import codex_control_request as core_codex_control_request  # noqa: F401
 from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
 from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # noqa: F401
-from app.core.config.settings import Settings
 from app.core.errors import openai_error
 from app.core.metrics.prometheus import (
     PROMETHEUS_AVAILABLE,
@@ -113,6 +112,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _persist_http_bridge_previous_response_alias,
     _persist_http_bridge_turn_state_alias,
     _preferred_http_bridge_reconnect_turn_state,
+    _promote_http_bridge_session_to_codex_affinity,
     _raise_http_bridge_incompatible_admission_handoff,
     _reconcile_durable_http_bridge_ownership,
     _record_bridge_drain_recovery_allowed,
@@ -547,7 +547,7 @@ class _HTTPBridgeMixin(
                             self._http_bridge_turn_state_index.pop(alias_index_key, None)
                             key = _HTTPBridgeSessionKey("turn_state_header", incoming_turn_state, api_key_id)
                         else:
-                            self._promote_http_bridge_session_to_codex_affinity(
+                            _promote_http_bridge_session_to_codex_affinity(
                                 alias_session,
                                 turn_state=incoming_turn_state,
                                 settings=settings,
@@ -580,7 +580,7 @@ class _HTTPBridgeMixin(
                                 )
                             ):
                                 key = previous_session.key
-                                self._promote_http_bridge_session_to_codex_affinity(
+                                _promote_http_bridge_session_to_codex_affinity(
                                     previous_session,
                                     turn_state=incoming_turn_state,
                                     settings=settings,
@@ -1088,7 +1088,7 @@ class _HTTPBridgeMixin(
                                 existing = previous_session
                                 inflight_future = self._http_bridge_inflight_sessions.get(previous_key)
                                 if incoming_turn_state:
-                                    self._promote_http_bridge_session_to_codex_affinity(
+                                    _promote_http_bridge_session_to_codex_affinity(
                                         previous_session,
                                         turn_state=incoming_turn_state,
                                         settings=settings,
@@ -1707,23 +1707,6 @@ class _HTTPBridgeMixin(
         unregister_turn_states_locked(self, session)
         unregister_previous_response_ids_locked(self, session)
         return session
-
-    def _promote_http_bridge_session_to_codex_affinity(
-        self,
-        session: "_HTTPBridgeSession",
-        *,
-        turn_state: str,
-        settings: Settings,
-    ) -> None:
-        session.affinity = _AffinityPolicy(key=turn_state, kind=StickySessionKind.CODEX_SESSION)
-        session.codex_session = True
-        session.downstream_turn_state = turn_state
-        session.downstream_turn_state_aliases.add(turn_state)
-        session.idle_ttl_seconds = max(
-            session.idle_ttl_seconds,
-            float(settings.http_responses_session_bridge_codex_idle_ttl_seconds),
-        )
-        session.headers = _headers_with_turn_state(session.headers, turn_state)
 
     async def _claim_durable_http_bridge_session(
         self,

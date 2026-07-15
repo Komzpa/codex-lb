@@ -86,6 +86,7 @@ from app.modules.proxy._service.compact import (
     _sticky_key_from_compact_payload as _sticky_key_from_compact_payload,
 )
 from app.modules.proxy._service.http_bridge.protocol import _HTTPBridgeServiceProtocol
+from app.modules.proxy._service.http_bridge.service_stubs import _headers_with_turn_state
 from app.modules.proxy._service.observability import (
     _hash_identifier as _hash_identifier,
 )
@@ -1693,6 +1694,23 @@ def _effective_http_bridge_idle_ttl_seconds(
 
 def _http_bridge_eviction_priority(session: _HTTPBridgeSession) -> tuple[int, float]:
     return (0 if not session.codex_session else 1, session.last_used_at)
+
+
+def _promote_http_bridge_session_to_codex_affinity(
+    session: _HTTPBridgeSession,
+    *,
+    turn_state: str,
+    settings: Settings,
+) -> None:
+    session.affinity = _AffinityPolicy(key=turn_state, kind=StickySessionKind.CODEX_SESSION)
+    session.codex_session = True
+    session.downstream_turn_state = turn_state
+    session.downstream_turn_state_aliases.add(turn_state)
+    session.idle_ttl_seconds = max(
+        session.idle_ttl_seconds,
+        float(settings.http_responses_session_bridge_codex_idle_ttl_seconds),
+    )
+    session.headers = _headers_with_turn_state(session.headers, turn_state)
 
 
 def _build_http_bridge_prewarm_text(text_data: str) -> str | None:
