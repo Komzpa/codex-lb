@@ -102,13 +102,31 @@ class LiveUsageIngestor:
         self._consumer = None
         trailing = self._trailing_invalidation
         self._trailing_invalidation = None
-        for task in (consumer, trailing):
-            if task is not None:
-                task.cancel()
+        tasks = tuple(task for task in (consumer, trailing) if task is not None)
+        for task in tasks:
+            task.cancel()
+
+        first_cancellation: asyncio.CancelledError | None = None
+        first_error: Exception | None = None
+        for task in tasks:
+            while not task.done():
                 try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+                    await asyncio.wait({task})
+                except asyncio.CancelledError as exc:
+                    if first_cancellation is None:
+                        first_cancellation = exc
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+
+        if first_cancellation is not None:
+            raise first_cancellation
+        if first_error is not None:
+            raise first_error
 
     def _should_skip(self, account_id: str, snapshot: LiveRateLimitSnapshot) -> bool:
         last = self._last_write.get(account_id)

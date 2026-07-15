@@ -237,6 +237,8 @@ def should_use_weekly_primary(
         return False
     if secondary_row is None:
         return True
+    if not is_weekly_window_minutes(secondary_row.window_minutes):
+        return True
     return _should_prefer_primary_row(primary_row, secondary_row)
 
 

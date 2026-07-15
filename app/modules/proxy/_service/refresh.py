@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
-from typing import Protocol
+from typing import Protocol, cast
 
 from app.core.auth.refresh import RefreshError
 from app.core.clients.proxy import ProxyResponseError
@@ -11,6 +12,7 @@ from app.core.resilience.network_recovery import (
     ProcessNetworkRecovery,
 )
 from app.core.upstream_proxy import UpstreamProxyRouteError
+from app.core.utils.request_id import get_request_id
 from app.db.models import Account
 
 
@@ -22,6 +24,24 @@ class _RefreshServiceProtocol(Protocol):
         force: bool = False,
         timeout_seconds: float | None = None,
     ) -> Account: ...
+
+
+class _RefreshMixin:
+    async def _ensure_fresh_with_budget(
+        self,
+        account: Account,
+        *,
+        force: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> Account:
+        return await ensure_fresh_with_budget(
+            cast(_RefreshServiceProtocol, self),
+            account,
+            force=force,
+            deadline=None if timeout_seconds is None else time.monotonic() + timeout_seconds,
+            remaining_budget_seconds=_remaining_budget_seconds,
+            request_id=get_request_id(),
+        )
 
 
 async def ensure_fresh_with_budget(
@@ -85,6 +105,10 @@ def _refresh_budget_exhausted() -> ProxyResponseError:
         openai_error("upstream_request_timeout", "Proxy request budget exhausted"),
         failure_phase="refresh",
     )
+
+
+def _remaining_budget_seconds(deadline: float) -> float:
+    return max(0.0, deadline - time.monotonic())
 
 
 def _refresh_upstream_proxy_fail_closed_reason(exc: RefreshError) -> str | None:

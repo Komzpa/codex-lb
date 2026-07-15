@@ -41,6 +41,8 @@ frontend/coverage/
 # Local
 .local/
 .worktrees/
+.claude/worktrees/
+.agents/worktrees/
 certs/
 
 .codex-lb/
@@ -58,4 +60,3 @@ certs/
 PROMPT.md
 SUMMARY.md
 .superpowers/
-.agents/worktrees/

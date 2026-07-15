@@ -16,6 +16,27 @@ Settings are environment variables with the `CODEX_LB_` prefix, or a `.env.local
 | `CODEX_LB_FIREWALL_TRUST_PROXY_HEADERS` | `false` | Behind a reverse proxy — see [Remote Access](deployment/remote.md) |
 | `CODEX_LB_FIREWALL_TRUSTED_PROXY_CIDRS` | `127.0.0.1/32,::1/128` | CIDRs allowed to set `X-Forwarded-For` |
 | `CODEX_LB_OAUTH_CALLBACK_HOST` | auto-detected (`0.0.0.0` in containers) | Rarely — bind the OAuth login callback explicitly |
+| `CODEX_LB_REQUEST_LOG_RETENTION_DAYS` | `0` (disabled) | Bound request-log metadata growth; use `0` or at least 30 days |
+| `CODEX_LB_USAGE_HISTORY_RETENTION_DAYS` | `0` (disabled) | Bound usage-history growth; use `0` or at least 45 days |
+
+## Metadata retention
+
+Retention is opt-in. Leaving both variables unset (or setting them to `0`)
+deletes nothing. Non-zero values below the corresponding safety floor are
+rejected at startup, and values above 3650 days are also rejected.
+
+The canonical retention scheduler is not operator-tunable: it starts one pass
+immediately, then waits one hour between passes. At most one elected instance
+runs each pass, and deletion uses bounded transactions. Request logs are pruned
+only after their usage has been folded into durable rollups and only while that
+fold watermark is current; an absent or stale watermark suspends request-log
+deletion. Usage history keeps the newest sample for every
+account/quota/window identity even when that sample is older than the cutoff.
+
+Pruning is irreversible. Reports outside the retained window contain only the
+remaining data, and a `previous_response_id` older than the request-log window
+may no longer resolve its original account. Back up the data directory or
+database before enabling retention on an existing large installation.
 
 ## Everything else
 
@@ -30,4 +51,4 @@ Runtime behavior such as the routing strategy, upstream stream transport, and pe
 
 ---
 
-*Specs: [deployment-installation](https://github.com/Soju06/codex-lb/tree/main/openspec/specs/deployment-installation) · [replica-operations](https://github.com/Soju06/codex-lb/tree/main/openspec/specs/replica-operations)*
+*Specs: [deployment-installation](https://github.com/Soju06/codex-lb/tree/main/openspec/specs/deployment-installation) · [replica-operations](https://github.com/Soju06/codex-lb/tree/main/openspec/specs/replica-operations) · [data-retention](https://github.com/Soju06/codex-lb/tree/main/openspec/specs/data-retention)*

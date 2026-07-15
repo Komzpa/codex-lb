@@ -98,14 +98,21 @@ async def start_internal_drain(request: Request) -> HealthCheckResponse:
 
     import app.core.shutdown as shutdown_state
 
-    shutdown_state.set_bridge_drain_active(True)
-    shutdown_state.set_draining(True)
+    expires_at = shutdown_state.start_internal_drain_lease()
 
     proxy_service = getattr(request.app.state, "proxy_service", None)
     if proxy_service is not None and hasattr(proxy_service, "mark_http_bridge_draining"):
         await proxy_service.mark_http_bridge_draining()
 
-    return HealthCheckResponse(status="ok", checks={"draining": "ok"})
+    return HealthCheckResponse(
+        status="ok",
+        checks={
+            "draining": "true",
+            "bridge_drain_active": "true",
+            "drain_lease_ttl_seconds": f"{shutdown_state.DEFAULT_INTERNAL_DRAIN_TTL_SECONDS:g}",
+            "drain_lease_expires_at_monotonic": f"{expires_at:.6f}",
+        },
+    )
 
 
 @router.post("/internal/drain/stop", include_in_schema=False)
@@ -116,8 +123,7 @@ async def stop_internal_drain(request: Request) -> HealthCheckResponse:
 
     import app.core.shutdown as shutdown_state
 
-    shutdown_state.set_draining(False)
-    shutdown_state.set_bridge_drain_active(False)
+    shutdown_state.clear_internal_drain_lease()
 
     return HealthCheckResponse(status="ok", checks={"draining": "false"})
 
@@ -130,10 +136,13 @@ async def internal_drain_status(request: Request) -> HealthCheckResponse:
 
     import app.core.shutdown as shutdown_state
 
+    draining, bridge_drain_active, lease_ttl, lease_expires_at = shutdown_state.get_internal_drain_status()
     checks = {
-        "draining": str(shutdown_state.is_draining()).lower(),
-        "bridge_drain_active": str(shutdown_state.is_bridge_drain_active()).lower(),
+        "draining": str(draining).lower(),
+        "bridge_drain_active": str(bridge_drain_active).lower(),
         "in_flight": str(shutdown_state.get_in_flight()),
+        "drain_lease_ttl_seconds": f"{lease_ttl:g}" if lease_ttl is not None else "none",
+        "drain_lease_expires_at_monotonic": f"{lease_expires_at:.6f}" if lease_expires_at is not None else "none",
     }
 
     app = getattr(request, "app", None)

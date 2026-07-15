@@ -53,6 +53,58 @@ Open [localhost:2455](http://localhost:2455) → Add account → Done.
 Accessing the dashboard remotely for the first time? You need a one-time bootstrap token —
 see [Getting started](https://soju06.github.io/codex-lb/getting-started/).
 
+### Switching Wi-Fi or other networks
+
+When a laptop switches from one Wi-Fi network to another—for example, from home Wi-Fi to a phone hotspot—or when a VPN connects or disconnects, existing internet connections may briefly break. Docker can also keep using a DNS server from the previous network. DNS is the service that finds the network address for names such as `chatgpt.com`; if Docker's copy is out of date, codex-lb may report timeouts while contacting OpenAI even though the host browser works.
+
+codex-lb retries only when the transport can prove that the request failed before it was sent. Merely seeing no output is not enough: if a request may already have reached OpenAI, codex-lb returns the network error without resending it, which avoids accidentally starting the same response twice. In either case, it avoids treating a laptop-wide DNS problem as a problem with an individual account. It cannot, however, repair a Docker DNS service that remains pointed at the old network.
+
+For laptops that switch networks frequently:
+
+- **Simplest on Linux, macOS, and Windows:** run `uvx codex-lb` directly on the host. This avoids Docker's additional DNS layer.
+- **Docker Engine on Linux (verified with `systemd-resolved`):** use host networking so the container shares the host resolver path. This survives network switches only when the host exposes a stable resolver address, such as the `127.0.0.53` `systemd-resolved` stub. If the host's `/etc/resolv.conf` points directly to a DNS server supplied by Wi-Fi or other DHCP, that address can still become stale. In that case, configure a stable host resolver, follow the [bridge-listener runbook](openspec/specs/deployment-networking/context.md#diagnostics-and-recovery), or prefer `uvx`. Use the following command instead of the portable Docker command above.
+- **Docker Desktop on macOS or Windows:** Docker Desktop 4.34 and later offers opt-in host networking, but containers still run through Docker Desktop's virtual machine and its DNS behavior can vary by version and configuration. This setup has not been verified as a reliable fix for switching networks. Keep Docker Desktop current; if failures persist, prefer the native `uvx` installation.
+
+```bash
+docker volume create codex-lb-data
+docker run -d --name codex-lb \
+  --network host \
+  -v codex-lb-data:/var/lib/codex-lb \
+  ghcr.io/soju06/codex-lb:latest
+```
+
+In the verified Docker Engine setup on Linux, host networking does not use `-p`; codex-lb still listens on ports 2455 and 1455. It also removes Docker's network-namespace isolation. The command is an opt-in path to a stable host resolver, not a DNS fix by itself.
+
+## Remote Setup
+
+When accessing the dashboard remotely for the first time, a bootstrap token is required to set the initial password.
+
+**Auto-generated (default):** On first startup (no password configured), the server generates a one-time token and prints it to logs:
+
+```bash
+docker logs codex-lb
+# ============================================
+#   Dashboard bootstrap token (first-run):
+#   <token>
+# ============================================
+```
+
+Open the dashboard → enter the token + new password → done. The token is shared across replicas and remains valid until a password is set. In multi-replica setups, replicas must share the same encryption key (the Helm chart default) for restart recovery to work.
+
+**Manual token:** To use a fixed token instead, set the env var before starting:
+
+```bash
+docker network inspect codex-lb-net >/dev/null 2>&1 || docker network create codex-lb-net
+docker run -d --name codex-lb \
+  --network codex-lb-net \
+  -e CODEX_LB_DASHBOARD_BOOTSTRAP_TOKEN=your-secret-token \
+  -p 2455:2455 -p 1455:1455 \
+  -v codex-lb-data:/var/lib/codex-lb \
+  ghcr.io/soju06/codex-lb:latest
+```
+
+**Local access** (localhost) bypasses bootstrap entirely — no token needed.
+
 ## Client Setup
 
 Point any OpenAI-compatible client at codex-lb. For Codex CLI, `~/.codex/config.toml`:
@@ -85,6 +137,79 @@ Remote clients need an [API key](https://soju06.github.io/codex-lb/api-keys/) cr
 Environment variables with `CODEX_LB_` prefix or `.env.local` — see [`.env.example`](.env.example) and the
 [configuration guide](https://soju06.github.io/codex-lb/configuration/). SQLite is the default database backend;
 PostgreSQL is optional via `CODEX_LB_DATABASE_URL`.
+
+The Docker Compose `postgres` profile uses the Postgres 18 image and mounts the named data volume at
+`/var/lib/postgresql`, the parent of the image's versioned `PGDATA` directory.
+
+Existing Postgres 16 compose volumes must be upgraded before the Postgres 18 container starts:
+
+```bash
+docker compose --profile postgres stop postgres
+docker run --rm -v codex-lb-postgres-data:/var/lib/postgresql -v "$PWD:/backup" alpine \
+  tar -C /var/lib/postgresql -czf /backup/codex-lb-postgres-data-before-pg18.tgz .
+docker compose --profile postgres-upgrade run --rm postgres-upgrade
+docker compose --profile postgres up -d postgres
+```
+
+The `postgres-upgrade` profile runs `pg_upgrade` in one-shot mode against the same named volume and exits after the
+data directory has been upgraded to the Postgres 18 layout. Because that helper mounts and rewrites the operator's
+database volume, Compose pins the helper image by digest; refresh and review the digest deliberately when changing the
+helper image tag. Keep the backup until the application has started and `codex-lb-db check` succeeds against the
+upgraded database.
+
+The normal `postgres` service refuses to start when it detects the old root-level `PG_VERSION` file from a pre-18
+Compose volume. If that guard fires, run the `postgres-upgrade` profile above before starting Postgres again.
+It also refuses nested `/var/lib/postgresql/data` directories that still report a pre-18 major version, because those
+layouts need an explicit pg_upgrade before the Postgres 18 container can safely open them.
+
+### Dashboard authentication modes
+
+`codex-lb` supports three dashboard auth modes via environment variables:
+
+- `CODEX_LB_DASHBOARD_AUTH_MODE=standard` — built-in dashboard password with optional TOTP from the Settings page.
+- `CODEX_LB_DASHBOARD_AUTH_MODE=trusted_header` — trust a reverse-proxy auth header such as Authelia's `Remote-User`, but only from `CODEX_LB_FIREWALL_TRUSTED_PROXY_CIDRS`. Built-in password/TOTP remain available as an optional fallback, and password/TOTP management still requires a fallback password session.
+- `CODEX_LB_DASHBOARD_AUTH_MODE=disabled` — fully bypass dashboard auth. Use only behind network restrictions or external auth. Built-in password/TOTP management is disabled in this mode.
+
+`trusted_header` mode also requires:
+
+```bash
+CODEX_LB_FIREWALL_TRUST_PROXY_HEADERS=true
+CODEX_LB_FIREWALL_TRUSTED_PROXY_CIDRS=172.18.0.0/16
+CODEX_LB_DASHBOARD_AUTH_PROXY_HEADER=Remote-User
+```
+
+If the trusted header is missing and no fallback password is configured, the dashboard fails closed and shows a reverse-proxy-required message instead of loading the UI.
+
+### Docker examples
+
+**Authelia / trusted header**
+
+```bash
+docker network inspect codex-lb-net >/dev/null 2>&1 || docker network create codex-lb-net
+docker run -d --name codex-lb \
+  --network codex-lb-net \
+  -p 2455:2455 -p 1455:1455 \
+  -e CODEX_LB_DASHBOARD_AUTH_MODE=trusted_header \
+  -e CODEX_LB_DASHBOARD_AUTH_PROXY_HEADER=Remote-User \
+  -e CODEX_LB_FIREWALL_TRUST_PROXY_HEADERS=true \
+  -e CODEX_LB_FIREWALL_TRUSTED_PROXY_CIDRS=172.18.0.0/16 \
+  -v codex-lb-data:/var/lib/codex-lb \
+  ghcr.io/soju06/codex-lb:latest
+```
+
+**Hard override / no app-level dashboard auth**
+
+```bash
+docker network inspect codex-lb-net >/dev/null 2>&1 || docker network create codex-lb-net
+docker run -d --name codex-lb \
+  --network codex-lb-net \
+  -p 2455:2455 -p 1455:1455 \
+  -e CODEX_LB_DASHBOARD_AUTH_MODE=disabled \
+  -v codex-lb-data:/var/lib/codex-lb \
+  ghcr.io/soju06/codex-lb:latest
+```
+
+For Helm, pass the same values through `extraEnv`.
 
 ## Data
 
@@ -253,6 +378,7 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/e
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/dmdfami"><img src="https://avatars.githubusercontent.com/u/222630288?v=4?s=100" width="100px;" alt="DOMANHDUC"/><br /><sub><b>DOMANHDUC</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=dmdfami" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/HeroOfOdyssey"><img src="https://avatars.githubusercontent.com/u/144704328?v=4?s=100" width="100px;" alt="Kwan Perry"/><br /><sub><b>Kwan Perry</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=HeroOfOdyssey" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/jamesx0416"><img src="https://avatars.githubusercontent.com/u/105842516?v=4?s=100" width="100px;" alt="James"/><br /><sub><b>James</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=jamesx0416" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=jamesx0416" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mereyabdenbekuly-ctrl"><img src="https://avatars.githubusercontent.com/u/234955825?v=4?s=100" width="100px;" alt="SSY"/><br /><sub><b>SSY</b></sub></a><br /><a href="https://github.com/Soju06/codex-lb/commits?author=mereyabdenbekuly-ctrl" title="Code">💻</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mereyabdenbekuly-ctrl" title="Tests">⚠️</a> <a href="https://github.com/Soju06/codex-lb/commits?author=mereyabdenbekuly-ctrl" title="Documentation">📖</a></td>
     </tr>
   </tbody>
 </table>

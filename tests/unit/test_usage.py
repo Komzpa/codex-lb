@@ -125,6 +125,32 @@ def test_normalize_weekly_only_rows_keeps_newer_secondary():
     assert normalized_secondary == [newer_secondary]
 
 
+def test_normalize_weekly_only_rows_prefers_weekly_primary_over_empty_secondary():
+    now = utcnow()
+    weekly_primary = UsageWindowRow(
+        account_id="acc_weekly_empty_secondary",
+        used_percent=49.0,
+        window_minutes=10080,
+        reset_at=1_784_666_219,
+        recorded_at=now,
+    )
+    empty_secondary = UsageWindowRow(
+        account_id="acc_weekly_empty_secondary",
+        used_percent=0.0,
+        window_minutes=0,
+        reset_at=None,
+        recorded_at=now + timedelta(seconds=1),
+    )
+
+    normalized_primary, normalized_secondary = normalize_weekly_only_rows(
+        [weekly_primary],
+        [empty_secondary],
+    )
+
+    assert normalized_primary == []
+    assert normalized_secondary == [weekly_primary]
+
+
 def test_normalize_rate_limit_windows_promotes_monthly_primary_without_secondary() -> None:
     primary = UsageWindow(
         used_percent=5.0,

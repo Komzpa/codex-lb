@@ -87,9 +87,7 @@ from app.core.openai.requests import (
     ResponsesRequest,
 )
 from app.core.resilience.network_recovery import PROCESS_NETWORK_UNAVAILABLE_CODE
-from app.core.resilience.network_recovery import (
-    ProcessNetworkRecovery as ProcessNetworkRecovery,
-)
+from app.core.resilience.network_recovery import ProcessNetworkRecovery as ProcessNetworkRecovery
 from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
@@ -168,10 +166,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _has_http_bridge_response_output_marker as _has_http_bridge_response_output_marker,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_admission_timeout_seconds,
-    _http_bridge_should_attempt_local_previous_response_recovery,  # noqa: F401
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_allow_durable_takeover as _http_bridge_allow_durable_takeover,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -235,9 +229,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_prewarm_canary_bucket as _http_bridge_prewarm_canary_bucket,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _http_bridge_request_budget_seconds as _http_bridge_request_budget_seconds,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_request_counts_against_queue as _http_bridge_request_counts_against_queue,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -245,6 +236,9 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_requires_cluster_registration as _http_bridge_requires_cluster_registration,
+)
+from app.modules.proxy._service.http_bridge.helpers import (
+    _http_bridge_response_create_gate_timeout_seconds as _http_bridge_response_create_gate_timeout_seconds,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_runtime_config as _http_bridge_runtime_config,
@@ -266,6 +260,9 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_should_attempt_local_bootstrap_rebind as _http_bridge_should_attempt_local_bootstrap_rebind,
+)
+from app.modules.proxy._service.http_bridge.helpers import (
+    _http_bridge_should_attempt_local_previous_response_recovery,  # noqa: F401
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_should_attempt_soft_affinity_reroute as _http_bridge_should_attempt_soft_affinity_reroute,
@@ -363,9 +360,7 @@ from app.modules.proxy._service.observability import (
 from app.modules.proxy._service.rate_limit import (
     _RateLimitMixin,
 )
-from app.modules.proxy._service.refresh import (
-    ensure_fresh_with_budget as _recover_fresh_account,
-)
+from app.modules.proxy._service.refresh import _RefreshMixin
 from app.modules.proxy._service.request_log import (
     _RequestLogMixin,
 )
@@ -500,6 +495,14 @@ from app.modules.proxy._service.response_create import (
 )
 from app.modules.proxy._service.response_create import (
     _write_response_create_dump as _write_response_create_dump,
+)
+from app.modules.proxy._service.security_lineage import (
+    _NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE,  # noqa: F401
+    _SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE,  # noqa: F401
+    _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE,  # noqa: F401
+    _SECURITY_WORK_RETRY_MESSAGE,  # noqa: F401
+    _is_security_work_authorization_required_error,  # noqa: F401
+    _SecurityLineageMixin,
 )
 from app.modules.proxy._service.streaming import (
     _StreamingMixin,
@@ -825,7 +828,9 @@ _ACCOUNT_RECOVERY_RETRY_CODES = frozenset(
 )
 _TRANSIENT_RETRY_CODES = frozenset(
     {
+        "overloaded_error",
         "server_error",
+        "server_is_overloaded",
         "stream_incomplete",
         "stream_idle_timeout",
         "upstream_request_timeout",
@@ -879,22 +884,6 @@ _SUPPRESSED_DUPLICATE_TOOL_CALL_MESSAGE = (
 )
 _WEBSOCKET_PREVIOUS_RESPONSE_ACCOUNT_CACHE_LIMIT = 4096
 _WEBSOCKET_CONTINUITY_CACHE_LIMIT = 4096
-_SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE = "security_work_authorization_required"
-_NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE = "no_security_work_authorized_accounts"
-_SECURITY_WORK_AUTHORIZATION_REQUIRED_HINTS = (
-    "flagged for possible cybersecurity risk",
-    "authorized for security work",
-    "chatgpt.com/cyber",
-)
-_SECURITY_WORK_RETRY_MESSAGE = (
-    "Upstream flagged this request as possible cybersecurity work. "
-    "codex-lb is retrying on an account marked as authorized for security work."
-)
-_SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
-    "Upstream flagged this request as possible cybersecurity work, but no account is marked as authorized for "
-    "security work. codex-lb is continuing with normal account selection; the upstream request may still fail until "
-    "an account with Trusted Access for Cyber is marked as security-work-authorized."
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -929,9 +918,11 @@ def _bounded_lease_token_estimate(value: int | None, *, default: int) -> int:
 
 
 class ProxyService(
+    _SecurityLineageMixin,
     _ApiKeyUsageMixin,
     _RequestLogMixin,
     _RateLimitMixin,
+    _RefreshMixin,
     _WarmupMixin,
     _FileOpsMixin,
     _TranscribeMixin,
@@ -1295,7 +1286,12 @@ class ProxyService(
     ) -> None:
         timeout_seconds = _proxy_admission_wait_timeout_seconds()
         if bridge_session is not None:
-            timeout_seconds = _http_bridge_admission_timeout_seconds(request_state, timeout_seconds, get_settings())
+            timeout_seconds = await _http_bridge_response_create_gate_timeout_seconds(
+                bridge_session,
+                request_state,
+                initial_timeout_seconds=timeout_seconds,
+                settings=get_settings(),
+            )
         request_state.response_create_gate = response_create_gate
         request_state.response_create_gate_wait_started_at = time.monotonic()
         if account_id is not None:
@@ -1334,14 +1330,14 @@ class ProxyService(
                         300.0,
                     )
                 )
+                # Leading telemetry is not response progress and must not keep a stale gate alive.
                 should_retire_stuck_session = any(
                     state.transport == _REQUEST_TRANSPORT_HTTP
                     and not state.skip_request_log
                     and state.response_create_gate_acquired
                     and state.awaiting_response_created
-                    and not state.downstream_visible
-                    and state.latency_first_upstream_event_ms is None
                     and state.latency_response_created_ms is None
+                    and state.response_event_count == 0
                     and max(0.0, now - state.started_at) >= threshold_seconds
                     for state in pending_states
                 )
@@ -1487,23 +1483,6 @@ class ProxyService(
                 return await asyncio.wait_for(refresh, timeout=max(0.001, timeout_seconds))
         finally:
             pop_token_refresh_timeout_override(token)
-
-    async def _ensure_fresh_with_budget(
-        self,
-        account: Account,
-        *,
-        force: bool = False,
-        timeout_seconds: float | None = None,
-    ) -> Account:
-        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
-        return await _recover_fresh_account(
-            self,
-            account,
-            force=force,
-            deadline=deadline,
-            remaining_budget_seconds=_remaining_budget_seconds,
-            request_id=get_request_id(),
-        )
 
     async def _ensure_previsible_unary_fresh_with_failover(
         self,
@@ -1705,11 +1684,16 @@ class ProxyService(
         exclude_account_ids: Collection[str] | None = None,
         preferred_account_id: str | None = None,
         require_security_work_authorized: bool = False,
+        security_lineage_id: str | None = None,
         lease_kind: Literal["response_create", "stream"] | None = None,
         estimated_lease_tokens: float = 0.0,
         fallback_on_preferred_account_unavailable: bool = True,
         traffic_class: TrafficClass = TRAFFIC_CLASS_FOREGROUND,
     ) -> AccountSelection:
+        def _with_effective_security_requirement(selection: AccountSelection) -> AccountSelection:
+            selection.requires_security_work_authorized = require_security_work_authorized
+            return selection
+
         remaining_budget = _remaining_budget_seconds(deadline)
         if remaining_budget <= 0:
             logger.warning(
@@ -1752,6 +1736,10 @@ class ProxyService(
         try:
             with anyio.fail_after(remaining_budget):
                 settings = await get_settings_cache().get()
+                require_security_work_authorized = (
+                    require_security_work_authorized
+                    or await self._security_lineage_requires_security_work_authorized(security_lineage_id)
+                )
                 concurrency_caps = effective_account_concurrency_caps(settings)
                 stream_reserve_slots = (
                     (
@@ -1772,18 +1760,21 @@ class ProxyService(
                             account=None,
                             error_message="Single account routing is enabled but no account is selected",
                             error_code="single_account_not_configured",
+                            requires_security_work_authorized=require_security_work_authorized,
                         )
                     if selected_account_id in excluded_account_ids_set:
                         return AccountSelection(
                             account=None,
                             error_message="Selected single account is unavailable",
                             error_code="single_account_unavailable",
+                            requires_security_work_authorized=require_security_work_authorized,
                         )
                     if scoped_account_ids is not None and selected_account_id not in scoped_account_ids:
                         return AccountSelection(
                             account=None,
                             error_message="Selected single account is outside the API key account scope",
                             error_code="single_account_scope_mismatch",
+                            requires_security_work_authorized=require_security_work_authorized,
                         )
                     scoped_account_ids = {selected_account_id}
                     routing_strategy = "single_account"
@@ -1808,6 +1799,7 @@ class ProxyService(
                             account=None,
                             error_message="Preferred account is not available",
                             error_code="preferred_account_unavailable",
+                            requires_security_work_authorized=require_security_work_authorized,
                         )
                 if preferred_eligible:
                     preferred_selection = await self._load_balancer.select_account(
@@ -1841,7 +1833,11 @@ class ProxyService(
                             request_stage,
                             preferred_account_id,
                         )
-                        return preferred_selection
+                        return await self._bind_security_lineage_selection(
+                            security_lineage_id,
+                            preferred_selection,
+                            require_security_work_authorized=require_security_work_authorized,
+                        )
                     if not fallback_on_preferred_account_unavailable:
                         logger.warning(
                             "Proxy preferred account unavailable request_id=%s kind=%s request_stage=%s "
@@ -1853,7 +1849,7 @@ class ProxyService(
                             preferred_selection.error_code,
                             preferred_selection.error_message,
                         )
-                        return preferred_selection
+                        return _with_effective_security_requirement(preferred_selection)
                 selection = await self._load_balancer.select_account(
                     sticky_key=sticky_key,
                     sticky_kind=sticky_kind,
@@ -1892,6 +1888,7 @@ class ProxyService(
                         account=None,
                         error_message="No active accounts available",
                         error_code="no_accounts",
+                        requires_security_work_authorized=require_security_work_authorized,
                     )
                 logger.info(
                     "Proxy account selection result request_id=%s kind=%s request_stage=%s model=%s "
@@ -1906,7 +1903,11 @@ class ProxyService(
                     None if scoped_account_ids is None else len(scoped_account_ids),
                     len(excluded_account_ids_set),
                 )
-                return selection
+                return await self._bind_security_lineage_selection(
+                    security_lineage_id,
+                    selection,
+                    require_security_work_authorized=require_security_work_authorized,
+                )
         except TimeoutError:
             logger.warning("%s account selection exceeded request budget request_id=%s", kind.title(), request_id)
             _raise_proxy_budget_exhausted()
@@ -2372,16 +2373,6 @@ def _security_work_advisory_event(
         "type": "codex_lb.warning",
         "warning": warning,
     }
-
-
-def _is_security_work_authorization_required_error(code: str | None, message: str | None) -> bool:
-    normalized_code = (code or "").strip().lower()
-    if normalized_code == _SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE:
-        return True
-    normalized_message = (message or "").strip().lower()
-    if not normalized_message:
-        return False
-    return all(hint in normalized_message for hint in _SECURITY_WORK_AUTHORIZATION_REQUIRED_HINTS)
 
 
 def _raise_proxy_budget_exhausted() -> NoReturn:
