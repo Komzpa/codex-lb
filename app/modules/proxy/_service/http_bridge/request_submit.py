@@ -40,6 +40,7 @@ from app.core.errors import (
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
+    extract_input_file_ids,
 )
 from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
@@ -177,6 +178,17 @@ from app.modules.proxy.helpers import (
 from app.modules.proxy.tool_call_dedupe import (
     dedupe_replayed_side_effect_input_items,
 )
+
+
+def _http_bridge_request_contains_input_file_ids(text: str) -> bool:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return True
+    if not isinstance(payload, Mapping):
+        return True
+    return bool(extract_input_file_ids(payload.get("input")))
+
 
 logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
@@ -1404,11 +1416,14 @@ class _HTTPBridgeRequestSubmitMixin:
         self: Any,
         session: "_HTTPBridgeSession",
         request_state: _WebSocketRequestState,
+        *,
+        durable_security_requirement_persisted: bool = False,
     ) -> bool:
         return await self._retry_http_bridge_owner_failover_request(
             session,
             request_state,
             require_security_work_authorized=True,
+            durable_security_requirement_persisted=durable_security_requirement_persisted,
         )
 
     async def _claim_http_bridge_replacement_before_swap(
@@ -1443,6 +1458,7 @@ class _HTTPBridgeRequestSubmitMixin:
         request_state: _WebSocketRequestState,
         *,
         require_security_work_authorized: bool,
+        durable_security_requirement_persisted: bool = False,
     ) -> bool:
         # Uploaded file ids are scoped to the account that registered them.
         # Never mark or migrate the lineage before proving the request is
@@ -1487,11 +1503,17 @@ class _HTTPBridgeRequestSubmitMixin:
                 retry_text = _prepare_websocket_request_state_for_account_switch(request_state)
             if retry_text is None:
                 return False
+        if _http_bridge_request_contains_input_file_ids(retry_text):
+            return False
 
         owner_account_id = session.account.id
         if require_security_work_authorized and getattr(session.account, "security_work_authorized", False):
             return False
-        if require_security_work_authorized and session.durable_session_id is not None:
+        if (
+            require_security_work_authorized
+            and not durable_security_requirement_persisted
+            and session.durable_session_id is not None
+        ):
             durable_lookup = await self._durable_bridge.require_security_work_authorized(
                 session_id=session.durable_session_id
             )

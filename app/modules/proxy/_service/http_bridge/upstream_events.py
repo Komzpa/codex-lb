@@ -1033,9 +1033,9 @@ class _HTTPBridgeUpstreamEventsMixin:
                 )
                 terminal_request_state.require_security_work_authorized = True
                 session.requires_security_work_authorized = True
-                owner_is_security_work_authorized = bool(getattr(session.account, "security_work_authorized", False))
-                if owner_is_security_work_authorized and session.durable_session_id is not None:
+                if session.durable_session_id is not None:
                     await self._durable_bridge.require_security_work_authorized(session_id=session.durable_session_id)
+                owner_is_security_work_authorized = bool(getattr(session.account, "security_work_authorized", False))
                 can_retry_security_work = (
                     not owner_is_security_work_authorized
                     and not has_other_pending_requests
@@ -1068,7 +1068,11 @@ class _HTTPBridgeUpstreamEventsMixin:
                         )
                     )
                 if can_retry_security_work:
-                    retried = await self._retry_http_bridge_security_work_request(session, terminal_request_state)
+                    retried = await self._retry_http_bridge_security_work_request(
+                        session,
+                        terminal_request_state,
+                        durable_security_requirement_persisted=session.durable_session_id is not None,
+                    )
                     if retried:
                         return
 
