@@ -89,10 +89,12 @@ async def test_live_ingestor_invalidates_rate_limit_header_cache(monkeypatch, db
         await AccountsRepository(session).upsert(_make_account("acc_live_headers", "live-headers@example.com"))
 
     invalidations: list[int] = []
+    invalidated = asyncio.Event()
 
     class _SpyHeadersCache:
         async def invalidate(self) -> None:
             invalidations.append(1)
+            invalidated.set()
 
     monkeypatch.setattr(live_ingest_module, "get_rate_limit_headers_cache", lambda: _SpyHeadersCache())
 
@@ -100,9 +102,10 @@ async def test_live_ingestor_invalidates_rate_limit_header_cache(monkeypatch, db
     ingestor.start()
     try:
         ingestor.publish(_snapshot(), account_id="acc_live_headers")
+        await asyncio.wait_for(invalidated.wait(), timeout=5.0)
         primary, secondary = await _wait_for_rows("acc_live_headers")
     finally:
-        await ingestor.stop()
+        await asyncio.wait_for(ingestor.stop(), timeout=1.0)
 
     assert primary is not None and secondary is not None
     assert invalidations == [1]
