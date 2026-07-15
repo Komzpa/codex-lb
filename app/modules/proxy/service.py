@@ -85,12 +85,8 @@ from app.core.openai.requests import (
     ResponsesCompactRequest,
     ResponsesRequest,
 )
-from app.core.resilience.network_recovery import (
-    PROCESS_NETWORK_UNAVAILABLE_CODE,
-)
-from app.core.resilience.network_recovery import (
-    ProcessNetworkRecovery as ProcessNetworkRecovery,
-)
+from app.core.resilience.network_recovery import PROCESS_NETWORK_UNAVAILABLE_CODE
+from app.core.resilience.network_recovery import ProcessNetworkRecovery as ProcessNetworkRecovery
 from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
@@ -363,9 +359,7 @@ from app.modules.proxy._service.observability import (
 from app.modules.proxy._service.rate_limit import (
     _RateLimitMixin,
 )
-from app.modules.proxy._service.refresh import (
-    ensure_fresh_with_budget as _recover_fresh_account,
-)
+from app.modules.proxy._service.refresh import _RefreshMixin
 from app.modules.proxy._service.request_log import (
     _RequestLogMixin,
 )
@@ -918,6 +912,7 @@ class ProxyService(
     _ApiKeyUsageMixin,
     _RequestLogMixin,
     _RateLimitMixin,
+    _RefreshMixin,
     _WarmupMixin,
     _FileOpsMixin,
     _TranscribeMixin,
@@ -1325,8 +1320,7 @@ class ProxyService(
                         300.0,
                     )
                 )
-                # Leading telemetry records latency without assigning a response
-                # or releasing this gate; only response-created proves progress.
+                # Leading telemetry is not response progress and must not keep a stale gate alive.
                 should_retire_stuck_session = any(
                     state.transport == _REQUEST_TRANSPORT_HTTP
                     and not state.skip_request_log
@@ -1479,23 +1473,6 @@ class ProxyService(
                 return await asyncio.wait_for(refresh, timeout=max(0.001, timeout_seconds))
         finally:
             pop_token_refresh_timeout_override(token)
-
-    async def _ensure_fresh_with_budget(
-        self,
-        account: Account,
-        *,
-        force: bool = False,
-        timeout_seconds: float | None = None,
-    ) -> Account:
-        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
-        return await _recover_fresh_account(
-            self,
-            account,
-            force=force,
-            deadline=deadline,
-            remaining_budget_seconds=_remaining_budget_seconds,
-            request_id=get_request_id(),
-        )
 
     async def _ensure_previsible_unary_fresh_with_failover(
         self,
