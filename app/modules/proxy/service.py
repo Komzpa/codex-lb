@@ -7,7 +7,6 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Collection
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal, Mapping, NoReturn, TypeVar, cast
 
 import aiohttp
@@ -281,6 +280,9 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_turn_state_alias_key as _http_bridge_turn_state_alias_key,
+)
+from app.modules.proxy._service.http_bridge.helpers import (
+    _HTTPBridgeRuntimeConfig as _HTTPBridgeRuntimeConfig,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _is_http_bridge_previous_response_output_item as _is_http_bridge_previous_response_output_item,
@@ -887,17 +889,6 @@ _SUPPRESSED_DUPLICATE_TOOL_CALL_MESSAGE = (
 )
 _WEBSOCKET_PREVIOUS_RESPONSE_ACCOUNT_CACHE_LIMIT = 4096
 _WEBSOCKET_CONTINUITY_CACHE_LIMIT = 4096
-
-
-@dataclass(frozen=True, slots=True)
-class _HTTPBridgeRuntimeConfig:
-    enabled: bool
-    idle_ttl_seconds: float
-    codex_idle_ttl_seconds: float
-    max_sessions: int
-    queue_limit: int
-    prompt_cache_idle_ttl_seconds: float
-    gateway_safe_mode: bool
 
 
 def _estimated_lease_tokens_from_request_usage_budget(budget: ApiKeyRequestUsageBudget | None) -> float:
