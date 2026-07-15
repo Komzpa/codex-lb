@@ -85,6 +85,12 @@ from app.core.openai.requests import (
     ResponsesCompactRequest,
     ResponsesRequest,
 )
+from app.core.resilience.network_recovery import (
+    PROCESS_NETWORK_UNAVAILABLE_CODE,
+)
+from app.core.resilience.network_recovery import (
+    ProcessNetworkRecovery as ProcessNetworkRecovery,
+)
 from app.core.resilience.overload import is_local_overload_error_code
 from app.core.types import JsonValue
 from app.core.upstream_proxy import UpstreamProxyRouteError
@@ -357,6 +363,9 @@ from app.modules.proxy._service.observability import (
 from app.modules.proxy._service.rate_limit import (
     _RateLimitMixin,
 )
+from app.modules.proxy._service.refresh import (
+    ensure_fresh_with_budget as _recover_fresh_account,
+)
 from app.modules.proxy._service.request_log import (
     _RequestLogMixin,
 )
@@ -517,9 +526,6 @@ from app.modules.proxy._service.streaming.helpers import (
 )
 from app.modules.proxy._service.streaming.helpers import (
     _push_stream_attempt_timeout_overrides as _push_stream_attempt_timeout_overrides,
-)
-from app.modules.proxy._service.streaming.helpers import (
-    _refresh_upstream_proxy_fail_closed_reason as _refresh_upstream_proxy_fail_closed_reason,
 )
 from app.modules.proxy._service.streaming.helpers import (
     _resolve_upstream_stream_transport as _resolve_upstream_stream_transport,
@@ -1479,13 +1485,15 @@ class ProxyService(
         force: bool = False,
         timeout_seconds: float | None = None,
     ) -> Account:
-        try:
-            return await self._ensure_fresh(account, force=force, timeout_seconds=timeout_seconds)
-        except RefreshError as exc:
-            reason = _refresh_upstream_proxy_fail_closed_reason(exc)
-            if reason is not None:
-                raise UpstreamProxyRouteError(reason, account_id=account.id) from exc
-            raise
+        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        return await _recover_fresh_account(
+            self,
+            account,
+            force=force,
+            deadline=deadline,
+            remaining_budget_seconds=_remaining_budget_seconds,
+            request_id=get_request_id(),
+        )
 
     async def _ensure_previsible_unary_fresh_with_failover(
         self,
@@ -2026,6 +2034,7 @@ class ProxyService(
 
 def _is_account_neutral_error_code(code: str | None) -> bool:
     return is_local_overload_error_code(code) or code in {
+        PROCESS_NETWORK_UNAVAILABLE_CODE,
         "proxy_unavailable",
         "responses_compact_input_too_large",
     }

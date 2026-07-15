@@ -153,6 +153,21 @@ When the service retires an HTTP bridge session because pending precreated repla
 - **THEN** the console log includes a HTTP bridge event with `event=retire_stale_pending`
 - **AND** the event includes only hashed bridge identity and low-cardinality metadata
 
+### Requirement: Process-wide network recovery is observable without sensitive resolver data
+
+The service MUST emit low-cardinality structured diagnostics when it detects a process-wide DNS or route failure, rotates shared transport state, retries a safe request, recovers, or exhausts the request budget. Diagnostics MUST NOT contain DNS server addresses, request payloads, API keys, access tokens, raw continuity keys, or account email addresses.
+
+#### Scenario: Recovery diagnostics are emitted
+
+- **WHEN** a safe Responses request enters and later exits process-wide network recovery
+- **THEN** logs identify the recovery stage, request id, transport, attempt count, and internal account id when known
+- **AND** logs do not expose resolver configuration or request content
+
+#### Scenario: Concurrent rotation is coalesced visibly
+
+- **WHEN** several callers report a network failure from the same shared client generation
+- **THEN** diagnostics distinguish the caller that rotated the client from callers that reused the already-rotated replacement
+
 ### Requirement: Request-log metadata keeps local routing failures unbound from upstream status
 
 When request routing fails before contacting upstream, `upstream_status_code` MUST be
@@ -376,7 +391,6 @@ material.
 - **WHEN** a source-routed request is logged or archived
 - **THEN** the configured upstream API key is not emitted in logs, request logs,
   metrics, diagnostics, or archive metadata
-
 ### Requirement: Request-log persistence is detached from the response path
 
 Request-log rows MUST be persisted by tracked background tasks that the response/stream close does not wait for; persistence failures MUST be logged, and graceful shutdown MUST drain pending log writes up to the configured drain timeout so final requests' logs are not lost.
@@ -392,4 +406,3 @@ Request-log rows MUST be persisted by tracked background tasks that the response
 
 - **WHEN** the service shuts down gracefully with log writes in flight
 - **THEN** shutdown waits for them up to the configured drain timeout and reports tasks that failed to drain
-
