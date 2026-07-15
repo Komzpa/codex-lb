@@ -195,8 +195,10 @@ async def test_ingestor_queue_overflow_drops_oldest() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("close_raises", [False, True], ids=["close-succeeds", "close-raises"])
 async def test_ingestor_stop_finishes_when_cancelled_during_session_close(
     monkeypatch: pytest.MonkeyPatch,
+    close_raises: bool,
 ) -> None:
     close_started = asyncio.Event()
     release_close = asyncio.Event()
@@ -210,6 +212,8 @@ async def test_ingestor_stop_finishes_when_cancelled_during_session_close(
             close_started.set()
             await release_close.wait()
             close_finished.set()
+            if close_raises:
+                raise RuntimeError("close failed")
 
     @asynccontextmanager
     async def fake_background_session() -> AsyncIterator[Any]:

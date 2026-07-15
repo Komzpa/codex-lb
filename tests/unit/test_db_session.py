@@ -732,6 +732,31 @@ async def test_safe_close_outlives_caller_cancellation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_safe_close_preserves_caller_cancellation_when_close_raises() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    close_settled = asyncio.Event()
+
+    class FakeSession:
+        async def close(self) -> None:
+            started.set()
+            await release.wait()
+            close_settled.set()
+            raise RuntimeError("close failed")
+
+    task = asyncio.create_task(session_module._safe_close(cast(session_module.AsyncSession, FakeSession())))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
+    assert close_settled.is_set()
+
+
+@pytest.mark.asyncio
 async def test_safe_rollback_outlives_caller_cancellation() -> None:
     started = asyncio.Event()
     release = asyncio.Event()
@@ -756,3 +781,31 @@ async def test_safe_rollback_outlives_caller_cancellation() -> None:
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1.0)
     assert rolled_back.is_set()
+
+
+@pytest.mark.asyncio
+async def test_safe_rollback_preserves_caller_cancellation_when_rollback_raises() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    rollback_settled = asyncio.Event()
+
+    class FakeSession:
+        def in_transaction(self) -> bool:
+            return True
+
+        async def rollback(self) -> None:
+            started.set()
+            await release.wait()
+            rollback_settled.set()
+            raise RuntimeError("rollback failed")
+
+    task = asyncio.create_task(session_module._safe_rollback(cast(session_module.AsyncSession, FakeSession())))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
+    assert rollback_settled.is_set()
