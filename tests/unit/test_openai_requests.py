@@ -1422,7 +1422,9 @@ def test_compact_trimming_omits_latest_non_state_tool_pair_when_it_cannot_fit():
     assert payload["input"][0] not in dumped_input
     assert payload["input"][2] not in dumped_input
     assert any(
-        isinstance(item, dict) and item.get("type") == "message" and "[compact trim]" in str(item.get("content"))
+        isinstance(item, dict)
+        and item.get("type") == "message"
+        and "[compact trim]" in str(item.get("content"))
         for item in dumped_input
     )
 
