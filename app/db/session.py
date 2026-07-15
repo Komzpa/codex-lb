@@ -165,7 +165,10 @@ async def _shielded(awaitable: Awaitable[object]) -> None:
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:
-        await task
+        try:
+            await task
+        except Exception:
+            pass
         raise
 
 
