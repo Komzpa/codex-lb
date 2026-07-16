@@ -1144,6 +1144,14 @@ def _clear_websocket_deferred_reasoning_downstream_texts(request_state: _WebSock
 def _record_response_event(request_state: _WebSocketRequestState | None, event_type: str | None) -> None:
     if request_state is None or event_type is None or not event_type.startswith("response."):
         return
+    if event_type not in {
+        "response.created",
+        "response.in_progress",
+        "response.completed",
+        "response.failed",
+        "response.incomplete",
+    }:
+        request_state.upstream_model_output_seen = True
     if event_type in {"response.failed", "response.incomplete"}:
         return
     request_state.response_event_count += 1
