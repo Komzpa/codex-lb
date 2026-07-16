@@ -1020,26 +1020,8 @@ async def test_response_create_gate_timeout_retires_old_precreated_request_after
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    (
-        "awaiting_response_created",
-        "downstream_visible",
-        "latency_first_upstream_event_ms",
-        "latency_response_created_ms",
-        "response_event_count",
-    ),
-    [
-        (False, True, 100, 100, 1),
-        (True, False, 25, None, 1),
-    ],
-)
-async def test_response_create_gate_timeout_does_not_retire_active_response_progress(
+async def test_response_create_gate_timeout_retires_after_non_response_telemetry(
     monkeypatch: pytest.MonkeyPatch,
-    awaiting_response_created: bool,
-    downstream_visible: bool,
-    latency_first_upstream_event_ms: int,
-    latency_response_created_ms: int | None,
-    response_event_count: int,
 ) -> None:
     settings = _make_app_settings(
         proxy_admission_wait_timeout_seconds=0.001,
