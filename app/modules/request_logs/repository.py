@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.config.settings import get_settings
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
 from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate, UsageSummaryLogsAggregate
 from app.core.utils.request_id import ensure_request_id

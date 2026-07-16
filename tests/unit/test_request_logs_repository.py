@@ -66,6 +66,37 @@ async def test_add_log_persists_request_kind(db_setup) -> None:
 
 
 @pytest.mark.asyncio
+async def test_add_log_persists_error_details(db_setup) -> None:
+    del db_setup
+    async with SessionLocal() as session:
+        repo = RequestLogsRepository(session)
+
+        saved = await repo.add_log(
+            account_id=None,
+            request_id="req_error_details",
+            model="gpt-5.2",
+            input_tokens=10,
+            output_tokens=0,
+            latency_ms=1,
+            status="error",
+            error_code="server_is_overloaded",
+            error_message="capacity retry exhausted",
+            failure_phase="http_bridge",
+            failure_detail="terminal_capacity_retry_exhausted",
+            failure_exception_type="ProxyResponseError",
+        )
+
+        persisted = await session.scalar(select(RequestLog).where(RequestLog.id == saved.id))
+
+    assert persisted is not None
+    assert persisted.error_code == "server_is_overloaded"
+    assert persisted.error_message == "capacity retry exhausted"
+    assert persisted.failure_phase == "http_bridge"
+    assert persisted.failure_detail == "terminal_capacity_retry_exhausted"
+    assert persisted.failure_exception_type == "ProxyResponseError"
+
+
+@pytest.mark.asyncio
 async def test_add_log_does_not_recalculate_unpriced_model_source_cost(db_setup) -> None:
     del db_setup
     async with SessionLocal() as session:
