@@ -146,6 +146,7 @@ from app.modules.model_sources.catalog import (
 )
 from app.modules.model_sources.forwarding import (
     ModelSourceForwardingError,
+    SourceTimings,
     SourceUsage,
     SourceUsageHolder,
     forward_chat_completion,
@@ -358,6 +359,14 @@ class _CapacityStartupReadyEvent(asyncio.Event):
 
 
 _OPPORTUNISTIC_RETRY_AFTER_SECONDS = 60
+
+# Internal Responses host model used to invoke the built-in
+# ``image_generation`` tool on the /v1/images/* routes. It is never echoed
+# to clients (only the requested ``gpt-image-*`` value appears in public
+# responses) and is fixed (issue #1340 / PRINCIPLES.md P2): it tracks the
+# registry bootstrap catalog's stable ``gpt-5.5`` slug and changes only in
+# lockstep with catalog maintenance.
+_IMAGES_HOST_MODEL = "gpt-5.5"
 
 # OpenAI error ``type`` -> HTTP status for the /v1/images/* non-streaming
 # error path. The /v1/responses path has its own ``_status_for_error``
@@ -2176,7 +2185,7 @@ async def _proxy_images_generation_request(
 
     public_model = payload.model
     assert public_model is not None
-    host_model = settings.images_host_model
+    host_model = _IMAGES_HOST_MODEL
 
     try:
         validate_model_access(api_key, effective_model)
@@ -2478,7 +2487,7 @@ async def _proxy_images_edit_request(
 
     public_model = payload.model
     assert public_model is not None
-    host_model = settings.images_host_model
+    host_model = _IMAGES_HOST_MODEL
 
     try:
         validate_model_access(api_key, effective_model)
@@ -3551,6 +3560,7 @@ async def _source_audio_transcription_response(
         model=model,
         status="success",
         usage=settle_usage,
+        timings=result.timings,
         cost_usd_override=cost_override,
         upstream_status_code=result.upstream_status_code,
     )
@@ -3699,6 +3709,7 @@ async def _source_responses_response(
         model=payload.model,
         status="success",
         usage=result.usage,
+        timings=result.timings,
         upstream_status_code=result.upstream_status_code,
     )
     return JSONResponse(content=result.payload, status_code=200, headers=rate_limit_headers)
@@ -4005,6 +4016,7 @@ async def _source_chat_completion_response(
         model=model,
         status="success",
         usage=result.usage,
+        timings=result.timings,
         upstream_status_code=result.upstream_status_code,
     )
     return JSONResponse(content=result.payload, status_code=200, headers=rate_limit_headers)
@@ -4132,6 +4144,7 @@ async def _buffered_limited_source_chat_stream_response(
         model=model,
         status="success",
         usage=usage_holder.usage,
+        timings=usage_holder.timings,
     )
 
     async def body() -> AsyncIterator[bytes]:
@@ -4207,6 +4220,7 @@ async def _source_chat_stream_with_settlement(
             model=model,
             status=status,
             usage=usage_holder.usage,
+            timings=usage_holder.timings,
             error_code=error_code,
             error_message=error_message,
             upstream_status_code=None,
@@ -5867,6 +5881,7 @@ async def _log_source_chat_completion(
     model: str,
     status: str,
     usage: SourceUsage | None = None,
+    timings: SourceTimings | None = None,
     cost_usd_override: float | None = None,
     error_code: str | None = None,
     error_message: str | None = None,
@@ -5887,7 +5902,8 @@ async def _log_source_chat_completion(
                 cost_usd=(
                     cost_usd_override if cost_usd_override is not None else _source_usage_cost_usd(source, model, usage)
                 ),
-                latency_ms=None,
+                latency_ms=timings.latency_ms if timings is not None else None,
+                latency_first_token_ms=(timings.latency_first_token_ms if timings is not None else None),
                 status=status,
                 error_code=error_code,
                 error_message=error_message,
