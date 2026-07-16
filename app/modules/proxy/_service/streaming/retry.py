@@ -80,6 +80,13 @@ def _facade() -> Any:
     return sys.modules["app.modules.proxy.service"]
 
 
+def _proxy_response_error_is_transient_stream_retry(exc: ProxyResponseError) -> bool:
+    error = _parse_openai_error(exc.payload)
+    code = _normalize_error_code(error.code if error else None, error.type if error else None)
+    message = error.message if error else None
+    return _facade()._should_retry_transient_stream_error(code, message)
+
+
 def _http_downstream_request_is_sticky(payload: ResponsesRequest, headers: Mapping[str, str]) -> bool:
     return (
         payload.previous_response_id is not None
@@ -1631,7 +1638,11 @@ class _StreamingRetryMixin:
                                     request_id,
                                 )
                                 return
-                            if isinstance(tex, ProxyResponseError) and tex.status_code != 500:
+                            if (
+                                isinstance(tex, ProxyResponseError)
+                                and tex.status_code != 500
+                                and not _proxy_response_error_is_transient_stream_retry(tex)
+                            ):
                                 error = _parse_openai_error(tex.payload)
                                 code = _normalize_error_code(
                                     error.code if error else None,
@@ -1785,12 +1796,19 @@ class _StreamingRetryMixin:
                                     )
                                     break
                                 raise
-                            error_code = tex.code if isinstance(tex, _TransientStreamError) else "server_error"
-                            error_payload: UpstreamError = (
-                                tex.error
-                                if isinstance(tex, _TransientStreamError)
-                                else _upstream_error_from_openai(_parse_openai_error(tex.payload))
-                            )
+                            if isinstance(tex, _TransientStreamError):
+                                error_code = tex.code
+                                error_payload: UpstreamError = tex.error
+                            else:
+                                parsed_error = _parse_openai_error(tex.payload)
+                                error_code = (
+                                    _normalize_error_code(
+                                        parsed_error.code if parsed_error else None,
+                                        parsed_error.type if parsed_error else None,
+                                    )
+                                    or "server_error"
+                                )
+                                error_payload = _upstream_error_from_openai(parsed_error)
                             error_message = str(error_payload.get("message") or "")
                             recovery_decision = await _wait_for_process_network_recovery(
                                 account,
