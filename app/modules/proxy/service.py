@@ -1734,6 +1734,10 @@ class ProxyService(
                     or await self._security_lineage_requires_security_work_authorized(security_lineage_id)
                 )
                 concurrency_caps = effective_account_concurrency_caps(settings)
+                require_security_work_authorized = (
+                    require_security_work_authorized
+                    or await self._security_lineage_requires_security_work_authorized(security_lineage_id)
+                )
                 stream_reserve_slots = (
                     (
                         get_settings().proxy_account_stream_recovery_reserve

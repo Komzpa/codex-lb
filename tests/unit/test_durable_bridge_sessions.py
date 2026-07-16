@@ -288,6 +288,38 @@ async def test_security_work_requirement_is_monotonic_and_inherited_by_session_h
 
 
 @pytest.mark.asyncio
+async def test_durable_bridge_renew_cannot_clear_security_work_requirement(
+    coordinator: DurableBridgeSessionCoordinator,
+) -> None:
+    claimed = await coordinator.claim_live_session(
+        session_key_kind="session_header",
+        session_key_value="security-renew-root",
+        api_key_id="key-1",
+        instance_id="instance-a",
+        lease_ttl_seconds=120.0,
+        account_id="approved-account",
+        model="gpt-5.6-sol",
+        service_tier=None,
+        latest_turn_state=None,
+        latest_response_id=None,
+        allow_takeover=True,
+        requires_security_work_authorized=True,
+    )
+
+    renewed = await coordinator.renew_live_session(
+        session_id=claimed.session_id,
+        api_key_id="key-1",
+        instance_id="instance-a",
+        owner_epoch=claimed.owner_epoch,
+        lease_ttl_seconds=120.0,
+        requires_security_work_authorized=False,
+    )
+
+    assert renewed is not None
+    assert renewed.requires_security_work_authorized is True
+
+
+@pytest.mark.asyncio
 async def test_durable_bridge_claim_renews_same_owner_epoch(
     coordinator: DurableBridgeSessionCoordinator,
 ) -> None:

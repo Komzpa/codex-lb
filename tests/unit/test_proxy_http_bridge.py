@@ -12808,18 +12808,22 @@ async def test_http_bridge_replays_proxy_verified_full_resend_after_owner_quota(
     )
     handle_stream_error = AsyncMock()
     release_create_lease = AsyncMock()
+    replay_upstream = SimpleNamespace(send_text=AsyncMock())
 
-    async def retry_precreated(retry_session):
+    async def reconnect_owner_failover(
+        retry_session,
+        *,
+        request_state,
+        require_security_work_authorized=False,
+    ):
         assert retry_session is session
-        assert session.upstream_turn_state is None
-        assert session.downstream_turn_state is None
         assert request_state.previous_response_id is None
         assert request_state.preferred_account_id is None
         assert request_state.request_text == fresh_text
         assert request_state.excluded_account_ids == {account.id}
-        assert request_state.affinity_policy.reallocate_sticky is True
+        assert require_security_work_authorized is False
         assert list(session.pending_requests) == [request_state]
-        return True
+        session.upstream = cast(UpstreamResponsesWebSocket, replay_upstream)
 
     monkeypatch.setattr(service, "_handle_stream_error", handle_stream_error)
     monkeypatch.setattr(
@@ -12827,7 +12831,7 @@ async def test_http_bridge_replays_proxy_verified_full_resend_after_owner_quota(
         "_release_request_state_account_response_create_lease",
         release_create_lease,
     )
-    monkeypatch.setattr(service, "_retry_http_bridge_precreated_request", retry_precreated)
+    monkeypatch.setattr(service, "_reconnect_http_bridge_session", reconnect_owner_failover)
 
     await service._process_http_bridge_upstream_text(
         session,
@@ -12845,7 +12849,8 @@ async def test_http_bridge_replays_proxy_verified_full_resend_after_owner_quota(
     )
 
     handle_stream_error.assert_awaited_once()
-    release_create_lease.assert_awaited_once_with(request_state)
+    release_create_lease.assert_not_awaited()
+    replay_upstream.send_text.assert_awaited_once_with(fresh_text)
     assert request_state.event_queue is not None
     assert request_state.event_queue.empty()
 

@@ -58,6 +58,7 @@ from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
+    extract_input_file_ids,
 )
 from app.core.resilience.overload import local_overload_error
 from app.core.types import JsonValue
@@ -614,6 +615,18 @@ def _http_bridge_request_counts_against_queue(request_state: _WebSocketRequestSt
     return not request_state.draining_until_terminal
 
 
+def _http_bridge_request_contains_input_file_ids(text: str | None) -> bool:
+    if text is None:
+        return True
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return True
+    if not isinstance(payload, Mapping):
+        return True
+    return bool(extract_input_file_ids(payload.get("input")))
+
+
 def _http_bridge_session_has_admission_waiter(session: object | None) -> bool:
     """Keep a closed bridge registered while an unsent request owns its handoff."""
     return session is not None and bool(getattr(session, "admission_waiter_count", 0))
@@ -941,6 +954,23 @@ def _http_bridge_connect_request_state(
         transport="http",
         security_lineage_id=_sticky_key_from_session_header(headers),
     )
+
+
+def _bridge_selection_account(
+    request_state: _WebSocketRequestState,
+    selection: Any,
+    require_security_work_authorized: bool,
+    session: _HTTPBridgeSession | None = None,
+) -> Any:
+    effective_requirement = (
+        require_security_work_authorized
+        or request_state.require_security_work_authorized
+        or bool(selection.requires_security_work_authorized)
+    )
+    request_state.require_security_work_authorized = effective_requirement
+    if session is not None:
+        session.requires_security_work_authorized = session.requires_security_work_authorized or effective_requirement
+    return selection.account
 
 
 def _http_bridge_session_reusable_for_request(

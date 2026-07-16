@@ -270,7 +270,7 @@ async def test_security_lineage_reconcile_preserves_previously_deployed_aggregat
     await to_thread.run_sync(
         lambda: run_upgrade(
             db_url,
-            "20260709_000000_add_ttft_phase_observability",
+            "20260716_000000_add_oauth_device_flow_slots",
             bootstrap_legacy=True,
         )
     )

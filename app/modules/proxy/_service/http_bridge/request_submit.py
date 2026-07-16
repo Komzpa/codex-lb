@@ -70,6 +70,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_key_strength,
     _http_bridge_precreated_retry_failure_error,
     _http_bridge_prewarm_enabled,
+    _http_bridge_request_contains_input_file_ids,
     _http_bridge_request_counts_against_queue,
     _log_http_bridge_event,
     _record_http_bridge_prewarm_outcome,
@@ -1533,10 +1534,6 @@ class _HTTPBridgeRequestSubmitMixin:
                 # it can move accounts. Fail closed if its record disappeared.
                 return False
 
-        # The retry state must remain atomic from the caller's perspective.
-        # In particular, the terminal-event handler needs the original owner
-        # affinity to rewrite a failed migration as owner-unavailable.  Do not
-        # leave a failed reconnect looking like a successful fresh replay.
         if require_security_work_authorized:
             session.requires_security_work_authorized = True
             request_state.require_security_work_authorized = True

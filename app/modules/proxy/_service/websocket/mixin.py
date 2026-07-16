@@ -3973,7 +3973,15 @@ class _WebSocketMixin:
                     if request_state.previous_response_id is not None
                     else request_state.request_text
                 )
-                security_retry_has_file_ids = _websocket_retry_text_contains_input_file_ids(security_retry_text)
+                # Missing replay text is unsafe for account migration, but it
+                # does not prove that the rooted lineage contains a file.
+                # Keep those decisions separate so a non-replayable ordinary
+                # continuation is still classified and its connection retired.
+                security_retry_has_file_ids = (
+                    security_retry_text is not None
+                    and _websocket_retry_text_contains_input_file_ids(security_retry_text)
+                )
+                security_retry_is_unsafe = security_retry_text is None or security_retry_has_file_ids
                 if not request_state.file_required_preferred_account and not security_retry_has_file_ids:
                     await proxy._mark_security_lineage_requirement(
                         request_state.security_lineage_id,
@@ -3982,9 +3990,12 @@ class _WebSocketMixin:
                 can_retry_security_work = (
                     not account.security_work_authorized
                     and not has_other_pending_requests
+                    and request_state.last_downstream_sequence_number is None
+                    and request_state.replay_count < 1
+                    and bool(request_state.request_text)
                     and _websocket_request_can_replay_before_visible_output(request_state)
                     and not request_state.file_required_preferred_account
-                    and not security_retry_has_file_ids
+                    and not security_retry_is_unsafe
                     and (
                         request_state.previous_response_id is None
                         or (
@@ -3994,8 +4005,16 @@ class _WebSocketMixin:
                     )
                 )
                 if can_retry_security_work:
-                    retry_text = _prepare_websocket_request_state_for_visible_output_replay(request_state)
+                    downstream_response_id = request_state.response_id
+                    retry_text = request_state.request_text
+                    if request_state.previous_response_id is not None:
+                        retry_text = _prepare_websocket_request_state_for_account_switch(request_state)
                     if retry_text:
+                        request_state.replay_count += 1
+                        request_state.replay_downstream_response_id = downstream_response_id
+                        request_state.suppress_next_created_downstream = downstream_response_id is not None
+                        request_state.response_id = None
+                        request_state.awaiting_response_created = True
                         request_state.require_security_work_authorized = True
                         request_state.error_code_override = _facade()._SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE
                         request_state.error_message_override = terminal_error_message
@@ -4021,8 +4040,7 @@ class _WebSocketMixin:
                         return downstream_text
                 if not request_state.file_required_preferred_account and not security_retry_has_file_ids:
                     request_state.require_security_work_authorized = True
-                    if request_state.last_downstream_sequence_number is None:
-                        upstream_control.reconnect_requested = True
+                    upstream_control.reconnect_requested = True
 
         await proxy._finalize_websocket_request_state(
             request_state,

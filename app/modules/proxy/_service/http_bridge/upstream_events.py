@@ -47,6 +47,7 @@ from app.modules.proxy._service.compact import (
 )
 from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_request_budget_seconds,
+    _http_bridge_request_contains_input_file_ids,
     _http_bridge_request_counts_against_queue,
     _log_http_bridge_event,
     _normalize_http_bridge_error_event,
@@ -111,7 +112,6 @@ from app.modules.proxy._service.support import (
     _event_type_from_payload,
     _HTTPBridgeSession,
     _record_response_event,
-    _websocket_fresh_request_blocks_account_switch,
     _websocket_request_can_replay_before_visible_output,
     _WebSocketRequestState,
 )
@@ -424,16 +424,17 @@ class _HTTPBridgeUpstreamEventsMixin:
             )
         if not expired_requests:
             return ()
-        await self._fail_pending_websocket_requests(
-            account=session.account,
-            account_id_value=session.account.id,
-            pending_requests=deque(expired_requests),
-            pending_lock=asyncio.Lock(),
-            error_code=error_code,
-            error_message=error_message,
-            api_key=None,
-            response_create_gate=session.response_create_gate,
-        )
+        for request_state in expired_requests:
+            await self._fail_pending_websocket_requests(
+                account=session.account,
+                account_id_value=session.account.id,
+                pending_requests=deque([request_state]),
+                pending_lock=asyncio.Lock(),
+                error_code=error_code,
+                error_message=error_message,
+                api_key=request_state.api_key,
+                response_create_gate=session.response_create_gate,
+            )
         return expired_requests
 
     async def _process_http_bridge_upstream_text(
@@ -1058,23 +1059,52 @@ class _HTTPBridgeUpstreamEventsMixin:
             )
             terminal_error_message = error.message if error else None
             if _is_security_work_authorization_required_error(terminal_error_code, terminal_error_message):
-                await self._mark_security_lineage_requirement(
-                    terminal_request_state.security_lineage_id,
-                    account_id=session.account.id,
+                security_retry_text = (
+                    terminal_request_state.fresh_upstream_request_text
+                    if terminal_request_state.previous_response_id is not None
+                    else terminal_request_state.request_text
                 )
-                terminal_request_state.require_security_work_authorized = True
-                session.requires_security_work_authorized = True
-                if session.durable_session_id is not None:
-                    await self._durable_bridge.require_security_work_authorized(session_id=session.durable_session_id)
+                # A missing fresh replay body must prevent a cross-account
+                # replay, but it is not evidence that this lineage contains an
+                # account-scoped file. Persist the security requirement first
+                # so later turns cannot remain on the denied ordinary owner.
+                security_retry_has_file_ids = (
+                    security_retry_text is not None
+                    and _http_bridge_request_contains_input_file_ids(security_retry_text)
+                )
+                file_replay_unsafe = (
+                    terminal_request_state.file_required_preferred_account
+                    or security_retry_text is None
+                    or security_retry_has_file_ids
+                )
+                durable_security_requirement_persisted = False
+                if not terminal_request_state.file_required_preferred_account and not security_retry_has_file_ids:
+                    await self._mark_security_lineage_requirement(
+                        terminal_request_state.security_lineage_id,
+                        account_id=session.account.id,
+                    )
+                    terminal_request_state.require_security_work_authorized = True
+                    session.requires_security_work_authorized = True
+                    # This terminal denial has classified the session's
+                    # lineage as security-only. Retire the ordinary upstream
+                    # after its visible requests drain; the relay owns the
+                    # actual close so concurrent requests are not cut off.
+                    session.upstream_control.reconnect_requested = True
+                    session.upstream_control.retire_after_drain = True
+                    if session.durable_session_id is not None:
+                        durable_lookup = await self._durable_bridge.require_security_work_authorized(
+                            session_id=session.durable_session_id
+                        )
+                        durable_security_requirement_persisted = durable_lookup is not None
                 owner_is_security_work_authorized = bool(getattr(session.account, "security_work_authorized", False))
                 can_retry_security_work = (
                     not owner_is_security_work_authorized
                     and not has_other_pending_requests
+                    and not file_replay_unsafe
+                    and terminal_request_state.replay_count < 1
+                    and bool(terminal_request_state.request_text)
+                    and _websocket_auth_request_can_switch_account(terminal_request_state)
                     and _websocket_request_can_replay_before_visible_output(terminal_request_state)
-                    and (
-                        terminal_request_state.previous_response_id is None
-                        or not _websocket_fresh_request_blocks_account_switch(terminal_request_state)
-                    )
                 )
                 if terminal_request_state.event_queue is not None:
                     await terminal_request_state.event_queue.put(
@@ -1102,7 +1132,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                     retried = await self._retry_http_bridge_security_work_request(
                         session,
                         terminal_request_state,
-                        durable_security_requirement_persisted=session.durable_session_id is not None,
+                        durable_security_requirement_persisted=durable_security_requirement_persisted,
                     )
                     if retried:
                         return
