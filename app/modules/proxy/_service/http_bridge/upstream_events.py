@@ -182,6 +182,11 @@ _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
 _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS = 5.0
 _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
 _HTTP_BRIDGE_TERMINAL_CAPACITY_RETRY_CODES = frozenset({"overloaded_error", "server_is_overloaded"})
+_HTTP_BRIDGE_TERMINAL_CAPACITY_RETRY_MESSAGES = (
+    "selected model is at capacity",
+    "try a different model",
+    "servers are currently overloaded",
+)
 
 
 def _http_bridge_terminal_payload_contains_output(payload: dict[str, JsonValue] | None) -> bool:
@@ -200,6 +205,13 @@ def _http_bridge_terminal_payload_contains_output(payload: dict[str, JsonValue] 
             continue
         return True
     return False
+
+
+def _http_bridge_terminal_capacity_retry_message(message: str | None) -> bool:
+    if not isinstance(message, str):
+        return False
+    normalized = " ".join(message.casefold().split())
+    return any(marker in normalized for marker in _HTTP_BRIDGE_TERMINAL_CAPACITY_RETRY_MESSAGES)
 
 
 def _http_bridge_terminal_capacity_retry_error_code(
@@ -236,9 +248,11 @@ def _http_bridge_terminal_capacity_retry_error_code(
         _websocket_event_error_code(event_type, payload),
         _websocket_event_error_type(event_type, payload),
     )
-    if error_code not in _HTTP_BRIDGE_TERMINAL_CAPACITY_RETRY_CODES:
+    if error_code in _HTTP_BRIDGE_TERMINAL_CAPACITY_RETRY_CODES:
+        return error_code
+    if not _http_bridge_terminal_capacity_retry_message(_websocket_event_error_message(event_type, payload)):
         return None
-    return error_code
+    return error_code or "model_at_capacity"
 
 
 def _archive_http_bridge_upstream_text(
