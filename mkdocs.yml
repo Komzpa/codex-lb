@@ -67,4 +67,6 @@ nav:
       - Kubernetes: deployment/kubernetes.md
       - Remote Access: deployment/remote.md
   - Development: repo-readiness.md
+  - Reference:
+      - Settings: reference/settings.md
   - Troubleshooting: troubleshooting.md

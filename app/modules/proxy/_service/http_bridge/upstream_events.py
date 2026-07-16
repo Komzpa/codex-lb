@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections import deque
 from dataclasses import replace
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from app.core.clients.files import create_file as core_create_file  # noqa: F401
 from app.core.clients.files import finalize_file as core_finalize_file  # noqa: F401
@@ -29,7 +29,9 @@ from app.core.clients.proxy import codex_control_request as core_codex_control_r
 from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
 from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # noqa: F401
 from app.core.clients.proxy_websocket import UpstreamWebSocketMessage, UpstreamWebSocketTransportError
+from app.core.errors import response_failed_event
 from app.core.openai.parsing import parse_sse_event_payload
+from app.core.types import JsonValue
 from app.core.usage.live_hub import publish_live_usage
 from app.core.usage.live_snapshots import EVENT_MARKER, parse_rate_limit_event_text
 from app.core.utils.request_id import reset_request_id, set_request_id
@@ -885,13 +887,38 @@ class _HTTPBridgeUpstreamEventsMixin:
                     status_request_state.model,
                 )
                 return
-            session.upstream_turn_state = previous_upstream_turn_state
-            session.downstream_turn_state = previous_downstream_turn_state
-            session.headers = previous_headers
+            replacement_session_selected = session.account.id != rejected_account_id
+            if not replacement_session_selected:
+                session.upstream_turn_state = previous_upstream_turn_state
+                session.downstream_turn_state = previous_downstream_turn_state
+                session.headers = previous_headers
             async with session.pending_lock:
                 if status_request_state in session.pending_requests:
                     session.pending_requests.remove(status_request_state)
                     session.queued_request_count = max(0, session.queued_request_count - 1)
+            if replacement_session_selected:
+                # Reconnect may have committed the session to a replacement
+                # account before its replacement lease or send failed.  Never
+                # graft the rejected account's turn metadata back onto that
+                # socket; retire the now-unused replacement session instead.
+                session.upstream_control.reconnect_requested = True
+                session.upstream_control.retire_after_drain = True
+                await self._retire_http_bridge_after_drain_if_ready(session)
+                payload = cast(
+                    dict[str, JsonValue],
+                    dict(
+                        response_failed_event(
+                            status_request_state.error_code_override or "upstream_unavailable",
+                            status_request_state.error_message_override or "HTTP bridge replacement retry failed",
+                            error_type=status_request_state.error_type_override or "server_error",
+                            response_id=status_request_state.request_id,
+                            error_param=status_request_state.error_param_override,
+                        )
+                    ),
+                )
+                event_block = format_sse_event(payload)
+                event = parse_sse_event_payload(payload)
+                event_type = "response.failed"
             if status_request_state.precreated_replay_reason == _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE:
                 _clear_websocket_precreated_replay_fallback(status_request_state)
         elif (
@@ -966,7 +993,7 @@ class _HTTPBridgeUpstreamEventsMixin:
         settlement_event_type = event_type
         if event_type == "error" and normalize_error_event:
             http_status = _http_error_status_from_payload(payload)
-            if status_request_state is not None:
+            if status_request_state is not None and status_request_state.error_http_status_override is None:
                 status_request_state.error_http_status_override = http_status
             (
                 event_block,
@@ -983,7 +1010,7 @@ class _HTTPBridgeUpstreamEventsMixin:
             settlement_event_type = event_type
         elif event_type == "error":
             http_status = _http_error_status_from_payload(payload)
-            if status_request_state is not None:
+            if status_request_state is not None and status_request_state.error_http_status_override is None:
                 status_request_state.error_http_status_override = http_status
             (
                 _settlement_event_block,

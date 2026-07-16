@@ -336,6 +336,7 @@ class _StreamingRetryMixin:
         last_transient_exc: ProxyResponseError | None = None
         last_account_model_rejection: ProxyResponseError | None = None
         last_account_model_rejection_account_id: str | None = None
+        account_model_replacement_account_id: str | None = None
         account_model_replay_attempted = False
         current_account_lease: AccountLease | None = None
         last_security_work_retry_error: _RetryableStreamError | None = None
@@ -1160,6 +1161,7 @@ class _StreamingRetryMixin:
                     # that must reach the client. Keep the separate replay
                     # budget so another account/model rejection cannot trigger
                     # a second transparent replay.
+                    account_model_replacement_account_id = account.id
                     last_account_model_rejection = None
                     last_account_model_rejection_account_id = None
                 if (
@@ -1269,6 +1271,7 @@ class _StreamingRetryMixin:
                         yield format_sse_event(event)
                         return
                     except (RefreshError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                        selected_account_model_replacement = account.id == account_model_replacement_account_id
                         if isinstance(exc, RefreshError):
                             if exc.is_permanent:
                                 await proxy._load_balancer.mark_permanent_failure(account, exc.code)
@@ -1281,7 +1284,8 @@ class _StreamingRetryMixin:
                                 # duration of the replacement stream.
                                 await _release_tracked_stream_lease(current_account_lease)
                                 current_account_lease = None
-                                continue
+                                if not selected_account_model_replacement:
+                                    continue
                             if is_transient_refresh_contention(exc):
                                 # Transient CROSS-REPLICA refresh contention: benign
                                 # claim contention (the account's refresh claim is
@@ -1300,7 +1304,11 @@ class _StreamingRetryMixin:
                                         exc.code,
                                         account.id,
                                     )
-                                if not require_preferred_account and preferred_account_id is None:
+                                if (
+                                    not selected_account_model_replacement
+                                    and not require_preferred_account
+                                    and preferred_account_id is None
+                                ):
                                     # Movable request: release the stream lease and
                                     # fail over to a different account instead of
                                     # reselecting the same one until attempts are
@@ -1363,7 +1371,7 @@ class _StreamingRetryMixin:
                                 )
                                 yield format_sse_event(event)
                                 return
-                            if not exc.transport_error:
+                            if not exc.transport_error and not selected_account_model_replacement:
                                 # Non-transport, non-permanent RefreshError: release
                                 # the stream lease and reselect (its prior behavior).
                                 await _release_tracked_stream_lease(current_account_lease)
@@ -1386,7 +1394,8 @@ class _StreamingRetryMixin:
                         )
                         message = getattr(exc, "message", None) or str(exc) or "Request to upstream timed out"
                         if (
-                            _facade()._should_retry_transient_stream_error("upstream_unavailable", message)
+                            not selected_account_model_replacement
+                            and _facade()._should_retry_transient_stream_error("upstream_unavailable", message)
                             and attempt + 1 < max_attempts
                             and _move_verified_fresh_replay_from_owner(
                                 account_id=account.id,
@@ -1407,7 +1416,8 @@ class _StreamingRetryMixin:
                             )
                             continue
                         if (
-                            not require_preferred_account
+                            not selected_account_model_replacement
+                            and not require_preferred_account
                             and preferred_account_id is None
                             and _facade()._should_retry_transient_stream_error("upstream_unavailable", message)
                             and attempt + 1 < max_attempts
@@ -1536,6 +1546,23 @@ class _StreamingRetryMixin:
                             ):
                                 yield line
                         except (_TransientStreamError, ProxyResponseError) as tex:
+                            if account.id == account_model_replacement_account_id:
+                                # Account/model routing gets exactly one selected
+                                # replacement.  Its own pre-visible 5xx/transport
+                                # failure is terminal; allowing the normal
+                                # transient path here would silently select a third
+                                # account.  Re-raise into the outer terminal
+                                # renderer to retain the replacement details.
+                                if isinstance(tex, ProxyResponseError):
+                                    raise
+                                raise ProxyResponseError(
+                                    502,
+                                    openai_error(
+                                        tex.code,
+                                        str(tex.error.get("message") or "Upstream error"),
+                                        error_type="server_error",
+                                    ),
+                                ) from tex
                             if settlement.downstream_visible:
                                 failed_response_id = settlement.response_id or request_id
                                 if isinstance(tex, ProxyResponseError):

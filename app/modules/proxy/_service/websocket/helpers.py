@@ -697,6 +697,12 @@ def _websocket_precreated_retry_error_code(
         message=error_message,
         model=request_state.model,
     ):
+        # Any recognized response id means upstream has accepted this request,
+        # even when response.created was not observed on this socket.  Do not
+        # account-switch an error event that carries either response.id or a
+        # top-level response_id as though it were still pre-created.
+        if _websocket_response_id(None, payload) is not None:
+            return None
         return _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE
     if error_code not in _facade()._WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES:
         return None
@@ -747,6 +753,8 @@ def _websocket_precreated_auth_error_code(
     if request_state.downstream_visible:
         return None
     if event_type not in {"error", "response.failed"}:
+        return None
+    if _websocket_response_id(None, payload) is not None:
         return None
 
     error_code = _normalize_error_code(
