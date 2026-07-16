@@ -1,14 +1,14 @@
 """Persist security-work authorization for HTTP bridge lineages.
 
 Revision ID: 20260710_010000_add_http_bridge_security_lineage
-Revises: 20260716_000000_add_oauth_device_flow_slots
+Revises: 20260711_000000_add_dashboard_prohibit_fast_mode
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "20260710_010000_add_http_bridge_security_lineage"
-down_revision = "20260716_000000_add_oauth_device_flow_slots"
+down_revision = "20260711_000000_add_dashboard_prohibit_fast_mode"
 branch_labels = None
 depends_on = None
 

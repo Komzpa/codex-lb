@@ -270,7 +270,7 @@ async def test_security_lineage_reconcile_preserves_previously_deployed_aggregat
     await to_thread.run_sync(
         lambda: run_upgrade(
             db_url,
-            "20260716_000000_add_oauth_device_flow_slots",
+            "20260710_010000_add_http_bridge_security_lineage",
             bootstrap_legacy=True,
         )
     )
@@ -279,12 +279,6 @@ async def test_security_lineage_reconcile_preserves_previously_deployed_aggregat
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with session_factory() as session:
-            await session.execute(
-                text(
-                    "ALTER TABLE http_bridge_sessions "
-                    "ADD COLUMN requires_security_work_authorized BOOLEAN NOT NULL DEFAULT 0"
-                )
-            )
             await session.execute(
                 text("ALTER TABLE http_bridge_sessions ADD COLUMN latest_pending_function_call_ids TEXT")
             )
@@ -310,9 +304,6 @@ async def test_security_lineage_reconcile_preserves_previously_deployed_aggregat
                     "SET auto_redeem_expiring_reset_credits = 1, reset_credit_redeem_lead_minutes = 17"
                 )
             )
-            await session.execute(
-                text("UPDATE alembic_version SET version_num = '20260710_010000_add_http_bridge_security_lineage'")
-            )
             await session.commit()
 
         await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
@@ -323,6 +314,9 @@ async def test_security_lineage_reconcile_preserves_previously_deployed_aggregat
             }
             sticky_columns = {
                 str(row[1]) for row in (await session.execute(text("PRAGMA table_info('sticky_sessions')"))).all()
+            }
+            oauth_slot_columns = {
+                str(row[1]) for row in (await session.execute(text("PRAGMA table_info('oauth_device_flow_slots')"))).all()
             }
             quota_row = (
                 await session.execute(
@@ -336,6 +330,7 @@ async def test_security_lineage_reconcile_preserves_previously_deployed_aggregat
 
         assert "prohibit_fast_mode" in dashboard_columns
         assert "requires_security_work_authorized" in sticky_columns
+        assert {"slot_key", "flow_id", "generation", "updated_at"} <= oauth_slot_columns
         assert tuple(quota_row) == (1, 17)
         assert revision == _HEAD_REVISION
         assert await to_thread.run_sync(lambda: check_schema_drift(db_url)) == ()

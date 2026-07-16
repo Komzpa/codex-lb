@@ -184,6 +184,24 @@ _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
 _HTTP_BRIDGE_TERMINAL_CAPACITY_RETRY_CODES = frozenset({"overloaded_error", "server_is_overloaded"})
 
 
+def _http_bridge_terminal_payload_contains_output(payload: dict[str, JsonValue] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    candidates: list[JsonValue | None] = [payload.get("output")]
+    response = payload.get("response")
+    if isinstance(response, dict):
+        candidates.append(response.get("output"))
+    for output in candidates:
+        if output is None:
+            continue
+        if isinstance(output, list):
+            if output:
+                return True
+            continue
+        return True
+    return False
+
+
 def _http_bridge_terminal_capacity_retry_error_code(
     request_state: _WebSocketRequestState | None,
     *,
@@ -211,6 +229,8 @@ def _http_bridge_terminal_capacity_retry_error_code(
     if not request_state.request_text or request_state.replay_count >= 1:
         return None
     if event_type not in {"error", "response.failed"}:
+        return None
+    if _http_bridge_terminal_payload_contains_output(payload):
         return None
     error_code = _normalize_error_code(
         _websocket_event_error_code(event_type, payload),

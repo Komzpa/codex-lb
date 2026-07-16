@@ -173,6 +173,22 @@ def _server_overloaded_event_payload() -> dict[str, object]:
     }
 
 
+def _server_overloaded_response_failed_payload(*, output: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "type": "response.failed",
+        "response": {
+            "id": "resp-capacity-failed",
+            "status": "failed",
+            "output": output,
+            "error": {
+                "type": "service_unavailable_error",
+                "code": "server_is_overloaded",
+                "message": "Our servers are currently overloaded. Please try again later.",
+            },
+        },
+    }
+
+
 def test_terminal_capacity_retry_accepts_native_output_free_continuation() -> None:
     assert (
         http_bridge_upstream_events_module._http_bridge_terminal_capacity_retry_error_code(
@@ -182,6 +198,42 @@ def test_terminal_capacity_retry_accepts_native_output_free_continuation() -> No
             has_other_pending_requests=False,
         )
         == "server_is_overloaded"
+    )
+
+
+def test_terminal_capacity_retry_accepts_empty_response_failed_output() -> None:
+    assert (
+        http_bridge_upstream_events_module._http_bridge_terminal_capacity_retry_error_code(
+            _accepted_capacity_retry_state(),
+            event_type="response.failed",
+            payload=cast(Any, _server_overloaded_response_failed_payload(output=[])),
+            has_other_pending_requests=False,
+        )
+        == "server_is_overloaded"
+    )
+
+
+def test_terminal_capacity_retry_rejects_response_failed_payload_output() -> None:
+    assert (
+        http_bridge_upstream_events_module._http_bridge_terminal_capacity_retry_error_code(
+            _accepted_capacity_retry_state(),
+            event_type="response.failed",
+            payload=cast(
+                Any,
+                _server_overloaded_response_failed_payload(
+                    output=[
+                        {
+                            "type": "function_call",
+                            "call_id": "call-capacity",
+                            "name": "lookup",
+                            "arguments": "{}",
+                        }
+                    ]
+                ),
+            ),
+            has_other_pending_requests=False,
+        )
+        is None
     )
 
 
