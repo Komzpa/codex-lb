@@ -870,15 +870,6 @@ class _WebSocketMixin:
                         )
                         await _release_websocket_response_create_gate(request_state, response_create_gate)
                         continue
-                    retry_delay_seconds = backoff_seconds(request_state.replay_count)
-                    if retry_delay_seconds > 0:
-                        _facade().logger.info(
-                            "Delaying transparent websocket replay before reconnect request_id=%s retry=%s delay=%.2fs",
-                            request_state.request_log_id or request_state.request_id,
-                            request_state.replay_count,
-                            retry_delay_seconds,
-                        )
-                        await asyncio.sleep(retry_delay_seconds)
                     if request_state.response_create_gate_acquired:
                         # Ordinary pre-created replay retains its create gate.
                         # Re-register it without trying to acquire the same
@@ -891,6 +882,16 @@ class _WebSocketMixin:
                             surface="websocket",
                         )
                         request_state_registered = True
+                        retry_delay_seconds = backoff_seconds(request_state.replay_count)
+                        if retry_delay_seconds > 0:
+                            _facade().logger.info(
+                                "Delaying transparent websocket replay before reconnect "
+                                "request_id=%s retry=%s delay=%.2fs",
+                                request_state.request_log_id or request_state.request_id,
+                                request_state.replay_count,
+                                retry_delay_seconds,
+                            )
+                            await asyncio.sleep(retry_delay_seconds)
                     # A terminal security event released the create gate and
                     # account admission.  Leave that replay unregistered so the
                     # normal block below reacquires both before queue and send.
@@ -1271,7 +1272,12 @@ class _WebSocketMixin:
                                 for pending in pending_requests
                             )
                         if wait_for_created_only_replay:
-                            await asyncio.wait({upstream_reader}, timeout=0.05)
+                            try:
+                                await asyncio.wait({upstream_reader}, timeout=0.05)
+                            except asyncio.CancelledError:
+                                await proxy._release_websocket_request_state_reservation(request_state)
+                                await _release_websocket_response_create_gate(request_state, response_create_gate)
+                                raise
                     if upstream_reader is not None and upstream_reader.done():
                         try:
                             await upstream_reader
