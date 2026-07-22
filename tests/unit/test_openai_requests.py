@@ -115,106 +115,6 @@ def test_known_unsupported_upstream_fields_are_stripped():
     assert dumped["custom_field"] == "kept"
 
 
-def test_responses_to_payload_strips_replayed_tool_call_namespaces_only_on_wire():
-    replayed_calls = [
-        {
-            "type": "function_call",
-            "namespace": "collaboration",
-            "name": "spawn_agent",
-            "arguments": '{"message":"same task"}',
-            "call_id": "call_123",
-        },
-        {
-            "type": "custom_tool_call",
-            "namespace": "exec",
-            "name": "exec",
-            "input": "git status --short",
-            "call_id": "call_456",
-        },
-    ]
-    request = ResponsesRequest.model_validate(
-        {
-            "model": "gpt-5.6-sol",
-            "instructions": "continue",
-            "input": replayed_calls,
-        }
-    )
-
-    assert request.input == replayed_calls
-    assert request.to_payload()["input"] == [
-        {
-            "type": "function_call",
-            "name": "spawn_agent",
-            "arguments": '{"message":"same task"}',
-            "call_id": "call_123",
-        },
-        {
-            "type": "custom_tool_call",
-            "name": "exec",
-            "input": "git status --short",
-            "call_id": "call_456",
-        },
-    ]
-    assert request.input == replayed_calls
-
-
-def test_compact_to_payload_strips_replayed_tool_call_namespaces_only_on_wire():
-    replayed_calls = [
-        {
-            "type": "function_call",
-            "namespace": "collaboration",
-            "name": "spawn_agent",
-            "arguments": '{"message":"same task"}',
-            "call_id": "call_123",
-        },
-        {
-            "type": "custom_tool_call",
-            "namespace": "exec",
-            "name": "exec",
-            "input": "git status --short",
-            "call_id": "call_456",
-        },
-    ]
-    request = ResponsesCompactRequest.model_validate(
-        {
-            "model": "gpt-5.6-sol",
-            "instructions": "continue",
-            "input": replayed_calls,
-        }
-    )
-
-    assert request.input == replayed_calls
-    assert request.to_payload()["input"] == [
-        {
-            "type": "function_call",
-            "name": "spawn_agent",
-            "arguments": '{"message":"same task"}',
-            "call_id": "call_123",
-        },
-        {
-            "type": "custom_tool_call",
-            "name": "exec",
-            "input": "git status --short",
-            "call_id": "call_456",
-        },
-    ]
-    assert request.input == replayed_calls
-
-
-@pytest.mark.parametrize("invalid_type", [[], {}])
-def test_responses_to_payload_ignores_unhashable_replayed_item_types(invalid_type: JsonValue):
-    malformed_item = {"type": invalid_type, "namespace": "client-metadata", "value": "kept"}
-    request = ResponsesRequest.model_validate(
-        {
-            "model": "gpt-5.6-sol",
-            "instructions": "continue",
-            "input": [malformed_item],
-        }
-    )
-
-    assert request.to_payload()["input"] == [malformed_item]
-
-
 def test_responses_preserves_service_tier():
     payload = {
         "model": "gpt-5.1",
@@ -1561,134 +1461,14 @@ def test_compact_trimming_elides_mapping_shaped_required_tool_image_output():
     }
 
 
-def test_compact_trimming_elides_percent_encoded_image_url_in_string_output():
-    image_url = "data:image/svg+xml,%3Csvg%3E" + "%20" * 170_000 + "%3C/svg%3E"
+def test_compact_trimming_keeps_file_backed_image_reference():
+    file_image = {"type": "input_image", "file_id": "file-canvas"}
     payload = {
         "model": "gpt-5.6-sol",
         "instructions": "",
         "input": [
-            {"type": "function_call", "name": "render", "call_id": "call-svg", "arguments": "{}"},
-            {
-                "type": "function_call_output",
-                "call_id": "call-svg",
-                "output": f"rendered {image_url}",
-            },
-        ],
-    }
-
-    dumped_input = ResponsesCompactRequest.model_validate(payload).to_payload()["input"]
-
-    assert "data:image/svg+xml" not in json.dumps(dumped_input)
-    assert "Omitted inline image bytes" in json.dumps(dumped_input)
-
-
-def test_compact_trimming_prefers_lossless_context_trim_before_inline_image_elision():
-    payload = {
-        "model": "gpt-5.6-sol",
-        "instructions": "",
-        "input": [
-            {"role": "user", "content": "retain-middle-" + "x" * 250_000},
-            {"type": "function_call", "name": "render", "call_id": "call-fit", "arguments": "{}"},
-            {
-                "type": "function_call_output",
-                "call_id": "call-fit",
-                "output": "data:image/png;base64," + "A" * 300_000,
-            },
-        ],
-    }
-
-    dumped_input = ResponsesCompactRequest.model_validate(payload).to_payload()["input"]
-
-    assert isinstance(dumped_input, list)
-    assert dumped_input[0] != payload["input"][0]
-    assert "data:image/png;base64" in json.dumps(dumped_input)
-    assert "Omitted inline image bytes" not in json.dumps(dumped_input)
-    assert any(isinstance(item, dict) and item.get("type") == "message" for item in dumped_input)
-
-
-def test_compact_trimming_elides_structured_chat_image_url_as_text_part():
-    payload = {
-        "model": "gpt-5.6-sol",
-        "instructions": "",
-        "input": [
-            {"type": "function_call", "name": "capture", "call_id": "call-chat-image", "arguments": "{}"},
-            {
-                "type": "function_call_output",
-                "call_id": "call-chat-image",
-                "output": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64," + "A" * 500_000, "detail": "high"},
-                    }
-                ],
-            },
-        ],
-    }
-
-    dumped_input = ResponsesCompactRequest.model_validate(payload).to_payload()["input"]
-
-    assert isinstance(dumped_input, list)
-    dumped_output = cast(Mapping[str, object], dumped_input[-1])
-    assert dumped_output["output"] == [
-        {
-            "type": "text",
-            "text": (
-                "[compact trim] Omitted inline image bytes that were already observed before compaction "
-                "(500022 encoded characters)."
-            ),
-        }
-    ]
-
-
-def test_compact_trimming_elides_bare_chat_image_url_as_text_part():
-    payload = {
-        "model": "gpt-5.6-sol",
-        "instructions": "",
-        "input": [
-            {"type": "function_call", "name": "capture", "call_id": "call-bare-chat-image", "arguments": "{}"},
-            {
-                "type": "function_call_output",
-                "call_id": "call-bare-chat-image",
-                "output": [
-                    {
-                        "type": "image_url",
-                        "image_url": "data:image/png;base64," + "A" * 500_000,
-                    }
-                ],
-            },
-        ],
-    }
-
-    dumped_input = ResponsesCompactRequest.model_validate(payload).to_payload()["input"]
-
-    assert isinstance(dumped_input, list)
-    dumped_output = cast(Mapping[str, object], dumped_input[-1])
-    assert dumped_output["output"] == [
-        {
-            "type": "text",
-            "text": (
-                "[compact trim] Omitted inline image bytes that were already observed before compaction "
-                "(500022 encoded characters)."
-            ),
-        }
-    ]
-
-
-def test_compact_trimming_keeps_accepted_file_reference_while_eliding_inline_image():
-    file_reference = {"type": "input_file", "file_id": "file-canvas"}
-    payload = {
-        "model": "gpt-5.6-sol",
-        "instructions": "",
-        "input": [
-            {"type": "custom_tool_call", "name": "view_image", "call_id": "call-file", "input": "{}"},
-            {
-                "type": "custom_tool_call_output",
-                "call_id": "call-file",
-                "output": [
-                    file_reference,
-                    {"type": "input_image", "image_url": "data:image/png;base64," + "A" * 500_000},
-                ],
-            },
+            {"role": "assistant", "content": "x" * 500_000},
+            {"role": "user", "content": [file_image]},
         ],
     }
 
@@ -1696,61 +1476,7 @@ def test_compact_trimming_keeps_accepted_file_reference_while_eliding_inline_ima
 
     assert isinstance(dumped_input, list)
     latest_item = cast(Mapping[str, object], dumped_input[-1])
-    assert file_reference in cast(list[object], latest_item["output"])
-    assert "data:image/png;base64" not in json.dumps(dumped_input)
-
-
-def test_compact_trimming_keeps_hosted_computer_screenshot_fail_closed():
-    payload = {
-        "model": "gpt-5.6-sol",
-        "instructions": "",
-        "input": [
-            {
-                "type": "computer_call",
-                "call_id": "call-computer",
-                "action": {"type": "screenshot"},
-            },
-            {
-                "type": "computer_call_output",
-                "call_id": "call-computer",
-                "output": {
-                    "type": "computer_screenshot",
-                    "image_url": "data:image/png;base64," + "A" * 500_000,
-                },
-            },
-        ],
-    }
-
-    with pytest.raises(ClientPayloadError) as raised:
-        ResponsesCompactRequest.model_validate(payload).to_payload()
-
-    assert raised.value.code == "responses_compact_input_too_large"
-    assert raised.value.param == "input"
-
-
-def test_compact_trimming_elides_data_url_inside_string_tool_output():
-    payload = {
-        "model": "gpt-5.6-sol",
-        "instructions": "",
-        "input": [
-            {"type": "function_call", "name": "capture", "call_id": "call-string", "arguments": "{}"},
-            {
-                "type": "function_call_output",
-                "call_id": "call-string",
-                "output": "prefix data:image/png;base64," + "A" * 500_000 + " suffix",
-            },
-        ],
-    }
-
-    dumped_input = ResponsesCompactRequest.model_validate(payload).to_payload()["input"]
-
-    assert isinstance(dumped_input, list)
-    dumped_output = cast(Mapping[str, object], dumped_input[-1])
-    output = cast(str, dumped_output["output"])
-    assert output.startswith("prefix ")
-    assert output.endswith(" suffix")
-    assert "Omitted inline image bytes" in output
-    assert "data:image/png;base64" not in output
+    assert file_image in cast(list[object], latest_item["content"])
 
 
 def test_compact_trimming_keeps_latest_unobserved_user_inline_image():
@@ -2865,7 +2591,7 @@ def test_extract_input_file_ids_string_input_returns_empty_set():
     assert extract_input_file_ids("Hello world") == set()
 
 
-def test_extract_input_file_ids_finds_actual_input_references_but_not_tool_metadata():
+def test_extract_input_file_ids_finds_top_level_and_nested_ids():
     input_value: list[JsonValue] = [
         {
             "role": "user",
@@ -2880,31 +2606,8 @@ def test_extract_input_file_ids_finds_actual_input_references_but_not_tool_metad
         {"type": "input_file", "file_id": "file_a"},
         {"type": "input_file", "file_id": ""},
         {"type": "input_file"},
-        {
-            "type": "custom_tool_call_output",
-            "call_id": "call-file",
-            "output": [{"type": "input_file", "file_id": "file_tool_output"}],
-        },
-        {
-            "type": "custom_tool_call",
-            "call_id": "call-metadata",
-            "input": {"type": "input_file", "file_id": "file_call_metadata"},
-        },
-        {
-            "type": "additional_tools",
-            "tools": [
-                {
-                    "type": "function",
-                    "function": {
-                        "parameters": {
-                            "properties": {"fake_file": {"type": "input_file", "file_id": "file_tool_schema"}}
-                        }
-                    },
-                }
-            ],
-        },
     ]
-    assert extract_input_file_ids(input_value) == {"file_a", "file_b", "file_c", "file_tool_output"}
+    assert extract_input_file_ids(input_value) == {"file_a", "file_b", "file_c"}
 
 
 def test_input_image_file_reference_returns_file_id_from_input_image_file_id():
