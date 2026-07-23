@@ -36,6 +36,11 @@ class _AffinityPolicy:
     key: str | None = None
     kind: StickySessionKind | None = None
     reallocate_sticky: bool = False
+    # A hard turn-state row is ownership evidence unless a caller has already
+    # proved that the exact request is a self-contained account-neutral replay.
+    # Keep this narrower than ``reallocate_sticky`` so ordinary retries cannot
+    # weaken hard continuity.
+    reallocate_hard_turn_state: bool = False
     # Source capability only. Shared selection still revokes spillover for a
     # required owner or any stage that may carry account-local state.
     spill_on_account_cap: bool = False

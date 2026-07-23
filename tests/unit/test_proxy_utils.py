@@ -31231,6 +31231,7 @@ async def test_stream_account_neutral_replay_moves_off_unavailable_turn_state_ow
         assert kwargs.get("required_account_id") is None
         assert kwargs.get("exclude_account_ids") == {owner_account.id}
         assert kwargs.get("reallocate_sticky") is True
+        assert kwargs.get("reallocate_hard_turn_state") is True
         return AccountSelection(account=replacement_account, error_message=None)
 
     async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
@@ -31280,6 +31281,78 @@ async def test_stream_account_neutral_replay_moves_off_unavailable_turn_state_ow
         not (isinstance(item, dict) and item.get("type") == "reasoning")
         for item in cast(list[JsonValue], streamed_payloads[0].input)
     )
+
+
+@pytest.mark.asyncio
+async def test_stream_account_neutral_replay_rebinds_persisted_hard_turn_state(
+    monkeypatch,
+):
+    settings = _make_proxy_settings()
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    replacement_account = _make_account("acc_persisted_turn_state_replacement")
+    selection_calls: list[dict[str, object]] = []
+
+    async def fake_select_account(**kwargs):
+        selection_calls.append(dict(kwargs))
+        if len(selection_calls) == 1:
+            return AccountSelection(
+                account=None,
+                error_message="Hard affinity owner account is unavailable",
+                error_code="hard_affinity_saturated",
+            )
+        assert kwargs.get("reallocate_sticky") is True
+        assert kwargs.get("reallocate_hard_turn_state") is True
+        return AccountSelection(account=replacement_account, error_message=None)
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
+        del payload, headers, access_token, base_url, raise_for_status, kwargs
+        assert account_id == replacement_account.chatgpt_account_id
+        yield (
+            'data: {"type":"response.completed","response":{"id":"resp_hard_turn_rebound",'
+            '"status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
+        )
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service._load_balancer, "select_account", AsyncMock(side_effect=fake_select_account))
+    monkeypatch.setattr(
+        service,
+        "_resolve_compact_turn_state_owner",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(service, "_ensure_fresh", AsyncMock(return_value=replacement_account))
+    monkeypatch.setattr(service, "_settle_stream_api_key_usage", AsyncMock(return_value=True))
+    monkeypatch.setattr(service._load_balancer, "record_success", AsyncMock())
+    monkeypatch.setattr(proxy_service, "core_stream_responses", fake_stream)
+
+    payload = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.6-sol",
+            "instructions": "continue",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "repair this"},
+                        {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+                    ],
+                }
+            ],
+            "stream": True,
+        }
+    )
+
+    chunks = [
+        chunk
+        async for chunk in service.stream_responses(
+            payload,
+            {"x-codex-turn-state": "http_turn_persisted_owner"},
+        )
+    ]
+
+    assert json.loads(chunks[-1].split("data: ", 1)[1])["type"] == "response.completed"
+    assert len(selection_calls) == 2
+    assert selection_calls[0]["reallocate_hard_turn_state"] is False
 
 
 @pytest.mark.asyncio

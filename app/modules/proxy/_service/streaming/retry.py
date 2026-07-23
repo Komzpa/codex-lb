@@ -561,7 +561,13 @@ class _StreamingRetryMixin:
             excluded_account_ids.add(account_id)
             preferred_account_id = None
             require_preferred_account = False
-            affinity = replace(affinity, reallocate_sticky=True)
+            affinity = replace(
+                affinity,
+                reallocate_sticky=True,
+                reallocate_hard_turn_state=(
+                    affinity.codex_session_source == "turn_state"
+                ),
+            )
             logger.info(
                 "cross_transport_verified_fresh_replay request_id=%s outcome=%s account_id=%s",
                 request_id,
@@ -1166,6 +1172,29 @@ class _StreamingRetryMixin:
                     if (
                         not account
                         and selection.error_code == "hard_affinity_saturated"
+                        and verified_fresh_replay_payload is not None
+                        and affinity.kind == StickySessionKind.CODEX_SESSION
+                        and affinity.codex_session_source == "turn_state"
+                        and preferred_account_id is None
+                        and not require_preferred_account
+                        and not affinity.reallocate_hard_turn_state
+                    ):
+                        payload = verified_fresh_replay_payload
+                        verified_fresh_replay_payload = None
+                        affinity = replace(
+                            affinity,
+                            reallocate_sticky=True,
+                            reallocate_hard_turn_state=True,
+                        )
+                        logger.info(
+                            "account_neutral_hard_turn_state_replay request_id=%s "
+                            "outcome=owner_unavailable",
+                            request_id,
+                        )
+                        continue
+                    if (
+                        not account
+                        and selection.error_code == "hard_affinity_saturated"
                         and transient_failed_account_id is not None
                         and transient_failed_account_id in excluded_account_ids
                         and not hard_affinity_same_owner_retry_attempted
@@ -1274,7 +1303,13 @@ class _StreamingRetryMixin:
                         verified_fresh_replay_payload = None
                         preferred_account_id = None
                         require_preferred_account = False
-                        affinity = replace(affinity, reallocate_sticky=True)
+                        affinity = replace(
+                            affinity,
+                            reallocate_sticky=True,
+                            reallocate_hard_turn_state=(
+                                affinity.codex_session_source == "turn_state"
+                            ),
+                        )
                         logger.info(
                             "cross_transport_verified_fresh_replay request_id=%s outcome=owner_unavailable",
                             request_id,

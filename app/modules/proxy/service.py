@@ -1379,6 +1379,7 @@ class ProxyService(
                 sticky_key=affinity_policy.selection_key,
                 sticky_kind=affinity_policy.kind,
                 reallocate_sticky=affinity_policy.reallocate_sticky,
+                reallocate_hard_turn_state=affinity_policy.reallocate_hard_turn_state,
                 sticky_source=affinity_policy.codex_session_source,
                 legacy_sticky_key=affinity_policy.legacy_selection_key,
                 spill_bare_session_on_account_cap=affinity_policy.spill_on_account_cap,
@@ -1670,6 +1671,7 @@ class ProxyService(
         sticky_key: str | None = None,
         sticky_kind: StickySessionKind | None = None,
         reallocate_sticky: bool = False,
+        reallocate_hard_turn_state: bool = False,
         sticky_source: _CodexSessionSource | None = None,
         legacy_sticky_key: str | None = None,
         spill_bare_session_on_account_cap: bool = False,
@@ -1890,6 +1892,7 @@ class ProxyService(
                     sticky_key=sticky_key,
                     sticky_kind=sticky_kind,
                     reallocate_sticky=reallocate_sticky,
+                    reallocate_hard_turn_state=reallocate_hard_turn_state,
                     sticky_source=sticky_source,
                     legacy_sticky_key=legacy_sticky_key,
                     spill_bare_session_on_account_cap=_AffinityPolicy.cap_spillover_allowed(

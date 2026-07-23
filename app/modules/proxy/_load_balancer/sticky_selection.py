@@ -179,6 +179,7 @@ class StickySelectionRequest(Generic[SelectionInputsT]):
     sticky_key: str
     sticky_kind: StickySessionKind | None
     reallocate_sticky: bool
+    reallocate_hard_turn_state: bool
     sticky_source: _CodexSessionSource | None
     legacy_sticky_key: str | None
     legacy_existing_account_id: str | None
@@ -236,6 +237,7 @@ async def run_sticky_selection_path(
     sticky_key = request.sticky_key
     sticky_kind = request.sticky_kind
     reallocate_sticky = request.reallocate_sticky
+    reallocate_hard_turn_state = request.reallocate_hard_turn_state
     sticky_source = request.sticky_source
     legacy_sticky_key = request.legacy_sticky_key
     legacy_existing_account_id = request.legacy_existing_account_id
@@ -330,6 +332,11 @@ async def run_sticky_selection_path(
                 sticky_kind == StickySessionKind.CODEX_SESSION
                 and isinstance(sticky_existing_account_id, str)
                 and not bare_session_key
+                and not (
+                    reallocate_hard_turn_state
+                    and reallocate_sticky
+                    and sticky_source == "turn_state"
+                )
             )
             if hard_sticky and required_account_id is not None and sticky_existing_account_id != required_account_id:
                 return _direct_error(
