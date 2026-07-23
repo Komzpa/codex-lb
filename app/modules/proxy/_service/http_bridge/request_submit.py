@@ -1658,6 +1658,7 @@ class _HTTPBridgeRequestSubmitMixin:
                     session.upstream_turn_state,
                     session.downstream_turn_state,
                     request_state.session_id,
+                    request_state.previous_response_id,
                 )
                 if value
             )
