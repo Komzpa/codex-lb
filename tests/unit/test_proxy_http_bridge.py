@@ -14918,17 +14918,17 @@ async def test_http_bridge_replays_proxy_verified_full_resend_after_owner_quota(
         skip_request_log=True,
         affinity_policy=proxy_service._AffinityPolicy(
             key="http_turn_verified_owner_limit",
-            kind=proxy_service.StickySessionKind.CODEX_SESSION,
+            kind=proxy_service.StickySessionKind.PROMPT_CACHE,
         ),
     )
     account = cast(Any, SimpleNamespace(id="acc-limited", status=AccountStatus.ACTIVE))
     session = proxy_service._HTTPBridgeSession(
         key=proxy_service._HTTPBridgeSessionKey(
-            "turn_state_header",
+            "prompt_cache",
             "http_turn_verified_owner_limit",
             None,
         ),
-        headers={"x-codex-turn-state": "http_turn_verified_owner_limit"},
+        headers={"x-codex-prompt-cache-key": "http_turn_verified_owner_limit"},
         affinity=request_state.affinity_policy,
         request_model="gpt-5.6-sol",
         account=account,
@@ -14945,9 +14945,14 @@ async def test_http_bridge_replays_proxy_verified_full_resend_after_owner_quota(
     )
     handle_stream_error = AsyncMock()
     release_create_lease = AsyncMock()
+    settings = SimpleNamespace(
+        prefer_earlier_reset_accounts=False,
+        prefer_earlier_reset_window="primary",
+        routing_strategy="usage_weighted",
+    )
     fallback_account = cast(Any, SimpleNamespace(id="acc-fallback", status=AccountStatus.ACTIVE))
     fallback_upstream = cast(
-        UpstreamResponsesWebSocket,
+        UpstreamWebSocket,
         SimpleNamespace(response_header=lambda _name: None, close=AsyncMock(), send_text=AsyncMock()),
     )
 
@@ -14957,7 +14962,7 @@ async def test_http_bridge_replays_proxy_verified_full_resend_after_owner_quota(
     async def ensure_fresh(account: object, **_: object) -> object:
         return account
 
-    async def open_upstream(_account: object, _headers: dict[str, str], **_: object) -> UpstreamResponsesWebSocket:
+    async def open_upstream(_account: object, _headers: dict[str, str], **_: object) -> UpstreamWebSocket:
         return fallback_upstream
 
     response_create_lease = object()
@@ -14968,6 +14973,11 @@ async def test_http_bridge_replays_proxy_verified_full_resend_after_owner_quota(
         service,
         "_release_request_state_account_response_create_lease",
         release_create_lease,
+    )
+    monkeypatch.setattr(
+        proxy_service,
+        "get_settings_cache",
+        lambda: SimpleNamespace(get=AsyncMock(return_value=settings)),
     )
     monkeypatch.setattr(service, "_select_account_with_budget_for_stream", select_account)
     monkeypatch.setattr(service, "_ensure_fresh_with_budget", ensure_fresh)
