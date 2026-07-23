@@ -17304,7 +17304,7 @@ async def test_stream_via_http_bridge_fails_closed_before_file_affinity_when_pre
         ("missing_owner", False, None),
     ],
 )
-async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_when_owner_is_unavailable(
+async def test_stream_via_http_bridge_projects_portable_durable_full_resend_when_owner_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
     unsafe_replay_input: str | None,
     replace_retired_gate: bool,
@@ -17325,6 +17325,10 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
             "role": "user",
             "content": [{"type": "input_text", "text": "old question"}],
             "internal_chat_message_metadata_passthrough": owner_metadata,
+        },
+        {
+            "type": "compaction",
+            "encrypted_content": "portable-compaction-summary",
         },
         {
             "type": "reasoning",
@@ -17606,6 +17610,10 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
             "internal_chat_message_metadata_passthrough": owner_metadata,
         },
         {
+            "type": "compaction",
+            "encrypted_content": "portable-compaction-summary",
+        },
+        {
             "type": "function_call",
             "call_id": "call_old",
             "name": "lookup",
@@ -17631,7 +17639,8 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
             "internal_chat_message_metadata_passthrough": {"turn_id": "turn-next"},
         },
     ]
-    assert "encrypted_content" not in captured_text_data[0]
+    assert "portable-compaction-summary" in captured_text_data[0]
+    assert "encrypted-owner-scoped-reasoning" not in captured_text_data[0]
     assert all("id" not in item for item in replay_payload["input"])
     account_neutral_classifier.assert_called_once()
 

@@ -10,6 +10,7 @@ from app.modules.proxy.continuity import (
 )
 from app.modules.proxy.replay_safety import (
     project_responses_input_for_account_neutral_fresh_replay,
+    project_responses_payload_for_portable_compaction_fresh_replay,
     responses_input_suffix_retains_prior_output,
     responses_payload_is_account_neutral_fresh_replay,
 )
@@ -271,6 +272,98 @@ def test_account_neutral_replay_projection_removes_response_owned_bookkeeping() 
         is True
     )
     assert responses_payload_is_account_neutral_fresh_replay({"input": projection.input_items}) is True
+
+
+def test_portable_compaction_full_replay_projects_response_owned_state() -> None:
+    payload: dict[str, JsonValue] = {
+        "model": "gpt-5.6-sol",
+        "instructions": "continue",
+        "input": [
+            {"type": "compaction", "encrypted_content": "portable-summary"},
+            {
+                "type": "reasoning",
+                "id": "rs_owner",
+                "encrypted_content": "owner-reasoning",
+            },
+            {
+                "type": "custom_tool_call",
+                "id": "ctc_owner",
+                "call_id": "call_1",
+                "name": "exec",
+                "input": "pwd",
+                "status": "completed",
+            },
+            {
+                "type": "custom_tool_call_output",
+                "id": "ctco_owner",
+                "call_id": "call_1",
+                "output": [
+                    {"type": "input_text", "text": "screenshot"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+                ],
+                "status": "completed",
+            },
+            {"role": "user", "content": "continue on the available account"},
+        ],
+    }
+
+    projected = project_responses_payload_for_portable_compaction_fresh_replay(payload)
+
+    assert projected is not None
+    assert projected["input"] == [
+        {"type": "compaction", "encrypted_content": "portable-summary"},
+        {
+            "type": "custom_tool_call",
+            "call_id": "call_1",
+            "name": "exec",
+            "input": "pwd",
+            "status": "completed",
+        },
+        {
+            "type": "custom_tool_call_output",
+            "call_id": "call_1",
+            "output": [
+                {"type": "input_text", "text": "screenshot"},
+                {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+            ],
+            "status": "completed",
+        },
+        {"role": "user", "content": "continue on the available account"},
+    ]
+    assert responses_payload_is_account_neutral_fresh_replay(projected) is True
+
+
+@pytest.mark.parametrize(
+    "input_items",
+    [
+        [{"type": "compaction", "encrypted_content": ""}, {"role": "user", "content": "continue"}],
+        [
+            {"type": "compaction", "encrypted_content": "portable-summary", "future": "unknown"},
+            {"role": "user", "content": "continue"},
+        ],
+        [
+            {"type": "compaction", "encrypted_content": "portable-summary"},
+            {"type": "input_file", "file_id": "file_owner"},
+        ],
+        [
+            {"type": "compaction", "encrypted_content": "portable-summary"},
+            {"type": "custom_tool_call", "call_id": "pending", "name": "exec", "input": "pwd"},
+        ],
+        [
+            {"type": "reasoning", "encrypted_content": "owner-reasoning"},
+            {"role": "user", "content": "continue"},
+        ],
+    ],
+)
+def test_portable_compaction_full_replay_rejects_unsafe_state(
+    input_items: list[JsonValue],
+) -> None:
+    assert (
+        project_responses_payload_for_portable_compaction_fresh_replay(
+            {"model": "gpt-5.6-sol", "instructions": "continue", "input": input_items}
+        )
+        is None
+    )
 
 
 def test_account_neutral_replay_projection_rejects_invalid_stored_boundary() -> None:
