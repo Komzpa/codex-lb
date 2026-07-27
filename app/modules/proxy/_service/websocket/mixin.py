@@ -56,7 +56,7 @@ from app.core.clients.proxy import codex_control_request as core_codex_control_r
 from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
 from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # noqa: F401
 from app.core.clients.proxy_websocket import (
-    UpstreamResponsesWebSocket,
+    UpstreamWebSocket,
     UpstreamWebSocketTransportError,
     filter_inbound_websocket_headers,
 )
@@ -556,7 +556,7 @@ def _websocket_archive_request_context(request_id: str | None) -> Iterator[None]
 
 
 def _archive_received_websocket_message(
-    upstream: UpstreamResponsesWebSocket,
+    upstream: UpstreamWebSocket,
     message: Any,
     *,
     archive_request_id: str | None,
@@ -764,7 +764,7 @@ class _WebSocketMixin:
         pending_lock = anyio.Lock()
         client_send_lock = anyio.Lock()
         response_create_gate = asyncio.Semaphore(1)
-        upstream: UpstreamResponsesWebSocket | None = None
+        upstream: UpstreamWebSocket | None = None
         upstream_reader: asyncio.Task[None] | None = None
         upstream_control: _WebSocketUpstreamControl | None = None
         continuity_state = proxy._websocket_continuity_state_for_request(
@@ -866,14 +866,21 @@ class _WebSocketMixin:
                         )
                         await _release_websocket_response_create_gate(request_state, response_create_gate)
                         continue
-                    async with pending_lock:
-                        pending_requests.append(request_state)
-                    proxy._start_request_state_api_key_reservation_heartbeat(
-                        request_state,
-                        api_key=request_state.api_key or api_key,
-                        surface="websocket",
-                    )
-                    request_state_registered = True
+                    if request_state.response_create_gate_acquired:
+                        # Ordinary pre-created replay retains its create gate.
+                        # Re-register it without trying to acquire the same
+                        # non-reentrant semaphore a second time.
+                        async with pending_lock:
+                            pending_requests.append(request_state)
+                        proxy._start_request_state_api_key_reservation_heartbeat(
+                            request_state,
+                            api_key=request_state.api_key or api_key,
+                            surface="websocket",
+                        )
+                        request_state_registered = True
+                    # A terminal security event released the create gate and
+                    # account admission.  Leave that replay unregistered so the
+                    # normal block below reacquires both before queue and send.
                 else:
                     downstream_idle_timeout_seconds = runtime_settings.proxy_downstream_websocket_idle_timeout_seconds
                     message: Any | None = None
@@ -2005,7 +2012,7 @@ class _WebSocketMixin:
         downstream_activity: _DownstreamWebSocketActivity | None = None,
         reallocate_sticky: bool = False,
         sticky_max_age_seconds: int | None = None,
-    ) -> tuple[Account | None, UpstreamResponsesWebSocket | None]:
+    ) -> tuple[Account | None, UpstreamWebSocket | None]:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
         if (
@@ -2519,7 +2526,7 @@ class _WebSocketMixin:
         websocket: WebSocket,
         force_refresh: bool = False,
         can_transient_failover: bool = False,
-    ) -> tuple[Account, UpstreamResponsesWebSocket] | None:
+    ) -> tuple[Account, UpstreamWebSocket] | None:
         recovery = ProcessNetworkRecovery(
             transport="websocket",
             request_id=request_state.request_log_id or request_state.request_id,
@@ -2564,7 +2571,7 @@ class _WebSocketMixin:
         websocket: WebSocket,
         force_refresh: bool = False,
         can_transient_failover: bool = False,
-    ) -> tuple[Account, UpstreamResponsesWebSocket] | None:
+    ) -> tuple[Account, UpstreamWebSocket] | None:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
         try:
@@ -2731,7 +2738,7 @@ class _WebSocketMixin:
         client_send_lock: anyio.Lock,
         websocket: WebSocket,
         can_transient_failover: bool = False,
-    ) -> tuple[Account, UpstreamResponsesWebSocket] | None:
+    ) -> tuple[Account, UpstreamWebSocket] | None:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
         try:
@@ -2925,7 +2932,7 @@ class _WebSocketMixin:
         *,
         timeout_seconds: float,
         request_state: "_WebSocketRequestState | None" = None,
-    ) -> UpstreamResponsesWebSocket:
+    ) -> UpstreamWebSocket:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
         started_at = time.monotonic()
@@ -2966,7 +2973,7 @@ class _WebSocketMixin:
         headers: dict[str, str],
         *,
         request_state: "_WebSocketRequestState | None" = None,
-    ) -> UpstreamResponsesWebSocket:
+    ) -> UpstreamWebSocket:
         proxy = cast(_WebSocketServiceProtocol, self)
         _ = proxy
         access_token = proxy._encryptor.decrypt(account.access_token_encrypted)
@@ -3210,7 +3217,7 @@ class _WebSocketMixin:
     async def _relay_upstream_websocket_messages(
         self,
         websocket: WebSocket,
-        upstream: UpstreamResponsesWebSocket,
+        upstream: UpstreamWebSocket,
         *,
         account: Account,
         account_id_value: str,

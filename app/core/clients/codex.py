@@ -34,12 +34,14 @@ class CodexTransportError(RuntimeError):
         error_code: str | None = None,
         retryable_same_contract: bool = False,
         failure_phase: str | None = None,
+        is_tls_verification_failure: bool = False,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.error_code = error_code
         self.retryable_same_contract = retryable_same_contract
         self.failure_phase = failure_phase
+        self.is_tls_verification_failure = is_tls_verification_failure
 
 
 def require_route_or_direct_egress_opt_in(
@@ -234,7 +236,13 @@ class CodexClient:
         return result
 
     async def open_ws_with_route_metadata(
-        self, url: str, *, route: ResolvedUpstreamRoute, **kwargs: Any
+        self,
+        url: str,
+        *,
+        route: ResolvedUpstreamRoute,
+        retry_handshake_status: bool = True,
+        retry_network_errors: bool = True,
+        **kwargs: Any,
     ) -> CodexWebSocketResult:
         if route is None:
             raise ValueError("Codex upstream calls require a resolved upstream proxy route")
@@ -264,6 +272,23 @@ class CodexClient:
             except Exception as exc:
                 if context is not None and hasattr(context, "__aexit__"):
                     await context.__aexit__(None, None, None)
+                handshake_status = _transport_error_status_code(exc)
+                if handshake_status is not None and not retry_handshake_status:
+                    raise _transport_error(
+                        "websocket",
+                        endpoint.id,
+                        exc,
+                        failure_phase="connect",
+                        retryable_same_contract=False,
+                    ) from None
+                if handshake_status is None and not retry_network_errors:
+                    raise _transport_error(
+                        "websocket",
+                        endpoint.id,
+                        exc,
+                        failure_phase="connect",
+                        retryable_same_contract=False,
+                    ) from None
                 if index == len(endpoints) - 1:
                     raise _transport_error(
                         "websocket",
@@ -272,10 +297,7 @@ class CodexClient:
                         failure_phase="connect",
                         # No response.create frame can be delivered before the
                         # websocket open returns to its caller.
-                        retryable_same_contract=is_process_network_failure(
-                            exc,
-                            include_permanent_dns=False,
-                        ),
+                        retryable_same_contract=is_pre_dispatch_connection_failure(exc),
                     ) from None
         raise RuntimeError("unreachable Codex client websocket fallback state")
 
@@ -355,7 +377,7 @@ async def _open_ws_via_socks_proxy(url: str, endpoint: ResolvedProxyEndpoint, **
             context = await context
         websocket = await context.__aenter__() if hasattr(context, "__aenter__") else context
         return websocket, _SessionOwnedWebSocketContext(context, session)
-    except Exception:
+    except BaseException:
         await session.close()
         raise
 
@@ -474,6 +496,7 @@ def _transport_error(
         error_code=PROCESS_NETWORK_UNAVAILABLE_CODE if process_network_failure else None,
         retryable_same_contract=retryable_same_contract,
         failure_phase=failure_phase,
+        is_tls_verification_failure=isinstance(exc, aiohttp.ClientSSLError),
     )
 
 

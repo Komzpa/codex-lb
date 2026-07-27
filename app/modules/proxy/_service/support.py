@@ -16,8 +16,8 @@ import anyio
 
 from app.core.auth.refresh import RefreshError, is_transient_refresh_contention, refresh_contention_kind
 from app.core.balancer.types import UpstreamError
-from app.core.clients.proxy import ProxyResponseError
-from app.core.clients.proxy_websocket import UpstreamResponsesWebSocket
+from app.core.clients.proxy import CodexControlRequestPrivacyPolicy, ProxyResponseError
+from app.core.clients.proxy_websocket import UpstreamWebSocket
 from app.core.errors import OpenAIErrorEnvelope, openai_error
 from app.core.openai.model_registry import get_model_registry
 from app.core.openai.models import OpenAIEvent
@@ -458,6 +458,8 @@ def _request_log_useragent_fields(headers: Mapping[str, str]) -> tuple[str | Non
         return None, None
     first_token = useragent.split(maxsplit=1)[0]
     useragent_group = first_token.split("/", 1)[0].strip() or None
+    if "/" in useragent:
+        useragent_group = useragent.split("/", 1)[0]
     return useragent, useragent_group
 
 
@@ -522,7 +524,13 @@ _CLAIM_CONTENTION_UNPENALIZED_ATTR = "_codex_lb_claim_contention_unpenalized"
 
 class _RefreshFailoverProxy(Protocol):
     async def _handle_stream_error(
-        self, account: Account, error: Any, code: str, http_status: int | None = None
+        self,
+        account: Account,
+        error: Any,
+        code: str,
+        http_status: int | None = None,
+        *,
+        privacy_policy: CodexControlRequestPrivacyPolicy = CodexControlRequestPrivacyPolicy.STANDARD,
     ) -> Any: ...
 
 
@@ -561,6 +569,7 @@ async def failover_after_previsible_refresh_error(
     select_next_account: Callable[[set[str]], Awaitable[AccountSelection]],
     request_id: str,
     kind: str,
+    privacy_policy: CodexControlRequestPrivacyPolicy = CodexControlRequestPrivacyPolicy.STANDARD,
 ) -> Account:
     """Pick the next account after a previsible-unary freshness/connect failure.
 
@@ -596,8 +605,8 @@ async def failover_after_previsible_refresh_error(
             kind,
             getattr(exc, "code", None),
             request_id,
-            current.id,
-            exc_info=True,
+            "<redacted>" if privacy_policy.redacts_sensitive_details else current.id,
+            exc_info=None if privacy_policy.redacts_sensitive_details else True,
         )
     else:
         logger.warning(
@@ -605,8 +614,8 @@ async def failover_after_previsible_refresh_error(
             kind,
             "claim contention" if claim else "failed",
             request_id,
-            current.id,
-            exc_info=True,
+            "<redacted>" if privacy_policy.redacts_sensitive_details else current.id,
+            exc_info=None if privacy_policy.redacts_sensitive_details else True,
         )
     if not claim and not _should_retry_transient_stream_error("upstream_unavailable", message):
         _raise_proxy_unavailable_for_account(message, current)
@@ -627,17 +636,34 @@ async def failover_after_previsible_refresh_error(
     if not claim:
         # Genuine transport / connect failure: penalize the skipped account so a
         # persistently broken account backs off. Claim contention never penalizes.
-        await proxy._handle_stream_error(current, {"message": message}, "upstream_unavailable")
+        if privacy_policy.redacts_sensitive_details:
+            await proxy._handle_stream_error(
+                current,
+                {"message": message},
+                "upstream_unavailable",
+                privacy_policy=privacy_policy,
+            )
+        else:
+            await proxy._handle_stream_error(current, {"message": message}, "upstream_unavailable")
     return selected_account
 
 
 class _TransientStreamError(Exception):
     """Transient upstream error (e.g. 500 server_error) - retry on same account first."""
 
-    def __init__(self, code: str, error: UpstreamError) -> None:
+    def __init__(
+        self,
+        code: str,
+        error: UpstreamError,
+        *,
+        preserve_on_selection_exhausted: bool = False,
+        account_health_error: bool = False,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.error = error
+        self.preserve_on_selection_exhausted = preserve_on_selection_exhausted
+        self.account_health_error = account_health_error
 
 
 class _TerminalStreamError(Exception):
@@ -804,6 +830,7 @@ class _WebSocketRequestState:
     upstream_error_code_override: str | None = None
     error_http_status_override: int | None = None
     response_event_count: int = 0
+    upstream_model_output_seen: bool = False
     previous_response_not_found_rewritten: bool = False
     previous_response_owner_lookup_source: str | None = None
     previous_response_owner_lookup_outcome: str | None = None
@@ -837,6 +864,7 @@ class _WebSocketRequestState:
     client_ip: str | None = None
     downstream_visible: bool = False
     last_downstream_sequence_number: int | None = None
+    deferred_reasoning_downstream_texts: list[str] = field(default_factory=list)
     suppress_next_created_downstream: bool = False
     replay_downstream_response_id: str | None = None
     draining_until_terminal: bool = False
@@ -874,7 +902,7 @@ class _HTTPBridgeSession:
     affinity: _AffinityPolicy
     request_model: str | None
     account: Account
-    upstream: UpstreamResponsesWebSocket
+    upstream: UpstreamWebSocket
     upstream_control: _WebSocketUpstreamControl
     pending_requests: deque[_WebSocketRequestState]
     pending_lock: anyio.Lock
@@ -1058,6 +1086,59 @@ def _clear_websocket_precreated_replay_fallback(request_state: _WebSocketRequest
     _clear_websocket_request_error_overrides(request_state)
 
 
+def _websocket_is_reasoning_output_item_event(event_type: str | None, payload: Mapping[str, JsonValue] | None) -> bool:
+    if event_type not in {"response.output_item.added", "response.output_item.done"} or payload is None:
+        return False
+    item = payload.get("item")
+    return isinstance(item, Mapping) and item.get("type") == "reasoning"
+
+
+def _websocket_should_defer_reasoning_prelude(
+    request_state: _WebSocketRequestState | None,
+    event_type: str | None,
+    payload: Mapping[str, JsonValue] | None,
+) -> bool:
+    if request_state is None:
+        return False
+    if request_state.downstream_visible:
+        return False
+    reasoning_output_item_event = _websocket_is_reasoning_output_item_event(event_type, payload)
+    # Once a reasoning prelude starts, keep the whole prelude buffered.  The
+    # first reasoning item marks upstream model output as seen so replay stays
+    # disabled; that marker must not make subsequent reasoning deltas visible.
+    if request_state.deferred_reasoning_downstream_texts and (
+        reasoning_output_item_event
+        or event_type
+        in {
+            "response.reasoning_text.delta",
+            "response.reasoning_text.done",
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_summary_text.done",
+        }
+    ):
+        return True
+    if not reasoning_output_item_event:
+        return False
+    if request_state.upstream_model_output_seen:
+        return False
+    if request_state.pending_function_call_ids or request_state.pending_tool_call_types:
+        return False
+    return request_state.response_event_count <= 1
+
+
+def _pop_websocket_deferred_reasoning_downstream_texts(request_state: _WebSocketRequestState | None) -> list[str]:
+    if request_state is None or not request_state.deferred_reasoning_downstream_texts:
+        return []
+    deferred_texts = request_state.deferred_reasoning_downstream_texts
+    request_state.deferred_reasoning_downstream_texts = []
+    return deferred_texts
+
+
+def _clear_websocket_deferred_reasoning_downstream_texts(request_state: _WebSocketRequestState | None) -> None:
+    if request_state is not None:
+        request_state.deferred_reasoning_downstream_texts = []
+
+
 def _record_response_event(request_state: _WebSocketRequestState | None, event_type: str | None) -> None:
     if request_state is None or event_type is None or not event_type.startswith("response."):
         return
@@ -1083,6 +1164,8 @@ def _websocket_request_can_replay_before_visible_output(request_state: _WebSocke
         return False
     if request_state.downstream_visible:
         return False
+    if request_state.upstream_model_output_seen:
+        return False
     has_retry_safe_fresh_payload = (
         request_state.fresh_upstream_request_is_retry_safe and request_state.fresh_upstream_request_text is not None
     )
@@ -1103,7 +1186,7 @@ def _websocket_request_can_replay_before_visible_output(request_state: _WebSocke
 def _record_websocket_route_metadata(
     request_state: _WebSocketRequestState,
     *,
-    upstream: UpstreamResponsesWebSocket | None = None,
+    upstream: UpstreamWebSocket | None = None,
     route: ResolvedUpstreamRoute | None = None,
     fallback_used: bool | None = None,
 ) -> None:

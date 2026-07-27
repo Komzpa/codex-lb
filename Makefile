@@ -18,6 +18,9 @@ POSTGRES_PYTEST_TARGETS := \
 	tests/integration/test_db_session_timezone.py \
 	tests/test_request_logs_options_api.py \
 	tests/integration/test_account_usage_rollup.py \
+	tests/integration/test_request_usage_time_rollup.py \
+	tests/integration/test_request_usage_rollup_parity.py \
+	tests/integration/test_migrations.py::test_request_usage_time_rollups_migration_upgrade_and_downgrade \
 	tests/integration/test_data_retention.py
 SHELL := /bin/bash
 
@@ -29,13 +32,15 @@ help:
 	  '  make architecture-check      proxy architecture fitness ratchets' \
 	  '  make typecheck               ty check' \
 	  '  make frontend-test           vitest coverage, same as CI' \
+	  '  make test-dashboard-browser-smoke  built dashboard against the real local API' \
 	  '  make test-unit               unit pytest slice, same as CI' \
 	  '  make test-integration-core   integration-core pytest slice' \
 	  '  make package                 build and verify sdist/wheel' \
 	  '  make ci-fast                 lint/type/frontend/unit/package' \
 	  '  make ci                      full local CI gate'
 
-.PHONY: frontend-install frontend-lint frontend-typecheck frontend-test frontend-test-fast frontend-build
+.PHONY: frontend-install frontend-lint frontend-typecheck frontend-test frontend-test-fast frontend-build \
+	frontend-playwright-chromium test-dashboard-browser-smoke
 frontend-install:
 	cd frontend && bun install --frozen-lockfile
 
@@ -54,10 +59,17 @@ frontend-test-fast: frontend-install
 frontend-build: frontend-install
 	cd frontend && bun run build
 
+frontend-playwright-chromium: frontend-install
+	cd frontend && bun run playwright install chromium
+
+test-dashboard-browser-smoke: frontend-build frontend-playwright-chromium
+	uv sync --dev --frozen
+	uv run python scripts/run_dashboard_browser_smoke.py
+
 .PHONY: lint typecheck architecture-check
 lint: architecture-check
-	uvx ruff check .
-	uvx ruff format --check .
+	uv run ruff check .
+	uv run ruff format --check .
 
 architecture-check:
 	python scripts/check_proxy_architecture.py
