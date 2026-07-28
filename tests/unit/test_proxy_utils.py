@@ -25663,7 +25663,7 @@ async def test_relay_upstream_websocket_classified_stream_incomplete_drop_is_pen
 
     await service._relay_upstream_websocket_messages(
         cast(WebSocket, downstream),
-        cast(proxy_service.UpstreamResponsesWebSocket, _ClassifiedStreamIncompleteDrop()),
+        cast(proxy_service.UpstreamWebSocket, _ClassifiedStreamIncompleteDrop()),
         account=account,
         account_id_value=account.id,
         pending_requests=pending_requests,
