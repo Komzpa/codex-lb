@@ -42,9 +42,7 @@ from app.core.metrics.prometheus import (
     PROMETHEUS_AVAILABLE,
     bridge_durable_recover_total,
 )
-from app.core.openai.requests import (
-    ResponsesRequest,
-)
+from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.request_id import ensure_request_id, ensure_request_scope_id
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
@@ -148,6 +146,7 @@ from app.modules.proxy._service.support import (
     _HTTPBridgeOwnerForward,
     _HTTPBridgeSession,
     _HTTPBridgeSessionKey,
+    _security_lineage_ids,
     _signal_propagated_capacity_startup_ready,
     _signal_propagated_capacity_startup_wait,
     _ttft_event_visible_at,
@@ -917,6 +916,23 @@ class _HTTPBridgeStreamingMixin:
             if durable_lookup is not None and not _http_bridge_models_compatible(durable_lookup.model, payload.model)
             else None
         )
+        durable_security_requirement = bool(
+            (durable_lookup is not None and durable_lookup.requires_security_work_authorized)
+            or (
+                durable_model_transition_lookup is not None
+                and durable_model_transition_lookup.requires_security_work_authorized
+            )
+        )
+        if not durable_security_requirement:
+            durable_security_requirement = await self._security_lineage_requires_security_work_authorized(
+                _security_lineage_ids(
+                    bridge_session_key.affinity_key,
+                    incoming_turn_state_header,
+                    incoming_session_header,
+                    payload.previous_response_id,
+                ),
+                api_key_id=api_key.id if api_key is not None else None,
+            )
         durable_model_transition_requires_owner = durable_model_transition_lookup is not None and (
             payload.previous_response_id is not None
             or bridge_session_key.strength == "hard"
@@ -1026,6 +1042,7 @@ class _HTTPBridgeStreamingMixin:
         request_state, text_data = prepare_bridge_request(effective_payload)
         request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
         request_state.affinity_policy = affinity
+        request_state.require_security_work_authorized = durable_security_requirement
         if downstream_turn_state is not None:
             request_state.session_id = _normalize_session_id(downstream_turn_state)
         if previous_response_trimmed_input_count is not None:
@@ -1230,6 +1247,7 @@ class _HTTPBridgeStreamingMixin:
             request_state, text_data = prepare_bridge_request(fresh_payload)
             request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
             request_state.affinity_policy = affinity
+            request_state.require_security_work_authorized = durable_security_requirement
             request_state.excluded_account_ids.update(fresh_replay_excluded_account_ids)
             if downstream_turn_state is not None:
                 request_state.session_id = _normalize_session_id(downstream_turn_state)
@@ -1300,6 +1318,7 @@ class _HTTPBridgeStreamingMixin:
                     preferred_account_id=request_state.preferred_account_id,
                     preferred_account_has_continuity_provenance=preferred_account_has_continuity_provenance,
                     fallback_on_preferred_account_unavailable=not file_required_preferred_account,
+                    require_security_work_authorized=request_state.require_security_work_authorized,
                     request_usage_budget=request_state.request_usage_budget,
                     request_deadline=request_deadline,
                     session_header_fallback_key=session_header_fallback_key,
@@ -1541,6 +1560,7 @@ class _HTTPBridgeStreamingMixin:
                             ),
                             preferred_account_id=request_state.preferred_account_id,
                             preferred_account_has_continuity_provenance=preferred_account_has_continuity_provenance,
+                            require_security_work_authorized=request_state.require_security_work_authorized,
                             request_usage_budget=request_state.request_usage_budget,
                             session_header_fallback_key=session_header_fallback_key,
                             request_deadline=request_deadline,
@@ -1771,6 +1791,7 @@ class _HTTPBridgeStreamingMixin:
             request_state, text_data = prepare_bridge_request(effective_payload)
             request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
             request_state.affinity_policy = affinity
+            request_state.require_security_work_authorized = durable_security_requirement
             request_state.transport = _REQUEST_TRANSPORT_HTTP
             request_state.request_stage = _http_bridge_request_stage(
                 headers=headers,
@@ -1851,6 +1872,7 @@ class _HTTPBridgeStreamingMixin:
             request_state, text_data = prepare_bridge_request(submit_payload)
             request_state.enforce_openai_sdk_contract = enforce_openai_sdk_contract
             request_state.affinity_policy = affinity
+            request_state.require_security_work_authorized = previous_request_state.require_security_work_authorized
             if downstream_turn_state is not None:
                 request_state.session_id = _normalize_session_id(downstream_turn_state)
             request_state.transport = _REQUEST_TRANSPORT_HTTP
@@ -1973,6 +1995,7 @@ class _HTTPBridgeStreamingMixin:
                                 file_required_preferred_account or request_state.previous_response_id is not None
                             ),
                             allow_previous_response_recovery_rebind=request_state.previous_response_id is not None,
+                            require_security_work_authorized=request_state.require_security_work_authorized,
                             request_usage_budget=request_state.request_usage_budget,
                             request_deadline=request_deadline,
                             session_header_fallback_key=session_header_fallback_key,
@@ -2077,6 +2100,7 @@ class _HTTPBridgeStreamingMixin:
                             durable_lookup=None,
                             request_stage=request_state.request_stage,
                             preferred_account_id=None,
+                            require_security_work_authorized=request_state.require_security_work_authorized,
                             request_usage_budget=request_state.request_usage_budget,
                             request_deadline=request_deadline,
                             exclude_account_ids=request_state.excluded_account_ids or None,
@@ -2265,6 +2289,7 @@ class _HTTPBridgeStreamingMixin:
                         fallback_on_preferred_account_unavailable=not (
                             file_required_preferred_account and retry_preferred_account_id is not None
                         ),
+                        require_security_work_authorized=request_state.require_security_work_authorized,
                         request_usage_budget=estimate_api_key_request_usage(retry_payload),
                         request_deadline=request_deadline,
                         exclude_account_ids=request_state.excluded_account_ids or None,
