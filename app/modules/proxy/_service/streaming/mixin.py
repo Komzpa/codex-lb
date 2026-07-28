@@ -298,7 +298,6 @@ from app.modules.proxy._service.support import (
     _RetryableStreamError,
     _StreamSettlement,
     _TerminalStreamError,
-    _TransientStreamError,
     _ttft_event_latency_ms,
     _WebSocketUpstreamControl,
 )
@@ -578,8 +577,6 @@ class _StreamingMixin(_StreamingRetryMixin):
                 settlement.record_success = False
                 settlement.account_health_error = True
                 settlement.error = {"message": error_message}
-                if allow_transient_retry and payload.previous_response_id is None:
-                    raise _TransientStreamError(error_code, settlement.error)
                 yield format_sse_event(
                     response_failed_event(
                         error_code,
