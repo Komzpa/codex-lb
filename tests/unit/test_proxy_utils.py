@@ -25377,6 +25377,8 @@ async def test_proxy_responses_websocket_services_close_replay_before_new_downst
         "_revalidate_open_websocket_account",
         AsyncMock(side_effect=lambda current_account, **_: (current_account, None, None)),
     )
+    monkeypatch.setattr(service, "_resolve_compact_turn_state_owner", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_resolve_websocket_previous_response_owner", AsyncMock(return_value=None))
 
     first_request = {
         "type": "response.create",
