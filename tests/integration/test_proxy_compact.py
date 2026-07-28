@@ -16,6 +16,7 @@ from app.core.auth import generate_unique_account_id
 from app.core.clients.proxy import ProxyResponseError
 from app.core.errors import openai_error
 from app.core.openai.models import CompactResponsePayload, OpenAIResponsePayload
+from app.core.openai.requests import ResponsesCompactRequest
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
@@ -454,7 +455,7 @@ async def test_proxy_compact_ignores_file_pin_from_trimmed_optional_history(asyn
     assert response.status_code == 200
     assert seen["preferred_account_id"] is None
     assert seen["upstream_account_id"] == "acc_compact_trim_selected"
-    upstream_payload = seen["upstream_payload"].to_payload()
+    upstream_payload = cast(ResponsesCompactRequest, seen["upstream_payload"]).to_payload()
     assert "file_compact_trimmed_optional" not in json.dumps(upstream_payload)
 
 
