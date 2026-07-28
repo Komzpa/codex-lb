@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import cast
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -83,17 +84,19 @@ class StickySessionsRepository:
         async with sqlite_writer_section():
             deleted_key = (await self._session.execute(statement)).scalar_one_or_none()
             if deleted_key is None:
-                current = (
+                current = cast(
+                    "tuple[str, datetime] | None",
                     (
                         await self._session.execute(
                             select(StickySession.account_id, StickySession.updated_at).where(
                                 StickySession.key == key,
                                 StickySession.kind == kind,
+                                StickySession.account_id.is_not(None),
                             )
                         )
                     )
                     .tuples()
-                    .one_or_none()
+                    .one_or_none(),
                 )
             await self._session.commit()
 
