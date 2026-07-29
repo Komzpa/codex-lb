@@ -241,6 +241,10 @@ async def test_run_startup_migrations_auto_remaps_live_security_lineage_aggregat
             text("UPDATE alembic_version SET version_num = :legacy"),
             {"legacy": live_aggregate_revision},
         )
+        await session.execute(text("ALTER TABLE http_bridge_sessions ADD COLUMN latest_pending_function_call_ids TEXT"))
+        await session.execute(
+            text("ALTER TABLE http_bridge_sessions ADD COLUMN latest_pending_custom_tool_call_ids TEXT")
+        )
         await session.commit()
 
     result = await run_startup_migrations(_DATABASE_URL)
@@ -249,7 +253,14 @@ async def test_run_startup_migrations_auto_remaps_live_security_lineage_aggregat
     async with SessionLocal() as session:
         revision_rows = await session.execute(text("SELECT version_num FROM alembic_version"))
         revisions = sorted(str(row[0]) for row in revision_rows.fetchall())
+        bridge_columns = {
+            str(row[1]) for row in (await session.execute(text("PRAGMA table_info('http_bridge_sessions')"))).all()
+        }
         assert revisions == [_HEAD_REVISION]
+        assert "latest_pending_tool_calls_json" in bridge_columns
+        assert "latest_pending_function_call_ids" not in bridge_columns
+        assert "latest_pending_custom_tool_call_ids" not in bridge_columns
+    assert await to_thread.run_sync(lambda: check_schema_drift(_DATABASE_URL)) == ()
 
 
 @pytest.mark.asyncio
