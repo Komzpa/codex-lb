@@ -32,12 +32,15 @@ class _WebSocketServiceProtocol(Protocol):
     _open_upstream_websocket_with_budget: Any
     _prepare_response_bridge_request_state: Any
     _prepare_websocket_response_create_request: Any
+    _persist_security_work_lineage_markers: Any
     _process_upstream_websocket_text: Any
     _raise_for_unsupported_input_image_references: Any
     _refresh_websocket_api_key_policy: Any
     _revalidate_open_websocket_account: Any
     _relay_upstream_websocket_messages: Any
     _release_websocket_request_state_reservation: Any
+    _schedule_cancel_safe_cleanup: Any
+    _settle_deferred_websocket_reservations_and_apply_health_penalty: Any
     _release_websocket_reservation: Any
     _release_request_state_account_response_create_lease: Any
     _remember_websocket_previous_response_owner: Any

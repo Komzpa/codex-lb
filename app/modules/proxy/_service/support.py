@@ -67,6 +67,7 @@ _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPES = frozenset(_PENDING_TOOL_CALL_OUTPUT_ITEM_
 _TTFT_OUTPUT_ITEM_TYPES = _PENDING_TOOL_CALL_ITEM_TYPES - {"function_call"}
 _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS = 20
 _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS = 0.05
+_WEBSOCKET_TRANSPARENT_CLOSE_MAX_REPLAYS = 3
 _HARD_HTTP_BRIDGE_AFFINITY_KINDS = frozenset(
     {
         "turn_state_header",
@@ -91,6 +92,10 @@ _PROPAGATED_CAPACITY_STARTUP_READY: ContextVar[asyncio.Event | None] = ContextVa
     "propagated_capacity_startup_ready",
     default=None,
 )
+
+
+def _security_lineage_ids(*values: object) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(value.strip() for value in values if isinstance(value, str) and value.strip()))
 
 
 def _strip_blank_html_comment_lines(text: str) -> str:
@@ -1144,6 +1149,14 @@ def _clear_websocket_deferred_reasoning_downstream_texts(request_state: _WebSock
 def _record_response_event(request_state: _WebSocketRequestState | None, event_type: str | None) -> None:
     if request_state is None or event_type is None or not event_type.startswith("response."):
         return
+    if event_type not in {
+        "response.created",
+        "response.in_progress",
+        "response.completed",
+        "response.failed",
+        "response.incomplete",
+    }:
+        request_state.upstream_model_output_seen = True
     if event_type in {"response.failed", "response.incomplete"}:
         return
     request_state.response_event_count += 1
@@ -1152,7 +1165,7 @@ def _record_response_event(request_state: _WebSocketRequestState | None, event_t
 def _websocket_request_can_replay_before_visible_output(request_state: _WebSocketRequestState) -> bool:
     if not request_state.request_text:
         return False
-    if request_state.replay_count >= 1:
+    if request_state.replay_count >= _WEBSOCKET_TRANSPARENT_CLOSE_MAX_REPLAYS:
         return False
     sequenced_created_only_prewarm = (
         request_state.generate_false_prewarm

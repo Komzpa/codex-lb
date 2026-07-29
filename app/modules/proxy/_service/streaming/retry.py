@@ -41,6 +41,7 @@ from app.modules.proxy._service.support import (
     _account_selection_recovery_sleep_seconds,
     _request_log_client_fields,
     _RetryableStreamError,
+    _security_lineage_ids,
     _signal_propagated_capacity_startup_wait,
     _stream_settlement_error_payload,
     _StreamSettlement,
@@ -82,6 +83,21 @@ logger = logging.getLogger(__name__)
 
 def _facade() -> Any:
     return sys.modules["app.modules.proxy.service"]
+
+
+def _proxy_response_error_is_transient_stream_retry(exc: ProxyResponseError) -> bool:
+    error = _parse_openai_error(exc.payload)
+    code = _normalize_error_code(error.code if error else None, error.type if error else None)
+    message = error.message if error else None
+    return _facade()._should_retry_transient_stream_error(code, message)
+
+
+def _transient_stream_retry_delay(deadline: float, retry_count: int) -> float | None:
+    """Return a backoff only when it leaves budget for the next attempt."""
+
+    remaining_budget_seconds = _facade()._remaining_budget_seconds(deadline)
+    delay = backoff_seconds(retry_count)
+    return delay if 0 <= delay < remaining_budget_seconds else None
 
 
 def _http_downstream_request_is_sticky(payload: ResponsesRequest, headers: Mapping[str, str]) -> bool:
@@ -318,6 +334,12 @@ class _StreamingRetryMixin:
             sticky_threads_enabled=settings.sticky_threads_enabled,
             api_key=api_key,
         )
+        security_lineage_ids = _security_lineage_ids(
+            affinity.selection_key,
+            affinity.legacy_selection_key,
+            payload.previous_response_id,
+        )
+        request_contains_input_file_ids = bool(extract_input_file_ids(payload.input))
         turn_state_owner_account_id: str | None = None
         turn_state = _sticky_key_from_turn_state_header(headers)
         if turn_state is not None:
@@ -351,6 +373,7 @@ class _StreamingRetryMixin:
         network_recovery = ProcessNetworkRecovery(transport="stream", request_id=request_id)
         settlement = _StreamSettlement()
         last_transient_exc: ProxyResponseError | None = None
+        last_exhausted_transient_exc: ProxyResponseError | None = None
         last_account_model_rejection: ProxyResponseError | None = None
         last_account_model_rejection_account_id: str | None = None
         account_model_replacement_account_id: str | None = None
@@ -369,6 +392,12 @@ class _StreamingRetryMixin:
         pending_post_refresh_transient_penalties: list[tuple[Account, UpstreamError, str, int, int]] = []
         post_refresh_transient_replacement_selected = False
         require_security_work_authorized = False
+        security_requirement_preexisting = await proxy._security_lineage_requires_security_work_authorized(
+            security_lineage_ids,
+            api_key_id=api_key.id if api_key is not None else None,
+        )
+        bypass_new_security_lineage_requirement = False
+        security_lineage_persisted: bool | None = None
         account_leases: list[AccountLease] = []
         estimated_lease_tokens = _facade()._estimated_lease_tokens_from_request_usage_budget(
             estimate_api_key_request_usage(payload)
@@ -439,6 +468,16 @@ class _StreamingRetryMixin:
                 # recorded before this path returns or re-raises.
                 post_refresh_transient_replacement_selected = True
                 settled = await _settle_stream_usage_before_pending_penalty(current_settlement)
+
+        async def _persist_security_work_lineage_once() -> bool:
+            nonlocal security_lineage_persisted
+            if security_lineage_persisted is not None:
+                return security_lineage_persisted
+            security_lineage_persisted = await proxy._persist_security_work_lineage_markers(
+                security_lineage_ids,
+                api_key_id=api_key.id if api_key is not None else None,
+            )
+            return security_lineage_persisted
 
         async def _wait_for_process_network_recovery(
             account: Account,
@@ -921,6 +960,8 @@ class _StreamingRetryMixin:
                             exclude_account_ids=excluded_account_ids,
                             preferred_account_id=preferred_account_id,
                             require_security_work_authorized=require_security_work_authorized,
+                            security_lineage_ids=security_lineage_ids,
+                            enforce_persisted_security_lineage=not bypass_new_security_lineage_requirement,
                             lease_kind="stream",
                             estimated_lease_tokens=estimated_lease_tokens,
                             # Keep stored-object and file ownership strict. The
@@ -973,21 +1014,34 @@ class _StreamingRetryMixin:
                         and require_security_work_authorized
                         and selection.error_code == _facade()._NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE
                     ):
+                        if not security_requirement_preexisting and last_security_work_retry_error is not None:
+                            _facade().logger.info(
+                                "No security-work-authorized account available for new stream classification; "
+                                "continuing ordinary failover request_id=%s",
+                                request_id,
+                            )
+                            yield format_sse_event(
+                                _facade()._security_work_advisory_event(
+                                    code=_facade()._NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE,
+                                    message=_facade()._SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE,
+                                    request_id=request_id,
+                                    action="continue_normal_selection",
+                                )
+                            )
+                            require_security_work_authorized = False
+                            bypass_new_security_lineage_requirement = True
+                            continue
                         _facade().logger.info(
-                            "No security-work-authorized account available for stream retry; "
-                            "continuing normal account failover request_id=%s",
+                            "No security-work-authorized account available for classified stream request_id=%s",
                             request_id,
                         )
-                        yield format_sse_event(
-                            _facade()._security_work_advisory_event(
-                                code=_facade()._NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE,
-                                message=_facade()._SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE,
-                                request_id=request_id,
-                                action="continue_normal_selection",
-                            )
+                        event = response_failed_event(
+                            selection.error_code,
+                            selection.error_message or _facade()._SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE,
+                            response_id=request_id,
                         )
-                        require_security_work_authorized = False
-                        continue
+                        yield format_sse_event(event)
+                        return
                     if not account and deferred_capacity_account is not None:
                         deferred_error = _parse_openai_error(last_transient_exc.payload) if last_transient_exc else None
                         recovery_sleep_seconds = _account_selection_recovery_sleep_seconds(
@@ -1233,6 +1287,48 @@ class _StreamingRetryMixin:
                     # instead of returning a generic no_accounts event.
                     if propagate_http_errors and last_transient_exc is not None:
                         raise last_transient_exc
+                    if last_retryable_stream_error is not None:
+                        error_message = str(last_retryable_stream_error.error.get("message") or "Upstream error")
+                        event = response_failed_event(
+                            last_retryable_stream_error.code,
+                            error_message,
+                            response_id=request_id,
+                        )
+                        yield format_sse_event(event)
+                        await proxy._write_request_log(
+                            account_id=None,
+                            api_key=api_key,
+                            request_id=request_id,
+                            model=payload.model,
+                            latency_ms=int((time.monotonic() - start) * 1000),
+                            status="error",
+                            error_code=last_retryable_stream_error.code,
+                            error_message=error_message,
+                            reasoning_effort=payload.reasoning.effort if payload.reasoning else None,
+                            transport=request_transport,
+                            upstream_transport=upstream_stream_transport,
+                            service_tier=payload.service_tier,
+                            requested_service_tier=payload.service_tier,
+                            useragent=useragent,
+                            useragent_group=useragent_group,
+                            conversation_id=conversation_id,
+                            client_ip=client_ip,
+                        )
+                        return
+                    if last_exhausted_transient_exc is not None:
+                        error = _parse_openai_error(last_exhausted_transient_exc.payload)
+                        error_code = _normalize_error_code(error.code if error else None, error.type if error else None)
+                        error_message = error.message if error else None
+                        event = response_failed_event(
+                            error_code or "upstream_error",
+                            error_message or "Upstream error",
+                            error_type=(error.type if error else None) or "server_error",
+                            response_id=request_id,
+                            error_param=error.param if error else None,
+                        )
+                        _apply_error_metadata(event["response"]["error"], error)
+                        yield format_sse_event(event)
+                        return
                     if last_security_work_retry_error is not None:
                         message = (
                             last_security_work_retry_error.error.get("message")
@@ -1778,7 +1874,11 @@ class _StreamingRetryMixin:
                                         settlement.error_code or "upstream_error",
                                     )
                                 return
-                            if isinstance(tex, ProxyResponseError) and tex.status_code != 500:
+                            if (
+                                isinstance(tex, ProxyResponseError)
+                                and tex.status_code != 500
+                                and not _proxy_response_error_is_transient_stream_retry(tex)
+                            ):
                                 error = _parse_openai_error(tex.payload)
                                 code = _normalize_error_code(
                                     error.code if error else None,
@@ -1799,8 +1899,11 @@ class _StreamingRetryMixin:
                                     # already excluded by the helper.
                                     break
                                 if _facade()._is_security_work_authorization_required_error(code, error_message):
+                                    security_requirement_persisted = await _persist_security_work_lineage_once()
                                     if (
-                                        account.security_work_authorized
+                                        not security_requirement_persisted
+                                        or account.security_work_authorized
+                                        or request_contains_input_file_ids
                                         or account.id == file_preferred_account_id
                                         or require_preferred_account
                                         or attempt >= max_attempts - 1
@@ -1920,12 +2023,19 @@ class _StreamingRetryMixin:
                                     )
                                     break
                                 raise
-                            error_code = tex.code if isinstance(tex, _TransientStreamError) else "server_error"
-                            error_payload: UpstreamError = (
-                                tex.error
-                                if isinstance(tex, _TransientStreamError)
-                                else _upstream_error_from_openai(_parse_openai_error(tex.payload))
-                            )
+                            if isinstance(tex, _TransientStreamError):
+                                error_code = tex.code
+                                error_payload: UpstreamError = tex.error
+                            else:
+                                parsed_error = _parse_openai_error(tex.payload)
+                                error_code = (
+                                    _normalize_error_code(
+                                        parsed_error.code if parsed_error else None,
+                                        parsed_error.type if parsed_error else None,
+                                    )
+                                    or "server_error"
+                                )
+                                error_payload = _upstream_error_from_openai(parsed_error)
                             error_message = str(error_payload.get("message") or "")
                             recovery_decision = await _wait_for_process_network_recovery(
                                 account,
@@ -1947,19 +2057,20 @@ class _StreamingRetryMixin:
                                 and _facade()._remaining_budget_seconds(deadline) > 0
                                 and not settlement.downstream_visible
                             ):
-                                delay = backoff_seconds(transient_retries)
-                                _facade().logger.info(
-                                    "Transient stream error, retrying same account "
-                                    "request_id=%s account_id=%s retry=%s/%s delay=%.2fs code=%s",
-                                    request_id,
-                                    account.id,
-                                    transient_retries,
-                                    _facade()._MAX_TRANSIENT_SAME_ACCOUNT_RETRIES,
-                                    delay,
-                                    error_code,
-                                )
-                                await asyncio.sleep(delay)
-                                continue  # inner loop: retry same account
+                                delay = _transient_stream_retry_delay(deadline, transient_retries)
+                                if delay is not None:
+                                    _facade().logger.info(
+                                        "Transient stream error, retrying same account "
+                                        "request_id=%s account_id=%s retry=%s/%s delay=%.2fs code=%s",
+                                        request_id,
+                                        account.id,
+                                        transient_retries,
+                                        _facade()._MAX_TRANSIENT_SAME_ACCOUNT_RETRIES,
+                                        delay,
+                                        error_code,
+                                    )
+                                    await asyncio.sleep(delay)
+                                    continue  # inner loop: retry same account
                             # Exhausted same-account retries — penalize and failover
                             _facade().logger.warning(
                                 "Transient retries exhausted for account "
@@ -1976,6 +2087,7 @@ class _StreamingRetryMixin:
                             # Preserve last ProxyResponseError for propagate_http_errors path.
                             if isinstance(tex, ProxyResponseError):
                                 last_transient_exc = tex
+                                last_exhausted_transient_exc = tex
                             if isinstance(tex, _TransientStreamError) and (
                                 tex.preserve_on_selection_exhausted or error_code == "stream_incomplete"
                             ):
@@ -2006,8 +2118,11 @@ class _StreamingRetryMixin:
                     continue  # outer loop: account failover after transient exhaustion
                 except _RetryableStreamError as exc:
                     if _facade()._is_security_work_authorization_required_error(exc.code, exc.error.get("message")):
+                        security_requirement_persisted = await _persist_security_work_lineage_once()
                         if (
-                            account.security_work_authorized
+                            not security_requirement_persisted
+                            or account.security_work_authorized
+                            or request_contains_input_file_ids
                             or account.id == file_preferred_account_id
                             or require_preferred_account
                             or attempt >= max_attempts - 1
@@ -2496,8 +2611,11 @@ class _StreamingRetryMixin:
                     error_type = error.type if error else None
                     error_param = error.param if error else None
                     if _facade()._is_security_work_authorization_required_error(error_code, error_message):
+                        security_requirement_persisted = await _persist_security_work_lineage_once()
                         if (
-                            not account.security_work_authorized
+                            security_requirement_persisted
+                            and not account.security_work_authorized
+                            and not request_contains_input_file_ids
                             and account.id != file_preferred_account_id
                             and not require_preferred_account
                             and attempt < max_attempts - 1
@@ -2616,6 +2734,20 @@ class _StreamingRetryMixin:
                     _apply_error_metadata(event["response"]["error"], error)
                     yield format_sse_event(event)
                     return
+            if last_exhausted_transient_exc is not None:
+                error = _parse_openai_error(last_exhausted_transient_exc.payload)
+                error_code = _normalize_error_code(error.code if error else None, error.type if error else None)
+                error_message = error.message if error else None
+                event = response_failed_event(
+                    error_code or "upstream_error",
+                    error_message or "Upstream error",
+                    error_type=(error.type if error else None) or "server_error",
+                    response_id=request_id,
+                    error_param=error.param if error else None,
+                )
+                _apply_error_metadata(event["response"]["error"], error)
+                yield format_sse_event(event)
+                return
 
             retries_exhausted_msg = "No available accounts after retries"
             _facade().logger.warning(
