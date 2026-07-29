@@ -232,6 +232,28 @@ async def test_run_startup_migrations_auto_remaps_firewall_legacy_revision_id(db
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(not _HAS_REVISION_REMAP, reason="requires revision remap support")
+async def test_run_startup_migrations_auto_remaps_live_security_lineage_aggregate_revision(db_setup):
+    await run_startup_migrations(_DATABASE_URL)
+
+    live_aggregate_revision = "20260722_000000_merge_security_lineage_and_conversation_heads"
+    async with SessionLocal() as session:
+        await session.execute(
+            text("UPDATE alembic_version SET version_num = :legacy"),
+            {"legacy": live_aggregate_revision},
+        )
+        await session.commit()
+
+    result = await run_startup_migrations(_DATABASE_URL)
+    assert result.current_revision == _HEAD_REVISION
+
+    async with SessionLocal() as session:
+        revision_rows = await session.execute(text("SELECT version_num FROM alembic_version"))
+        revisions = sorted(str(row[0]) for row in revision_rows.fetchall())
+        assert revisions == [_HEAD_REVISION]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not _HAS_REVISION_REMAP, reason="requires revision remap support")
 async def test_run_startup_migrations_handles_legacy_schema_table_and_legacy_alembic_id_together(db_setup):
     await run_startup_migrations(_DATABASE_URL)
 
