@@ -31517,6 +31517,190 @@ async def test_compact_responses_refresh_non_transient_client_error_does_not_pen
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "input_items",
+    [
+        [
+            {"type": "compaction", "encrypted_content": "portable-summary"},
+            {
+                "type": "reasoning",
+                "id": "rs_owner",
+                "encrypted_content": "owner-reasoning",
+            },
+            {
+                "type": "custom_tool_call",
+                "id": "ctc_owner",
+                "call_id": "call_1",
+                "name": "exec",
+                "input": "pwd",
+                "status": "completed",
+            },
+            {
+                "type": "custom_tool_call_output",
+                "id": "ctco_owner",
+                "call_id": "call_1",
+                "output": [
+                    {"type": "input_text", "text": "screenshot"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+                ],
+                "status": "completed",
+            },
+            {"role": "user", "content": "continue"},
+        ],
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "repair this"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+                ],
+            }
+        ],
+    ],
+)
+async def test_stream_account_neutral_replay_moves_off_unavailable_turn_state_owner(
+    monkeypatch,
+    input_items: list[JsonValue],
+):
+    settings = _make_proxy_settings()
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    owner_account = _make_account("acc_compaction_owner")
+    replacement_account = _make_account("acc_compaction_replacement")
+    selection_calls: list[dict[str, object]] = []
+    streamed_payloads: list[ResponsesRequest] = []
+
+    async def fake_select_account(**kwargs):
+        selection_calls.append(dict(kwargs))
+        if kwargs.get("required_account_id") == owner_account.id:
+            return AccountSelection(
+                account=None,
+                error_message="Hard affinity owner is unavailable",
+                error_code="hard_affinity_saturated",
+            )
+        assert kwargs.get("required_account_id") is None
+        assert kwargs.get("exclude_account_ids") == {owner_account.id}
+        assert kwargs.get("reallocate_sticky") is True
+        return AccountSelection(account=replacement_account, error_message=None)
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
+        del headers, access_token, base_url, raise_for_status, kwargs
+        streamed_payloads.append(payload)
+        assert account_id == replacement_account.chatgpt_account_id
+        yield (
+            'data: {"type":"response.completed","response":{"id":"resp_compaction_replay_ok",'
+            '"status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
+        )
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service._load_balancer, "select_account", AsyncMock(side_effect=fake_select_account))
+    monkeypatch.setattr(
+        service,
+        "_resolve_compact_turn_state_owner",
+        AsyncMock(return_value=owner_account.id),
+    )
+    monkeypatch.setattr(service, "_ensure_fresh", AsyncMock(return_value=replacement_account))
+    monkeypatch.setattr(service, "_settle_stream_api_key_usage", AsyncMock(return_value=True))
+    monkeypatch.setattr(service._load_balancer, "record_success", AsyncMock())
+    monkeypatch.setattr(proxy_service, "core_stream_responses", fake_stream)
+
+    payload = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.6-sol",
+            "instructions": "continue",
+            "input": input_items,
+            "stream": True,
+        }
+    )
+
+    chunks = [
+        chunk
+        async for chunk in service.stream_responses(
+            payload,
+            {"x-codex-turn-state": "http_turn_owner", "session-id": "sid-compaction"},
+        )
+    ]
+
+    assert json.loads(chunks[-1].split("data: ", 1)[1])["type"] == "response.completed"
+    assert len(selection_calls) == 2
+    assert len(streamed_payloads) == 1
+    assert streamed_payloads[0].previous_response_id is None
+    assert all(
+        not (isinstance(item, dict) and item.get("type") == "reasoning")
+        for item in cast(list[JsonValue], streamed_payloads[0].input)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "input_items",
+    [
+        [
+            {"type": "compaction", "encrypted_content": "portable-summary"},
+            {"type": "input_file", "file_id": "file_owner"},
+        ],
+        [
+            {"type": "compaction", "encrypted_content": "portable-summary"},
+            {"type": "custom_tool_call", "call_id": "pending", "name": "exec", "input": "pwd"},
+        ],
+    ],
+)
+async def test_stream_unsafe_compaction_replay_remains_owner_pinned(
+    monkeypatch,
+    input_items: list[JsonValue],
+):
+    settings = _make_proxy_settings()
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    owner_account = _make_account("acc_compaction_owner")
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        service._load_balancer,
+        "select_account",
+        AsyncMock(
+            return_value=AccountSelection(
+                account=None,
+                error_message="Hard affinity owner is unavailable",
+                error_code="hard_affinity_saturated",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "_resolve_compact_turn_state_owner",
+        AsyncMock(return_value=owner_account.id),
+    )
+
+    payload = ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.6-sol",
+            "instructions": "continue",
+            "input": input_items,
+            "stream": True,
+        }
+    )
+
+    chunks = [
+        chunk
+        async for chunk in service.stream_responses(
+            payload,
+            {"x-codex-turn-state": "http_turn_owner", "session-id": "sid-compaction"},
+        )
+    ]
+
+    event = json.loads(chunks[-1].split("data: ", 1)[1])
+    assert event["type"] == "response.failed"
+    assert event["response"]["error"]["code"] == "previous_response_owner_unavailable"
+    service._load_balancer.select_account.assert_awaited_once()
+    assert await service.drain_persistence_tasks(timeout_seconds=1)
+    assert request_logs.calls[0]["status"] == "error"
+    assert request_logs.calls[0]["account_id"] == owner_account.id
+
+
+@pytest.mark.asyncio
 async def test_compact_responses_records_transient_error_for_generic_upstream_failure(monkeypatch):
     settings = _make_proxy_settings()
     request_logs = _RequestLogsRecorder()

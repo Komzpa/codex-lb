@@ -72,6 +72,11 @@ from app.modules.proxy.helpers import (
     is_upstream_model_capacity_error,
 )
 from app.modules.proxy.load_balancer import AccountLease, AccountSelection
+from app.modules.proxy.replay_safety import (
+    project_responses_input_for_account_neutral_fresh_replay,
+    project_responses_payload_for_portable_compaction_fresh_replay,
+    responses_payload_is_account_neutral_fresh_replay,
+)
 
 _REQUEST_TRANSPORT_HTTP = "http"
 _REQUEST_TRANSPORT_WEBSOCKET = "websocket"
@@ -164,6 +169,34 @@ def _verified_cross_transport_fresh_replay(
     ):
         return None
     return payload.model_copy(update={"previous_response_id": None})
+
+
+def _portable_compaction_fresh_replay(payload: ResponsesRequest) -> ResponsesRequest | None:
+    projected = project_responses_payload_for_portable_compaction_fresh_replay(
+        cast(Mapping[str, Any], payload.to_payload())
+    )
+    if projected is None:
+        return None
+    return ResponsesRequest.model_validate(projected)
+
+
+def _account_neutral_unanchored_fresh_replay(payload: ResponsesRequest) -> ResponsesRequest | None:
+    if payload.previous_response_id is not None or payload.conversation:
+        return None
+    input_value = payload.input
+    if not isinstance(input_value, list):
+        return None
+    projection = project_responses_input_for_account_neutral_fresh_replay(
+        cast(list[Any], input_value),
+        stored_count=len(input_value),
+    )
+    if projection is None:
+        return None
+    projected = cast(dict[str, Any], payload.to_payload())
+    projected["input"] = projection.input_items
+    if not responses_payload_is_account_neutral_fresh_replay(projected):
+        return None
+    return ResponsesRequest.model_validate(projected)
 
 
 def _effective_http_downstream_transport_policy(
@@ -408,6 +441,10 @@ class _StreamingRetryMixin:
             headers=headers,
             api_key=api_key,
         )
+        if verified_fresh_replay_payload is None:
+            verified_fresh_replay_payload = _portable_compaction_fresh_replay(payload)
+        if verified_fresh_replay_payload is None:
+            verified_fresh_replay_payload = _account_neutral_unanchored_fresh_replay(payload)
 
         async def _release_tracked_stream_lease(lease: AccountLease | None) -> None:
             if lease is None:

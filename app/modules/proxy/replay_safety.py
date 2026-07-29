@@ -39,6 +39,8 @@ _ACCOUNT_NEUTRAL_INPUT_ITEM_TYPES = frozenset(
         "additional_tools",
         "apply_patch_call",
         "apply_patch_call_output",
+        "compaction",
+        "compaction_summary",
         "custom_tool_call",
         "custom_tool_call_output",
         "function_call",
@@ -81,6 +83,8 @@ _ACCOUNT_NEUTRAL_INPUT_ITEM_FIELDS = {
     "apply_patch_call_output": frozenset(
         {"call_id", "caller", "id", _INTERNAL_CHAT_MESSAGE_METADATA_FIELD, "output", "status", "type"}
     ),
+    "compaction": frozenset({"encrypted_content", "id", "status", "type"}),
+    "compaction_summary": frozenset({"encrypted_content", "id", "status", "type"}),
     "custom_tool_call": frozenset(
         {"call_id", "caller", "id", "input", _INTERNAL_CHAT_MESSAGE_METADATA_FIELD, "name", "status", "type"}
     ),
@@ -177,6 +181,30 @@ def project_responses_input_for_account_neutral_fresh_replay(
     )
 
 
+def project_responses_payload_for_portable_compaction_fresh_replay(
+    payload: Mapping[str, JsonValue],
+) -> dict[str, JsonValue] | None:
+    """Project a full resend rooted in portable Codex compaction state."""
+
+    input_value = payload.get("input")
+    if not isinstance(input_value, list):
+        return None
+    input_items = cast(list[JsonValue], input_value)
+    if not any(_is_portable_compaction_item(item) for item in input_items):
+        return None
+    projection = project_responses_input_for_account_neutral_fresh_replay(
+        input_items,
+        stored_count=len(input_items),
+    )
+    if projection is None:
+        return None
+    projected_payload = dict(payload)
+    projected_payload["input"] = projection.input_items
+    if not responses_payload_is_account_neutral_fresh_replay(projected_payload):
+        return None
+    return projected_payload
+
+
 def _project_account_neutral_replay_item(item: JsonValue) -> JsonValue | None:
     if not isinstance(item, dict):
         return item
@@ -194,6 +222,16 @@ def _project_account_neutral_replay_item(item: JsonValue) -> JsonValue | None:
     projected_item = dict(item)
     projected_item.pop("id")
     return projected_item
+
+
+def _is_portable_compaction_item(item: JsonValue) -> bool:
+    return (
+        isinstance(item, dict)
+        and item.get("type") in {"compaction", "compaction_summary"}
+        and _is_nonblank_string(item.get("encrypted_content"))
+        and set(item) <= {"encrypted_content", "id", "status", "type"}
+        and item.get("status") in (None, "completed")
+    )
 
 
 def responses_input_items_are_self_contained_fresh_replay(input_items: list[JsonValue]) -> bool:
@@ -732,6 +770,10 @@ def _input_items_have_valid_account_neutral_shape(input_items: list[JsonValue]) 
             if item.get("role") != "developer" or not _tools_are_account_neutral(item.get("tools")):
                 return False
             continue
+        if item_type in {"compaction", "compaction_summary"}:
+            if not _is_portable_compaction_item(item):
+                return False
+            continue
         if item_type not in (None, "message"):
             continue
         if not _message_has_valid_account_neutral_content(item):
@@ -819,7 +861,10 @@ def _contains_account_scoped_input_state(value: JsonValue) -> bool:
                 and item_type not in _TOOL_CALL_TYPE_BY_OUTPUT_TYPE
             ):
                 return True
-            if _mapping_has_account_scoped_reference(current):
+            if _mapping_has_account_scoped_reference(
+                current,
+                allow_portable_compaction=item_type in {"compaction", "compaction_summary"},
+            ):
                 return True
             pending.extend(
                 nested for key, nested in current.items() if not (item_type == "additional_tools" and key == "tools")
@@ -829,11 +874,17 @@ def _contains_account_scoped_input_state(value: JsonValue) -> bool:
     return False
 
 
-def _mapping_has_account_scoped_reference(value: Mapping[str, JsonValue]) -> bool:
+def _mapping_has_account_scoped_reference(
+    value: Mapping[str, JsonValue],
+    *,
+    allow_portable_compaction: bool = False,
+) -> bool:
     for key in ("file_id", "container_id", "vector_store_id"):
         if value.get(key) not in (None, ""):
             return True
-    if value.get("encrypted_content") not in (None, ""):
+    if value.get("encrypted_content") not in (None, "") and not (
+        allow_portable_compaction and _is_portable_compaction_item(value)
+    ):
         return True
     for url_field, allow_data in (("image_url", True), ("file_url", False)):
         url_value = value.get(url_field)
