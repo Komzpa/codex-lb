@@ -309,12 +309,8 @@ def test_subscription_serialization_strips_explicit_prompt_cache_controls_only()
     assert source_content[0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
 
     subscription_payload = request.to_payload()
-    subscription_input = cast(
-        list[dict[str, JsonValue]], subscription_payload["input"]
-    )
-    subscription_content = cast(
-        list[dict[str, JsonValue]], subscription_input[0]["content"]
-    )
+    subscription_input = cast(list[dict[str, JsonValue]], subscription_payload["input"])
+    subscription_content = cast(list[dict[str, JsonValue]], subscription_input[0]["content"])
     assert "prompt_cache_options" not in subscription_payload
     assert "prompt_cache_breakpoint" not in subscription_content[0]
     assert subscription_content[0]["text"] == "stable prefix"
