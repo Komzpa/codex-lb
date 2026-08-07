@@ -1786,10 +1786,12 @@ def test_dedupe_replayed_side_effect_input_items_suppresses_ordinary_parallel_re
 
 def test_dedupe_replayed_side_effect_input_items_scopes_mixed_parallel_by_arguments():
     arguments = json.dumps(
-        {"tool_uses": [
-            {"recipient_name": "functions.exec_command", "parameters": {"cmd": "touch marker"}},
-            {"recipient_name": "functions.exec", "parameters": {"cmd": "same"}},
-        ]},
+        {
+            "tool_uses": [
+                {"recipient_name": "functions.exec_command", "parameters": {"cmd": "touch marker"}},
+                {"recipient_name": "functions.exec", "parameters": {"cmd": "same"}},
+            ]
+        },
         separators=(",", ":"),
     )
     input_items: list[JsonValue] = [

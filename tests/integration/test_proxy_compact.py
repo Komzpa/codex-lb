@@ -26,7 +26,8 @@ from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 
 pytestmark = pytest.mark.integration
- 
+
+
 @pytest.mark.asyncio
 async def test_proxy_compact_forwarded_bridge_settlement_failure_surfaces_and_releases_reservation(
     async_client,
@@ -164,7 +165,6 @@ async def test_proxy_compact_forwarded_bridge_settlement_failure_surfaces_and_re
         row = await session.get(ApiKeyUsageReservation, reservation.reservation_id)
         assert row is not None
         assert row.status == "released"
-
 
 
 def _encode_jwt(payload: dict) -> str:
