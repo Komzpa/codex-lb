@@ -556,10 +556,12 @@ def replayed_side_effect_tool_call_key(item: Mapping[str, JsonValue]) -> Replaye
     namespace_value = item.get("namespace")
     namespace = namespace_value if isinstance(namespace_value, str) else None
     call_id_value = item.get("call_id")
-    identity_scoped = namespace is not None or (
-        item_name == tool_call_safety.PARALLEL_TOOL_CALL_NAME
-        and parallel_argument_has_only_code_mode_side_effects(argument_value)
-    )
+    identity_scoped = namespace is not None
+    if item_name == tool_call_safety.PARALLEL_TOOL_CALL_NAME:
+        # A mixed parallel wrapper remains argument-scoped for ordinary
+        # side effects; only an all-code-mode wrapper gets outer-call
+        # identity because those nested calls are independently meaningful.
+        identity_scoped = parallel_argument_has_only_code_mode_side_effects(argument_value)
     call_id = call_id_value if identity_scoped and isinstance(call_id_value, str) and call_id_value else None
     return (item_type, namespace, item_name, call_id, argument_key)
 
