@@ -1131,7 +1131,7 @@ async def _process_upstream_websocket_transport_end(
         client_send_lock=client_send_lock,
         response_create_gate=response_create_gate,
         downstream_activity=downstream_activity,
-        penalize_account=message_error_code is not None and message_error_code != "proxy_network_unavailable",
+        penalize_account=message_error_code != "proxy_network_unavailable",
         suppress_sequenced_downstream_errors=sequenced_downstream_replay_refused,
     )
     # A terminal receive can race the outer session cleanup, especially when
