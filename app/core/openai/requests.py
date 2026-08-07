@@ -862,6 +862,7 @@ def strip_replayed_tool_call_namespaces_from_payload(payload: MutableJsonObject)
     if changed:
         payload["input"] = normalized_items
 
+
 _POISONED_LOCAL_COMPACT_FALLBACK_TEXT = "Local compact fallback preserved the latest encrypted reasoning state."
 _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS = 100_000
 _COMPACT_UPSTREAM_HEAD_ESTIMATED_TOKENS = 12_000
