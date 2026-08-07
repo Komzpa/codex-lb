@@ -129,6 +129,8 @@ def mark_duplicate_tool_call_downstream_event(
         )
         return True
     if is_side_effect_tool_call:
+        code_mode_call = item_name in tool_call_safety.CODE_MODE_DOWNSTREAM_SIDE_EFFECT_TOOL_CALL_NAMES
+        identity_scoped_call = code_mode_call or item_namespace is not None
         same_response_argument_key = (
             dedupe_response_id,
             str(item_type),
@@ -137,7 +139,7 @@ def mark_duplicate_tool_call_downstream_event(
             None,
             argument_key,
         )
-        if item_name is not None and same_response_argument_key in seen_tool_call_keys:
+        if not identity_scoped_call and same_response_argument_key in seen_tool_call_keys:
             logger.warning(
                 "Suppressed duplicate downstream side-effect tool call response_id=%s item_type=%s name=%s",
                 response_id,
@@ -145,8 +147,6 @@ def mark_duplicate_tool_call_downstream_event(
                 item_name,
             )
             return True
-        code_mode_call = item_name in tool_call_safety.CODE_MODE_DOWNSTREAM_SIDE_EFFECT_TOOL_CALL_NAMES
-        identity_scoped_call = code_mode_call or item_namespace is not None
         cross_response_call_id = call_id if identity_scoped_call else None
         cross_response_argument_key = (
             "",
@@ -203,8 +203,6 @@ def _clear_downstream_side_effect_burst_keys(
         if key == current_key or key == current_argument_key:
             continue
         response_id, _, namespace, _, call_id, _ = key
-        if response_id == "":
-            continue
         if call_id is None:
             seen_tool_call_keys.pop(key, None)
 

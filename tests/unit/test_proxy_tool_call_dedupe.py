@@ -1269,7 +1269,7 @@ def test_mark_duplicate_tool_call_downstream_event_suppresses_side_effect_replay
                 response_id=tool_call_dedupe.response_id_from_payload(payload),
                 scope_side_effects_by_response_id=False,
             )
-            is True
+            is False
         )
 
 
@@ -1308,7 +1308,7 @@ def test_mark_duplicate_tool_call_downstream_event_suppresses_apply_patch_call_r
             seen_tool_call_keys=upstream_control.seen_tool_call_keys,
             response_id="resp_dupe",
         )
-        is False
+        is True
     )
 
 
