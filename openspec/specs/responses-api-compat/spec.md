@@ -2362,10 +2362,11 @@ After a request is classified as Responses Lite shaped, the service MUST preserv
 - **THEN** the output remains in the upstream input because its call belongs to the prior response
 - **AND** the service returns `responses_compact_input_too_large` when that required output cannot fit
 
-#### Scenario: Ordinary paired tail may be omitted
+#### Scenario: Ordinary non-patch paired tail may be omitted
 
-- **WHEN** a compact request carries `previous_response_id` or a non-empty `conversation` and its latest ordinary tool output has a matching call in supplied input
+- **WHEN** a compact request carries `previous_response_id` or a non-empty `conversation` and its latest ordinary, non-`apply_patch` tool output has a matching call in supplied input
 - **THEN** compact trimming MAY omit the complete pair when it cannot fit
+- **AND** this allowance does not apply to an `apply_patch` call or output
 
 #### Scenario: Reused call ID from another tool variant does not satisfy continuity
 

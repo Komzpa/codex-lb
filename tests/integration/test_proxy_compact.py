@@ -29,13 +29,14 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_proxy_compact_forwarded_bridge_settlement_failure_surfaces_and_releases_reservation(
+async def test_proxy_compact_forwarded_bridge_settlement_failure_surfaces_code_and_releases_reservation(
     async_client,
     monkeypatch,
 ):
     """A forwarded owner must not report compact success when its sole API-key
-    usage settlement fails. The failure is surfaced without another upstream or
-    account-health attempt, and a fresh repository releases the held quota."""
+    usage settlement fails. The `usage_settlement_failed` error is surfaced
+    without another upstream or account-health attempt, and a fresh repository
+    releases the held quota."""
     from app.core.config.settings import get_settings
     from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
     from app.db.models import ApiKeyUsageReservation
