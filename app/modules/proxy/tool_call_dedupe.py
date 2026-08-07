@@ -304,6 +304,26 @@ def parallel_argument_has_code_mode_side_effect(argument_value: str) -> bool:
     )
 
 
+def parallel_argument_has_only_code_mode_side_effects(argument_value: str) -> bool:
+    argument = json_object_from_argument(argument_value)
+    if argument is None:
+        return False
+    tool_uses = argument.get("tool_uses")
+    if not isinstance(tool_uses, list):
+        return False
+    side_effect_names = tool_call_safety.PARALLEL_TOOL_USE_SIDE_EFFECT_RECIPIENT_NAMES
+    side_effects = [
+        tool_use.get("recipient_name")
+        for tool_use in tool_uses
+        if isinstance(tool_use, dict) and tool_use.get("recipient_name") in side_effect_names
+    ]
+    return bool(side_effects) and all(
+        isinstance(name, str)
+        and name.removeprefix("functions.") in tool_call_safety.CODE_MODE_DOWNSTREAM_SIDE_EFFECT_TOOL_CALL_NAMES
+        for name in side_effects
+    )
+
+
 def canonical_json_key(value: JsonValue) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -538,7 +558,7 @@ def replayed_side_effect_tool_call_key(item: Mapping[str, JsonValue]) -> Replaye
     call_id_value = item.get("call_id")
     identity_scoped = namespace is not None or (
         item_name == tool_call_safety.PARALLEL_TOOL_CALL_NAME
-        and parallel_argument_has_code_mode_side_effect(argument_value)
+        and parallel_argument_has_only_code_mode_side_effects(argument_value)
     )
     call_id = call_id_value if identity_scoped and isinstance(call_id_value, str) and call_id_value else None
     return (item_type, namespace, item_name, call_id, argument_key)

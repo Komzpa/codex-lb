@@ -1784,6 +1784,25 @@ def test_dedupe_replayed_side_effect_input_items_suppresses_ordinary_parallel_re
     assert not any(isinstance(item, dict) and item.get("call_id") == "call_parallel_replayed" for item in deduped_items)
 
 
+def test_dedupe_replayed_side_effect_input_items_scopes_mixed_parallel_by_arguments():
+    arguments = json.dumps(
+        {"tool_uses": [
+            {"recipient_name": "functions.exec_command", "parameters": {"cmd": "touch marker"}},
+            {"recipient_name": "functions.exec", "parameters": {"cmd": "same"}},
+        ]},
+        separators=(",", ":"),
+    )
+    input_items: list[JsonValue] = [
+        {"type": "function_call", "name": "multi_tool_use.parallel", "arguments": arguments, "call_id": "first"},
+        {"type": "function_call_output", "call_id": "first", "output": "first"},
+        {"type": "function_call", "name": "multi_tool_use.parallel", "arguments": arguments, "call_id": "second"},
+        {"type": "function_call_output", "call_id": "second", "output": "second"},
+    ]
+    deduped_items, removed_count = tool_call_dedupe.dedupe_replayed_side_effect_input_items(input_items)
+    assert removed_count == 1
+    assert deduped_items[:2] == input_items[:2]
+
+
 @pytest.mark.parametrize(
     ("tool_name", "arguments"),
     [
