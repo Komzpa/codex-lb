@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import inspect
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timedelta, timezone
@@ -16,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.clients.proxy import ProxyResponseError
 from app.core.utils.time import utcnow
 from app.db.models import (
-    Account,
     Base,
     HttpBridgeSessionAlias,
     HttpBridgeSessionRecord,
