@@ -19304,6 +19304,8 @@ async def test_process_http_bridge_upstream_text_scopes_tool_dedupe_to_request_s
     assert isinstance(item_b, dict)
     assert item_a["call_id"] == "call_a"
     assert item_b["call_id"] == "call_b"
+    assert request_state_a.downstream_visible is True
+    assert request_state_b.downstream_visible is True
 
 
 @pytest.mark.asyncio

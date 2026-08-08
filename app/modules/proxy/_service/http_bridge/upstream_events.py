@@ -1431,6 +1431,8 @@ class _HTTPBridgeUpstreamEventsMixin:
                     deferred_reasoning_prelude_event = True
                 elif event_type in _MODEL_OUTPUT_EVENT_TYPES:
                     matched_request_state.upstream_model_output_seen = True
+                    if not suppress_downstream_event:
+                        matched_request_state.downstream_visible = True
 
             terminal_request_state = None
             if event_type in {"response.completed", "response.failed", "response.incomplete", "error"}:
