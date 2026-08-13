@@ -49,6 +49,7 @@ from app.modules.proxy._service.http_bridge import request_submit as http_bridge
 from app.modules.proxy._service.http_bridge import retry_circuit as http_bridge_retry_circuit_module
 from app.modules.proxy._service.http_bridge import streaming as http_bridge_streaming_module
 from app.modules.proxy._service.http_bridge import upstream_events as http_bridge_upstream_events_module
+from app.modules.proxy._service.websocket import helpers as websocket_helpers_module
 from app.modules.proxy.account_cache import clear_account_routing_unavailable, mark_account_routing_unavailable
 from app.modules.proxy.continuity import (
     is_http_bridge_account_neutral_replay,
@@ -117,6 +118,42 @@ def test_http_bridge_dead_owner_epoch_uses_standard_previous_response_not_found_
     assert proxy_error.payload["error"]["type"] == "invalid_request_error"
     assert proxy_error.payload["error"]["code"] == "previous_response_not_found"
     assert proxy_error.payload["error"]["param"] == "previous_response_id"
+
+
+def test_previous_response_error_matching_prefers_single_visible_followup_over_draining_stale() -> None:
+    visible = proxy_service._WebSocketRequestState(
+        request_id="req-visible",
+        model="gpt-5.5",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        event_queue=asyncio.Queue(),
+        transport="http",
+        previous_response_id="resp-visible",
+    )
+    draining_stale = proxy_service._WebSocketRequestState(
+        request_id="req-draining",
+        model="gpt-5.5",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        event_queue=asyncio.Queue(),
+        transport="http",
+        previous_response_id="resp-stale",
+        draining_until_terminal=True,
+    )
+    pending = deque([visible, draining_stale])
+
+    matches = websocket_helpers_module._matching_websocket_request_states_for_previous_response_error(
+        pending,
+        previous_response_id_hint="resp-missing-upstream",
+        error_message="Previous response with id 'resp-missing-upstream' not found.",
+        allow_unanchored_previous_response_error=True,
+    )
+
+    assert matches == [visible]
 
 
 def test_http_bridge_rejected_dead_owner_recovery_code_is_not_emitted_from_app() -> None:

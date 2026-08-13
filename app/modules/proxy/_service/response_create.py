@@ -33,6 +33,7 @@ from app.modules.proxy._service.support import (
     _PENDING_TOOL_CALL_ITEM_TYPES,
     _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPE_BY_CALL_TYPE,
     _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPES,
+    _protected_agent_control_tool_call_ids,
     _WebSocketRequestState,
 )
 
@@ -49,7 +50,6 @@ _RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE = (
     "[codex-lb omitted historical tool output ({bytes} bytes) to fit upstream websocket budget]"
 )
 _RESPONSE_CREATE_IMAGE_OMISSION_NOTICE = "[codex-lb omitted historical inline image to fit upstream websocket budget]"
-_AGENT_CONTROL_TOOL_NAMESPACES = frozenset({"collaboration", "multi_agent_v1"})
 _NO_PROTECTED_TOOL_OUTPUT_CALL_IDS: frozenset[str] = frozenset()
 _OVERSIZED_RESPONSE_CREATE_DUMP_DIR: Path | None = None
 _RESPONSE_CREATE_DUMP_SUFFIX = ".response-create.json.gz"
@@ -214,6 +214,7 @@ def _response_create_text_with_size_guard(
     request_state: _WebSocketRequestState,
     transport: str,
 ) -> str | None:
+    protected_tool_output_call_ids = _protected_agent_control_tool_call_ids(payload.input)
     upstream_payload = dict(payload.to_payload())
     upstream_payload.pop("stream", None)
     upstream_payload.pop("background", None)
@@ -240,6 +241,7 @@ def _response_create_text_with_size_guard(
         slimmed_payload, slim_summary = slim_payload_for_upstream(
             upstream_payload,
             max_bytes=max_bytes,
+            protected_tool_output_call_ids=protected_tool_output_call_ids,
         )
         if slim_summary is not None:
             upstream_payload = slimmed_payload
@@ -304,6 +306,7 @@ def _slim_response_create_payload_for_upstream(
     payload: dict[str, JsonValue],
     *,
     max_bytes: int,
+    protected_tool_output_call_ids: set[str] | None = None,
 ) -> tuple[dict[str, JsonValue], dict[str, int] | None]:
     input_value = payload.get("input")
     if not isinstance(input_value, list) or not input_value:
@@ -317,7 +320,8 @@ def _slim_response_create_payload_for_upstream(
     tool_outputs_slimmed = 0
     images_slimmed = 0
 
-    protected_tool_output_call_ids = _agent_control_tool_call_ids(historical)
+    if protected_tool_output_call_ids is None:
+        protected_tool_output_call_ids = _protected_agent_control_tool_call_ids(historical)
     slimmed_historical: list[JsonValue] = []
     for item in historical:
         (
@@ -453,23 +457,6 @@ def _response_create_recent_suffix_start(input_items: list[JsonValue]) -> int:
     if last_user_index is not None:
         return last_user_index
     return 0
-
-
-def _agent_control_tool_call_ids(input_items: list[JsonValue]) -> set[str]:
-    call_ids: set[str] = set()
-    for item in input_items:
-        if not is_json_mapping(item):
-            continue
-        item_type = item.get("type")
-        if not isinstance(item_type, str) or item_type not in _PENDING_TOOL_CALL_ITEM_TYPES:
-            continue
-        namespace = item.get("namespace")
-        if not isinstance(namespace, str) or namespace not in _AGENT_CONTROL_TOOL_NAMESPACES:
-            continue
-        call_id = item.get("call_id")
-        if isinstance(call_id, str) and call_id:
-            call_ids.add(call_id)
-    return call_ids
 
 
 def _slim_historical_response_input_item(

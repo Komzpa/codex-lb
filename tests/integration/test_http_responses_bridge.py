@@ -7146,7 +7146,7 @@ async def test_v1_responses_http_bridge_reconnects_after_clean_upstream_close(as
         # Scope the soft-affinity key to this test's account so a parallel or
         # ordered integration run cannot inherit another instance's durable
         # owner and turn the reconnect assertion into a 409 race.
-        "prompt_cache_key": f"http-bridge-reconnect-thread-{account_id}",
+        "prompt_cache_key": f"http-bridge-reconnect-thread-{account_id}-{time.monotonic_ns()}",
     }
     first = await asyncio.wait_for(async_client.post("/v1/responses", json=payload), timeout=_TEST_SYNC_TIMEOUT_SECONDS)
     second = await asyncio.wait_for(
@@ -7234,6 +7234,7 @@ async def test_v1_responses_http_bridge_opens_fresh_session_for_previous_respons
     monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh_with_budget)
     monkeypatch.setattr(proxy_module, "connect_responses_websocket", fake_connect_responses_websocket)
 
+    prompt_cache_key = f"http-bridge-previous-response-reconnect-{account_id}-{time.monotonic_ns()}"
     first = await asyncio.wait_for(
         async_client.post(
             "/v1/responses",
@@ -7241,7 +7242,7 @@ async def test_v1_responses_http_bridge_opens_fresh_session_for_previous_respons
                 "model": "gpt-5.1",
                 "instructions": "Return exactly OK.",
                 "input": "hello",
-                "prompt_cache_key": "http-bridge-previous-response-reconnect",
+                "prompt_cache_key": prompt_cache_key,
             },
         ),
         timeout=_TEST_SYNC_TIMEOUT_SECONDS,
@@ -7256,7 +7257,7 @@ async def test_v1_responses_http_bridge_opens_fresh_session_for_previous_respons
                 "model": "gpt-5.1",
                 "instructions": "Return exactly OK.",
                 "input": "hello-again",
-                "prompt_cache_key": "http-bridge-previous-response-reconnect",
+                "prompt_cache_key": prompt_cache_key,
                 "previous_response_id": first_body["id"],
             },
         ),
@@ -7312,6 +7313,7 @@ async def test_v1_responses_http_bridge_classifies_responses_lite_developer_inte
         "acc_http_bridge_preserve_fresh_reattach",
         "http-bridge-preserve-fresh-reattach@example.com",
     )
+    scenario_key = f"{account_id}-{time.monotonic_ns()}"
     account = await _get_account(account_id)
     first_upstream = _ClosingInterruptedCustomToolUpstreamWebSocket("resp_preserve_source")
     replay_upstream = _FakeBridgeUpstreamWebSocket("resp_preserve_replay")
@@ -7342,7 +7344,7 @@ async def test_v1_responses_http_bridge_classifies_responses_lite_developer_inte
     monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh_with_budget)
     monkeypatch.setattr(proxy_module, "connect_responses_websocket", fake_connect_responses_websocket)
 
-    session_headers = {"x-codex-session-id": "fresh-reattach-full-resend"}
+    session_headers = {"x-codex-session-id": f"fresh-reattach-full-resend-{scenario_key}"}
     historical_input = [
         *([leading_input_item] if leading_input_item is not None else []),
         {
@@ -9162,6 +9164,137 @@ async def test_v1_responses_http_bridge_slims_historical_inline_artifacts_and_su
     assert sent_payload["input"][-1]["content"][0]["text"] == "ping"
     assert "data:image/" not in json.dumps(sent_payload["input"], ensure_ascii=True)
     assert "historical tool output" in json.dumps(sent_payload["input"], ensure_ascii=True)
+
+
+@pytest.mark.asyncio
+async def test_v1_responses_http_bridge_preserves_agent_wait_output_through_wire_normalization(
+    async_client,
+    monkeypatch,
+):
+    _install_bridge_settings(monkeypatch, enabled=True)
+    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_WARN_BYTES", 64)
+    monkeypatch.setattr(proxy_module, "_UPSTREAM_RESPONSE_CREATE_MAX_BYTES", 2048)
+    account_id = await _import_account(async_client, "acc_http_bridge_wait_keep", "http-bridge-wait@example.com")
+    account = await _get_account(account_id)
+    fake_upstream = _FakeBridgeUpstreamWebSocket()
+
+    async def fake_select_account_with_budget(
+        self,
+        deadline,
+        *,
+        request_id,
+        kind,
+        request_stage="first_turn",
+        sticky_key,
+        sticky_kind,
+        reallocate_sticky,
+        sticky_max_age_seconds,
+        prefer_earlier_reset_accounts,
+        routing_strategy,
+        model,
+        exclude_account_ids=None,
+        additional_limit_name=None,
+        api_key=None,
+        preferred_account_id=None,
+    ):
+        del preferred_account_id
+        del (
+            self,
+            deadline,
+            request_id,
+            kind,
+            request_stage,
+            sticky_key,
+            sticky_kind,
+            reallocate_sticky,
+            sticky_max_age_seconds,
+            prefer_earlier_reset_accounts,
+            routing_strategy,
+            model,
+            exclude_account_ids,
+            additional_limit_name,
+            api_key,
+        )
+        return AccountSelection(account=account, error_message=None, error_code=None)
+
+    async def fake_ensure_fresh_with_budget(self, target, *, force=False, timeout_seconds):
+        del self, force, timeout_seconds
+        return target
+
+    async def fake_connect_responses_websocket(
+        headers,
+        access_token,
+        account_id_header,
+        *,
+        base_url=None,
+        session=None,
+    ):
+        del headers, access_token, account_id_header, base_url, session
+        return fake_upstream
+
+    monkeypatch.setattr(proxy_module.ProxyService, "_select_account_with_budget", fake_select_account_with_budget)
+    monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh_with_budget)
+    monkeypatch.setattr(proxy_module, "connect_responses_websocket", fake_connect_responses_websocket)
+
+    wait_output = json.dumps(
+        {
+            "status": {
+                "agent_alpha": {
+                    "completed": "Evidence checked: " + ("x" * 600),
+                }
+            },
+            "timed_out": False,
+        }
+    )
+    shell_output = "y" * (33 * 1024)
+
+    response = await async_client.post(
+        "/v1/responses",
+        json={
+            "model": "gpt-5.1",
+            "instructions": "Return exactly OK.",
+            "input": [
+                {
+                    "type": "function_call",
+                    "namespace": "multi_agent_v1",
+                    "name": "wait_agent",
+                    "call_id": "call_wait_agent",
+                    "arguments": json.dumps({"targets": ["agent_alpha"], "timeout_ms": 120000}),
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_wait_agent",
+                    "output": wait_output,
+                },
+                {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "call_id": "call_shell",
+                    "arguments": json.dumps({"cmd": "cat very-large-log"}),
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_shell",
+                    "output": shell_output,
+                },
+                {"role": "user", "content": [{"type": "input_text", "text": "continue after notification"}]},
+            ],
+            "prompt_cache_key": "slim-http-bridge-agent-wait",
+        },
+    )
+
+    assert response.status_code == 200
+    sent_payload = json.loads(fake_upstream.sent_text[0])
+    assert sent_payload["input"][0] == {
+        "type": "function_call",
+        "name": "wait_agent",
+        "call_id": "call_wait_agent",
+        "arguments": json.dumps({"targets": ["agent_alpha"], "timeout_ms": 120000}),
+    }
+    assert sent_payload["input"][1]["output"] == wait_output
+    assert sent_payload["input"][3]["output"] == proxy_module._RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
+        bytes=len(shell_output)
+    )
 
 
 @pytest.mark.asyncio
@@ -14557,7 +14690,7 @@ async def test_v1_responses_http_bridge_quarantines_reattach_that_streams_withou
     monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh_with_budget)
     monkeypatch.setattr(proxy_module, "connect_responses_websocket", fake_connect_responses_websocket)
 
-    session_headers = {"x-codex-session-id": "quarantine-silent-reattach"}
+    session_headers = {"x-codex-session-id": f"quarantine-silent-reattach-{account_id}-{time.monotonic_ns()}"}
     historical_input = [
         {"role": "user", "content": [{"type": "input_text", "text": "leading question"}]},
         {
@@ -14729,9 +14862,10 @@ async def test_v1_responses_http_bridge_quarantined_unsafe_full_resend_dispatche
     # The turn-state header makes the bridge session a true Codex continuity
     # session (``session.codex_session``), which is what arms the session-level
     # anchor injection this regression guards against.
+    scenario_key = f"{account_id}-{time.monotonic_ns()}"
     session_headers = {
-        "x-codex-session-id": "quarantine-unsafe-suffix-reattach",
-        "x-codex-turn-state": "quarantine-unsafe-suffix-turn",
+        "x-codex-session-id": f"quarantine-unsafe-suffix-reattach-{scenario_key}",
+        "x-codex-turn-state": f"quarantine-unsafe-suffix-turn-{scenario_key}",
     }
     historical_input = [
         {"role": "user", "content": [{"type": "input_text", "text": "leading question"}]},

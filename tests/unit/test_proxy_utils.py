@@ -22186,6 +22186,66 @@ def test_slim_response_create_preserves_historical_agent_wait_output():
     )
 
 
+def test_slim_response_create_preserves_legacy_historical_agent_wait_output_without_namespace():
+    wait_output = json.dumps(
+        {
+            "status": {
+                "019ffc16-cd47-78f2-8c6f-3c17c498599c": {
+                    "completed": "Evidence checked: " + ("actual-agent-wait-next " * 2048),
+                }
+            },
+            "timed_out": False,
+        }
+    )
+    shell_output = "waiting-shadow\n" * 4096
+    payload: dict[str, JsonValue] = {
+        "type": "response.create",
+        "model": "gpt-5.6-sol",
+        "input": [
+            {
+                "type": "function_call",
+                "name": "wait_agent",
+                "call_id": "call_wait_agent",
+                "arguments": json.dumps(
+                    {
+                        "targets": ["019ffc16-cd47-78f2-8c6f-3c17c498599c"],
+                        "timeout_ms": 120000,
+                    }
+                ),
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_wait_agent",
+                "output": wait_output,
+            },
+            {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "call_shell_echo",
+                "arguments": json.dumps({"cmd": "echo waiting-shadow"}),
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_shell_echo",
+                "output": shell_output,
+            },
+            {"role": "user", "content": [{"type": "input_text", "text": "continue after live wait"}]},
+        ],
+    }
+
+    slimmed_payload, summary = proxy_service._slim_response_create_payload_for_upstream(payload, max_bytes=256)
+    slimmed_input = cast(list[JsonValue], slimmed_payload["input"])
+
+    assert summary is not None
+    assert summary["historical_tool_outputs_slimmed"] == 1
+    wait_item = cast(dict[str, JsonValue], slimmed_input[1])
+    shell_item = cast(dict[str, JsonValue], slimmed_input[3])
+    assert wait_item["output"] == wait_output
+    assert shell_item["output"] == proxy_service._RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE.format(
+        bytes=len(shell_output)
+    )
+
+
 def test_slim_response_create_ignores_malformed_unhashable_item_type():
     malformed_type: list[JsonValue] = []
     payload: dict[str, JsonValue] = {

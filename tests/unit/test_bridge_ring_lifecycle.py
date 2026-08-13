@@ -192,6 +192,39 @@ async def test_stale_epoch_release_is_fenced_and_reports_current_owner(
 
 
 @pytest.mark.asyncio
+async def test_ownerless_live_row_is_claimable_without_takeover_flag(
+    async_session_factory: Callable[[], AsyncSession],
+) -> None:
+    session = async_session_factory()
+    try:
+        repository = DurableBridgeRepository(session)
+        claimed = await _claim(
+            repository,
+            instance_id="instance-a",
+            session_key_value="sid-ownerless-active-reclaim",
+        )
+        await session.execute(
+            update(HttpBridgeSessionRecord)
+            .where(HttpBridgeSessionRecord.id == claimed.id)
+            .values(owner_instance_id=None)
+        )
+        await session.commit()
+
+        reclaimed = await _claim(
+            repository,
+            instance_id="instance-b",
+            session_key_value="sid-ownerless-active-reclaim",
+            allow_takeover=False,
+        )
+
+        assert reclaimed.id == claimed.id
+        assert reclaimed.owner_instance_id == "instance-b"
+        assert reclaimed.owner_epoch == claimed.owner_epoch + 1
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
 async def test_owned_renewal_extends_lease_and_release_marks_draining(
     async_session_factory: Callable[[], AsyncSession],
 ) -> None:

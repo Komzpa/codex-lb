@@ -106,6 +106,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _prepare_websocket_request_state_for_auth_replay,
     _prepare_websocket_request_state_for_visible_output_replay,
     _prewarm_response_timeout_seconds,
+    _protected_agent_control_tool_call_ids,
     _release_websocket_response_create_gate,
     _response_create_client_metadata,
     _security_work_advisory_event,
@@ -605,6 +606,7 @@ class _HTTPBridgeRequestSubmitMixin:
                 deduped_replayed_input_count = len(replayed_input_items)
                 deduped_replayed_input_fingerprint = _fingerprint_input_items(replayed_input_items)
                 payload = payload.model_copy(update={"input": deduped_input_items})
+        protected_tool_output_call_ids = _protected_agent_control_tool_call_ids(payload.input)
         upstream_payload = dict(payload.to_payload())
         upstream_payload.pop("stream", None)
         upstream_payload.pop("background", None)
@@ -684,6 +686,7 @@ class _HTTPBridgeRequestSubmitMixin:
             slimmed_payload, slim_summary = _slim_response_create_payload_for_upstream(
                 upstream_payload,
                 max_bytes=max_bytes,
+                protected_tool_output_call_ids=protected_tool_output_call_ids,
             )
             if slim_summary is not None:
                 upstream_payload = slimmed_payload

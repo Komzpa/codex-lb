@@ -1609,6 +1609,21 @@ def _matching_websocket_request_states_for_previous_response_error(
         ]
         if matching_requests:
             return matching_requests
+    visible_unresolved_followups = [
+        request_state
+        for request_state in followup_requests
+        if request_state.response_id is None and _http_bridge_request_counts_against_queue(request_state)
+    ]
+    if len(visible_unresolved_followups) == 1:
+        return visible_unresolved_followups
+    if len(visible_unresolved_followups) > 1:
+        unique_previous_response_ids = {
+            request_state.previous_response_id
+            for request_state in visible_unresolved_followups
+            if request_state.previous_response_id
+        }
+        if len(unique_previous_response_ids) == 1:
+            return visible_unresolved_followups
     unresolved_followups = [request_state for request_state in followup_requests if request_state.response_id is None]
     if len(unresolved_followups) == 1:
         return unresolved_followups

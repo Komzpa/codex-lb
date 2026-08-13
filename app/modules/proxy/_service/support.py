@@ -66,6 +66,8 @@ _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPE_BY_CALL_TYPE = {
 _PENDING_TOOL_CALL_ITEM_TYPES = frozenset(_PENDING_TOOL_CALL_OUTPUT_ITEM_TYPE_BY_CALL_TYPE)
 _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPES = frozenset(_PENDING_TOOL_CALL_OUTPUT_ITEM_TYPE_BY_CALL_TYPE.values())
 _TTFT_OUTPUT_ITEM_TYPES = _PENDING_TOOL_CALL_ITEM_TYPES - {"function_call"}
+_AGENT_CONTROL_TOOL_NAMESPACES = frozenset({"collaboration", "multi_agent_v1"})
+_AGENT_CONTROL_TOOL_NAMES = frozenset({"close_agent", "resume_agent", "send_input", "spawn_agent", "wait_agent"})
 _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS = 20
 _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS = 0.05
 _HARD_HTTP_BRIDGE_AFFINITY_KINDS = frozenset(
@@ -78,6 +80,34 @@ _HARD_HTTP_BRIDGE_AFFINITY_KINDS = frozenset(
     }
 )
 _ACCOUNT_SELECTION_RECOVERY_MIN_SLEEP_SECONDS = 1.0
+
+
+def _protected_agent_control_tool_call_ids(input_value: JsonValue) -> set[str]:
+    if not isinstance(input_value, list):
+        return set()
+    call_ids: set[str] = set()
+    for item in input_value:
+        if not isinstance(item, Mapping):
+            continue
+        item_type = item.get("type")
+        if not isinstance(item_type, str) or item_type not in _PENDING_TOOL_CALL_ITEM_TYPES:
+            continue
+        namespace = item.get("namespace")
+        name = item.get("name")
+        is_agent_control = (
+            isinstance(namespace, str)
+            and namespace in _AGENT_CONTROL_TOOL_NAMESPACES
+            or isinstance(name, str)
+            and name in _AGENT_CONTROL_TOOL_NAMES
+        )
+        if not is_agent_control:
+            continue
+        call_id = item.get("call_id")
+        if isinstance(call_id, str) and call_id:
+            call_ids.add(call_id)
+    return call_ids
+
+
 _HARD_AFFINITY_RECOVERY_SLEEP_SECONDS = 2.0
 _ACCOUNT_SELECTION_RECOVERY_DEFAULT_SLEEP_SECONDS = 30.0
 _ACCOUNT_SELECTION_RECOVERY_MAX_SLEEP_SECONDS = 300.0

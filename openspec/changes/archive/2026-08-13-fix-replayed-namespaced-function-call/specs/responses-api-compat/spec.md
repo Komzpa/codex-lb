@@ -1,15 +1,15 @@
 ## ADDED Requirements
 
-### Requirement: Replayed tool-call namespace metadata is local-only on upstream input
+### Requirement: Replayed tool-call namespace metadata survives live Responses egress
 
-For standard and compact Responses requests, the proxy MUST omit `namespace` from every replayed `input` item whose `type` is `function_call`, `custom_tool_call`, or `apply_patch_call` before forwarding the request upstream. The proxy MUST preserve all other fields on that item, MUST retain the original namespace metadata for local call-identity and replay-deduplication processing, and MUST NOT alter client-provided top-level tool entries as part of this normalization.
+For standard live Responses requests, including WebSocket `response.create` and configured Responses model-source egress, the proxy MUST preserve `namespace` on replayed `input` items whose `type` is `function_call`, `custom_tool_call`, or `apply_patch_call`. Tool namespaces are part of the live tool-routing identity. Compact Responses egress MAY omit those namespaces only as part of the compact-specific upstream compatibility serializer. The proxy MUST preserve all other fields on each tool-call item and MUST NOT alter client-provided top-level tool entries as part of this normalization.
 
 Historical response.create slimming MUST preserve outputs for namespaced agent-control calls, including `collaboration` and `multi_agent_v1` calls, even when those outputs are large. Such outputs carry the completed spawn/wait state needed by the next model turn and MUST NOT be replaced with a generic historical tool-output omission notice. Unrelated historical tool outputs MAY still be slimmed under the normal payload-budget policy.
 
-#### Scenario: Standard Responses replay omits tool-call namespaces upstream
+#### Scenario: Standard Responses replay preserves tool-call namespaces upstream
 
 - **WHEN** a standard Responses request replays `function_call` and `custom_tool_call` input items with `namespace`
-- **THEN** the upstream payload omits only those items' `namespace`
+- **THEN** the upstream payload preserves those items' `namespace`
 - **AND** preserves their remaining call fields
 - **AND** the local request input retains the namespace metadata
 
@@ -19,16 +19,16 @@ Historical response.create slimming MUST preserve outputs for namespaced agent-c
 - **THEN** its upstream payload omits the input item's `namespace`
 - **AND** preserves the remaining tool-call fields
 
-#### Scenario: WebSocket response.create omits tool-call namespaces upstream
+#### Scenario: WebSocket response.create preserves tool-call namespaces upstream
 
 - **WHEN** a Responses WebSocket request replays namespaced `function_call` and `custom_tool_call` input items
-- **THEN** the upstream `response.create` frame omits only those items' `namespace`
+- **THEN** the upstream `response.create` frame preserves those items' `namespace`
 - **AND** preserves their remaining call fields
 
-#### Scenario: Configured Responses model source omits tool-call namespaces upstream
+#### Scenario: Configured Responses model source preserves tool-call namespaces upstream
 
 - **WHEN** `/v1/responses` routes a replayed namespaced tool call to a configured OpenAI-compatible Responses model source
-- **THEN** the source payload omits only the call item's `namespace`
+- **THEN** the source payload preserves the call item's `namespace`
 - **AND** preserves source-compatible request fields that the Codex upstream path does not support
 
 #### Scenario: Account-neutral replay classification retains namespace identity

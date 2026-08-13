@@ -24,6 +24,9 @@ from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonValue
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME
 from app.db.models import Account, DashboardSettings
+from app.modules.proxy._service.support import (
+    _protected_agent_control_tool_call_ids as _support_protected_agent_control_tool_call_ids,
+)
 from app.modules.proxy._service.support import _RequestLogFailureMetadata
 
 T = TypeVar("T")
@@ -334,6 +337,10 @@ def _inline_top_level_input_image_urls(*args: Any, **kwargs: Any) -> Any:
 
 def _slim_response_create_payload_for_upstream(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_slim_response_create_payload_for_upstream")(*args, **kwargs)
+
+
+def _protected_agent_control_tool_call_ids(*args: Any, **kwargs: Any) -> Any:
+    return _support_protected_agent_control_tool_call_ids(*args, **kwargs)
 
 
 def _enforce_response_create_size_limit(*args: Any, **kwargs: Any) -> Any:
