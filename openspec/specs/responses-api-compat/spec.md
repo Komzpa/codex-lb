@@ -3263,6 +3263,8 @@ For a namespaced side-effect function or custom-tool call, the service MUST use 
 
 Flat legacy side-effect calls MAY continue to use argument-based replay identity so reconnects that change only a call ID do not repeat shell, patch, or terminal side effects.
 
+Historical response.create slimming MUST preserve outputs for namespaced agent-control calls, including `collaboration` and `multi_agent_v1` calls, even when those outputs are large. Such outputs carry the completed spawn/wait state needed by the next model turn and MUST NOT be replaced with a generic historical tool-output omission notice. Unrelated historical tool outputs MAY still be slimmed under the normal payload-budget policy.
+
 #### Scenario: Distinct namespaced spawns use identical arguments
 
 - **WHEN** two `collaboration.spawn_agent` calls have identical arguments and different call IDs

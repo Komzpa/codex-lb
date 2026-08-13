@@ -4,6 +4,8 @@
 
 For standard and compact Responses requests, the proxy MUST omit `namespace` from every replayed `input` item whose `type` is `function_call`, `custom_tool_call`, or `apply_patch_call` before forwarding the request upstream. The proxy MUST preserve all other fields on that item, MUST retain the original namespace metadata for local call-identity and replay-deduplication processing, and MUST NOT alter client-provided top-level tool entries as part of this normalization.
 
+Historical response.create slimming MUST preserve outputs for namespaced agent-control calls, including `collaboration` and `multi_agent_v1` calls, even when those outputs are large. Such outputs carry the completed spawn/wait state needed by the next model turn and MUST NOT be replaced with a generic historical tool-output omission notice. Unrelated historical tool outputs MAY still be slimmed under the normal payload-budget policy.
+
 #### Scenario: Standard Responses replay omits tool-call namespaces upstream
 
 - **WHEN** a standard Responses request replays `function_call` and `custom_tool_call` input items with `namespace`
@@ -45,3 +47,10 @@ For standard and compact Responses requests, the proxy MUST omit `namespace` fro
 
 - **WHEN** the client includes a top-level tool entry whose `type` is `namespace`
 - **THEN** standard Responses serialization forwards that tool entry byte-identically
+
+#### Scenario: Historical agent wait output remains visible after slimming
+
+- **WHEN** a response.create payload contains a historical `multi_agent_v1.wait_agent` call with a large matching output
+- **AND** also contains an unrelated large historical shell output
+- **THEN** the agent wait output remains byte-preserved in the upstream input
+- **AND** the unrelated shell output MAY be replaced with the historical tool-output omission notice

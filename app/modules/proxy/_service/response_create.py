@@ -49,6 +49,8 @@ _RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE = (
     "[codex-lb omitted historical tool output ({bytes} bytes) to fit upstream websocket budget]"
 )
 _RESPONSE_CREATE_IMAGE_OMISSION_NOTICE = "[codex-lb omitted historical inline image to fit upstream websocket budget]"
+_AGENT_CONTROL_TOOL_NAMESPACES = frozenset({"collaboration", "multi_agent_v1"})
+_NO_PROTECTED_TOOL_OUTPUT_CALL_IDS: frozenset[str] = frozenset()
 _OVERSIZED_RESPONSE_CREATE_DUMP_DIR: Path | None = None
 _RESPONSE_CREATE_DUMP_SUFFIX = ".response-create.json.gz"
 _RESPONSE_CREATE_META_SUFFIX = ".meta.json"
@@ -315,13 +317,17 @@ def _slim_response_create_payload_for_upstream(
     tool_outputs_slimmed = 0
     images_slimmed = 0
 
+    protected_tool_output_call_ids = _agent_control_tool_call_ids(historical)
     slimmed_historical: list[JsonValue] = []
     for item in historical:
         (
             slimmed_item,
             item_tool_outputs_slimmed,
             item_images_slimmed,
-        ) = _slim_historical_response_input_item(item)
+        ) = _slim_historical_response_input_item(
+            item,
+            protected_tool_output_call_ids=protected_tool_output_call_ids,
+        )
         tool_outputs_slimmed += item_tool_outputs_slimmed
         images_slimmed += item_images_slimmed
         slimmed_historical.append(slimmed_item)
@@ -449,7 +455,28 @@ def _response_create_recent_suffix_start(input_items: list[JsonValue]) -> int:
     return 0
 
 
-def _slim_historical_response_input_item(item: JsonValue) -> tuple[JsonValue, int, int]:
+def _agent_control_tool_call_ids(input_items: list[JsonValue]) -> set[str]:
+    call_ids: set[str] = set()
+    for item in input_items:
+        if not is_json_mapping(item):
+            continue
+        item_type = item.get("type")
+        if not isinstance(item_type, str) or item_type not in _PENDING_TOOL_CALL_ITEM_TYPES:
+            continue
+        namespace = item.get("namespace")
+        if not isinstance(namespace, str) or namespace not in _AGENT_CONTROL_TOOL_NAMESPACES:
+            continue
+        call_id = item.get("call_id")
+        if isinstance(call_id, str) and call_id:
+            call_ids.add(call_id)
+    return call_ids
+
+
+def _slim_historical_response_input_item(
+    item: JsonValue,
+    *,
+    protected_tool_output_call_ids: set[str] | None = None,
+) -> tuple[JsonValue, int, int]:
     if not is_json_mapping(item):
         return item, 0, 0
 
@@ -459,6 +486,10 @@ def _slim_historical_response_input_item(item: JsonValue) -> tuple[JsonValue, in
 
     item_type = item_mapping.get("type")
     if isinstance(item_type, str) and item_type in _PENDING_TOOL_CALL_OUTPUT_ITEM_TYPES:
+        call_id = item_mapping.get("call_id")
+        protected_call_ids = protected_tool_output_call_ids or _NO_PROTECTED_TOOL_OUTPUT_CALL_IDS
+        if isinstance(call_id, str) and call_id in protected_call_ids:
+            return item_mapping, tool_outputs_slimmed, images_slimmed
         output = item_mapping.get("output")
         if isinstance(output, str):
             if _should_slim_historical_tool_output(output):
