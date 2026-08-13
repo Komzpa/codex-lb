@@ -869,6 +869,7 @@ def strip_replayed_tool_call_namespaces_from_payload(payload: MutableJsonObject)
 
 
 _POISONED_LOCAL_COMPACT_FALLBACK_TEXT = "Local compact fallback preserved the latest encrypted reasoning state."
+_COMPACT_STATE_TEXT_PREFIX = "[compact state] "
 _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS = 100_000
 _COMPACT_UPSTREAM_HEAD_ESTIMATED_TOKENS = 12_000
 _ESTIMATED_CHARS_PER_TOKEN = 4
@@ -909,12 +910,10 @@ def _strip_poisoned_local_compact_fallback_items(payload: MutableJsonObject) -> 
     skip_next_poison_compaction = False
     changed = False
     for item in input_items:
-        if skip_next_poison_compaction and is_json_mapping(item) and item.get("type") == "compaction":
-            encrypted_content = item.get("encrypted_content")
-            if isinstance(encrypted_content, str) and encrypted_content:
-                skip_next_poison_compaction = False
-                changed = True
-                continue
+        if skip_next_poison_compaction and _is_compaction_item(item):
+            skip_next_poison_compaction = False
+            changed = True
+            continue
         skip_next_poison_compaction = False
 
         if _is_poisoned_local_compact_fallback_message(item):
@@ -922,10 +921,62 @@ def _strip_poisoned_local_compact_fallback_items(payload: MutableJsonObject) -> 
             changed = True
             continue
 
+        replacement = _plaintext_compaction_replay_replacement(item)
+        if replacement is not None:
+            kept.append(replacement)
+            changed = True
+            continue
+
         kept.append(item)
 
     if changed:
         payload["input"] = kept
+
+
+def _is_compaction_item(item: JsonValue) -> bool:
+    if not is_json_mapping(item):
+        return False
+    return item.get("type") in {"compaction", "compaction_summary"}
+
+
+def _plaintext_compaction_replay_replacement(item: JsonValue) -> JsonValue | None:
+    if not _is_compaction_item(item):
+        return None
+    assert is_json_mapping(item)
+    encrypted_content = item.get("encrypted_content")
+    if isinstance(encrypted_content, str) and _looks_like_provider_encrypted_content(encrypted_content):
+        return None
+
+    text = _compaction_plaintext_summary(item)
+    if text is None:
+        return {"role": "assistant", "content": _COMPACT_STATE_TEXT_PREFIX + "[unverified compact state omitted]"}
+    return {"role": "assistant", "content": _COMPACT_STATE_TEXT_PREFIX + text}
+
+
+def _looks_like_provider_encrypted_content(value: str) -> bool:
+    stripped = value.strip()
+    return stripped.startswith("gAAAA") and len(stripped) >= 80
+
+
+def _compaction_plaintext_summary(item: Mapping[str, JsonValue]) -> str | None:
+    for key in ("text", "summary"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    content = item.get("content")
+    if is_json_list(content):
+        text_parts: list[str] = []
+        for part in content:
+            if not is_json_mapping(part):
+                continue
+            part_text = part.get("text")
+            if isinstance(part_text, str) and part_text.strip():
+                text_parts.append(part_text.strip())
+        if text_parts:
+            return "\n".join(text_parts)
+
+    return None
 
 
 def _is_poisoned_local_compact_fallback_message(item: JsonValue) -> bool:

@@ -351,6 +351,62 @@ async def test_proxy_compact_strips_tool_fields_before_upstream(async_client, mo
 
 
 @pytest.mark.asyncio
+async def test_proxy_compact_sanitizes_plaintext_replay_before_upstream(async_client, monkeypatch):
+    email = "compact-plaintext-replay@example.com"
+    raw_account_id = "acc_compact_plaintext_replay"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    seen_payloads: list[dict[str, object]] = []
+
+    async def fake_compact(payload, headers, access_token, account_id):
+        del headers, access_token, account_id
+        seen_payloads.append(cast(dict[str, object], payload.to_payload()))
+        return CompactResponsePayload.model_validate({"object": "response.compaction", "output": []})
+
+    monkeypatch.setattr(proxy_module, "core_compact_responses", fake_compact)
+
+    payload = {
+        "model": "gpt-5.5",
+        "instructions": "compact",
+        "input": [
+            {"role": "user", "content": "before"},
+            {
+                "id": "cmp_local_summary",
+                "type": "compaction",
+                "status": "completed",
+                "summary": "I have the concrete code and evidence blockers in hand.",
+            },
+            {
+                "id": "cmp_opaque_state",
+                "type": "compaction",
+                "status": "completed",
+                "encrypted_content": "opaque-provider-envelope-without-recognized-prefix",
+            },
+            {"role": "user", "content": "continue"},
+        ],
+    }
+    response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
+
+    assert response.status_code == 200
+    assert len(seen_payloads) == 1
+    assert seen_payloads[0]["input"] == [
+        {"role": "user", "content": "before"},
+        {
+            "role": "assistant",
+            "content": "[compact state] I have the concrete code and evidence blockers in hand.",
+        },
+        {
+            "role": "assistant",
+            "content": "[compact state] [unverified compact state omitted]",
+        },
+        {"role": "user", "content": "continue"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_proxy_compact_preserves_historical_code_mode_side_effect_pair_before_ordinary_tail(
     async_client, monkeypatch
 ):

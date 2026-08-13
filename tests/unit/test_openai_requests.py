@@ -1227,6 +1227,104 @@ def test_compact_strips_poisoned_local_compact_fallback_items():
     assert request.to_payload()["input"] == [{"role": "user", "content": "continue"}]
 
 
+def test_compact_rewrites_plaintext_compaction_replay_without_encrypted_content():
+    payload = {
+        "model": "gpt-5.5",
+        "instructions": "compact",
+        "input": [
+            {"role": "user", "content": "before"},
+            {
+                "id": "cmp_019ffa20-5e74-7b93-a86e-3c74bcf5521a",
+                "type": "compaction",
+                "status": "completed",
+                "encrypted_content": "I have the concrete code and evidence blockers in hand.",
+            },
+            {"role": "user", "content": "continue"},
+        ],
+    }
+
+    request = ResponsesCompactRequest.model_validate(payload)
+
+    assert request.to_payload()["input"] == [
+        {"role": "user", "content": "before"},
+        {
+            "role": "assistant",
+            "content": "[compact state] [unverified compact state omitted]",
+        },
+        {"role": "user", "content": "continue"},
+    ]
+
+
+def test_compact_rewrites_plaintext_compaction_replay_summary():
+    payload = {
+        "model": "gpt-5.5",
+        "instructions": "compact",
+        "input": [
+            {"role": "user", "content": "before"},
+            {
+                "id": "cmp_local_summary",
+                "type": "compaction",
+                "status": "completed",
+                "summary": "I have the concrete code and evidence blockers in hand.",
+            },
+            {"role": "user", "content": "continue"},
+        ],
+    }
+
+    request = ResponsesCompactRequest.model_validate(payload)
+
+    assert request.to_payload()["input"] == [
+        {"role": "user", "content": "before"},
+        {
+            "role": "assistant",
+            "content": "[compact state] I have the concrete code and evidence blockers in hand.",
+        },
+        {"role": "user", "content": "continue"},
+    ]
+
+
+def test_compact_preserves_provider_encrypted_compaction_replay():
+    encrypted_content = "gAAAA" + "A" * 80
+    payload = {
+        "model": "gpt-5.5",
+        "instructions": "compact",
+        "input": [
+            {
+                "id": "cmp_valid_provider_state",
+                "type": "compaction",
+                "status": "completed",
+                "encrypted_content": encrypted_content,
+            },
+            {"role": "user", "content": "continue"},
+        ],
+    }
+
+    request = ResponsesCompactRequest.model_validate(payload)
+
+    assert request.to_payload()["input"] == payload["input"]
+
+
+def test_responses_preserves_provider_encrypted_compaction_replay():
+    encrypted_content = "gAAAA" + "A" * 80
+    payload = {
+        "model": "gpt-5.5",
+        "instructions": "continue",
+        "input": [
+            {
+                "id": "cmp_valid_provider_state",
+                "type": "compaction",
+                "status": "completed",
+                "encrypted_content": encrypted_content,
+            },
+            {"role": "user", "content": "continue"},
+        ],
+    }
+
+    request = ResponsesRequest.model_validate(payload)
+
+    assert request.to_payload()["input"] == payload["input"]
+
+
 def test_compact_does_not_trim_many_small_input_items_for_upstream():
     input_items = [{"role": "user", "content": f"item {idx}"} for idx in range(356)]
     payload = {
