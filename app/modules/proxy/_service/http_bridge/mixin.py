@@ -1988,7 +1988,6 @@ class _HTTPBridgeMixin(
             kind=session.key.affinity_kind,
             key=session.key.affinity_key,
         )
-        require_same_account = require_same_account or account_neutral_recovery
         old_upstream = session.upstream
         old_reader = session.upstream_reader if restart_reader else None
         session.handoff_in_progress = True
@@ -2030,11 +2029,10 @@ class _HTTPBridgeMixin(
             forced_refresh_account_id = request_state.force_refresh_account_id
             excluded_account_ids: set[str] = set(request_state.excluded_account_ids)
             requested_preferred_account_id = (
-                request_state.preferred_account_id if require_preferred_account or account_neutral_recovery else None
+                request_state.preferred_account_id if require_preferred_account else None
             )
             required_preferred_account_id = resolve_required_account_id(
                 ("requested reconnect owner", requested_preferred_account_id),
-                ("account-neutral recovery", session.account.id if account_neutral_recovery else None),
             )
             close_skips_account = session.last_upstream_close_code in _UPSTREAM_CLOSE_CODES_SKIP_SAME_ACCOUNT_RETRY
             hard_close_account_bound = session.key.strength == "hard" and (close_skips_account or require_same_account)
@@ -2170,7 +2168,7 @@ class _HTTPBridgeMixin(
                 except BaseException:
                     complete_failed_handoff()
                     raise
-                if account_neutral_recovery and selection.error_code == CONTINUITY_OWNER_UNAVAILABLE:
+                if required_preferred_account_id is not None and selection.error_code == CONTINUITY_OWNER_UNAVAILABLE:
                     complete_failed_handoff()
                     raise _http_bridge_previous_response_owner_unavailable_error()
                 if (

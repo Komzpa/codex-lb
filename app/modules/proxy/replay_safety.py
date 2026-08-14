@@ -15,11 +15,10 @@ _TOOL_CALL_TYPE_BY_OUTPUT_TYPE = {
     "function_call_output": "function_call",
     "custom_tool_call_output": "custom_tool_call",
     "apply_patch_call_output": "apply_patch_call",
+    "tool_search_output": "tool_search_call",
 }
 _TOOL_CALL_TYPES = frozenset(_TOOL_CALL_TYPE_BY_OUTPUT_TYPE.values())
-_ACCOUNT_NEUTRAL_REPLAY_OMITTED_ITEM_TYPES = frozenset(
-    {"reasoning", "tool_search_call", "tool_search_output", "web_search_call"}
-)
+_ACCOUNT_NEUTRAL_REPLAY_OMITTED_ITEM_TYPES = frozenset({"reasoning", "web_search_call"})
 _INTERNAL_CHAT_MESSAGE_METADATA_FIELD = "internal_chat_message_metadata_passthrough"
 _ACCOUNT_NEUTRAL_INTERNAL_CHAT_MESSAGE_METADATA_FIELDS = frozenset({"turn_id"})
 _ACCOUNT_NEUTRAL_TOOL_TYPES = frozenset({"custom", "function", "web_search", "web_search_preview"})
@@ -39,6 +38,7 @@ _ACCOUNT_NEUTRAL_INPUT_ITEM_TYPES = frozenset(
         "additional_tools",
         "apply_patch_call",
         "apply_patch_call_output",
+        "compaction",
         "custom_tool_call",
         "custom_tool_call_output",
         "function_call",
@@ -47,6 +47,8 @@ _ACCOUNT_NEUTRAL_INPUT_ITEM_TYPES = frozenset(
         "input_image",
         "input_text",
         "message",
+        "tool_search_call",
+        "tool_search_output",
     }
 )
 _ACCOUNT_NEUTRAL_MESSAGE_CONTENT_TYPES = frozenset(
@@ -65,6 +67,7 @@ _ACCOUNT_NEUTRAL_CONTENT_FIELDS = {
 }
 _ACCOUNT_NEUTRAL_INPUT_ITEM_FIELDS = {
     "additional_tools": frozenset({"role", "tools", "type"}),
+    "compaction": frozenset({"encrypted_content", "id", "status", "type"}),
     "apply_patch_call": frozenset(
         {
             "call_id",
@@ -92,6 +95,22 @@ _ACCOUNT_NEUTRAL_INPUT_ITEM_FIELDS = {
     ),
     "function_call_output": frozenset(
         {"call_id", "caller", "id", _INTERNAL_CHAT_MESSAGE_METADATA_FIELD, "output", "status", "type"}
+    ),
+    "tool_search_call": frozenset(
+        {"arguments", "call_id", "caller", "execution", "id", _INTERNAL_CHAT_MESSAGE_METADATA_FIELD, "status", "type"}
+    ),
+    "tool_search_output": frozenset(
+        {
+            "call_id",
+            "caller",
+            "execution",
+            "id",
+            _INTERNAL_CHAT_MESSAGE_METADATA_FIELD,
+            "output",
+            "status",
+            "tools",
+            "type",
+        }
     ),
 }
 _ACCOUNT_NEUTRAL_ITEM_STATUSES = frozenset({"completed", "failed"})
@@ -269,6 +288,10 @@ def responses_input_items_are_self_contained_fresh_replay(input_items: list[Json
         item_type = item_type_value if isinstance(item_type_value, str) else None
         if not _input_item_has_only_known_fields(item, item_type):
             return False
+        if item_type == "compaction":
+            if not _compaction_item_is_self_contained(item):
+                return False
+            continue
         call_id_value = item.get("call_id")
         call_id = call_id_value if isinstance(call_id_value, str) and call_id_value else None
         if item_type in _TOOL_CALL_TYPES:
@@ -324,7 +347,8 @@ def responses_input_suffix_retains_prior_output(
     if prefix_state is None:
         return False
     pending_suffix_calls, seen_suffix_call_ids = prefix_state
-    retained_output_seen = False
+    compact_context_prefix = _input_prefix_ends_with_self_contained_compaction(input_items[:stored_count])
+    retained_output_seen = compact_context_prefix
     retained_output_is_final_answer = False
     fresh_followup_seen = False
     fresh_followup_count = 0
@@ -364,6 +388,12 @@ def responses_input_suffix_retains_prior_output(
             if pending_suffix_calls[0] != (call_type, call_id):
                 return False
             pending_suffix_calls.popleft()
+            if compact_context_prefix and not pending_suffix_calls and call_type == "tool_search_call":
+                retained_output_seen = True
+                retained_output_is_final_answer = False
+                fresh_followup_seen = False
+                fresh_followup_count = 0
+                fresh_followup_is_user_message = False
             continue
         if item_type in (None, "message") and item.get("role") == "assistant":
             if pending_suffix_calls or not _is_retained_response_message(item):
@@ -394,6 +424,17 @@ def responses_input_suffix_retains_prior_output(
             continue
         return False
     return retained_output_seen and fresh_followup_seen and not pending_suffix_calls
+
+
+def _input_prefix_ends_with_self_contained_compaction(input_items: list[JsonValue]) -> bool:
+    if not input_items:
+        return False
+    last_item = input_items[-1]
+    return (
+        isinstance(last_item, dict)
+        and last_item.get("type") == "compaction"
+        and _compaction_item_is_self_contained(last_item)
+    )
 
 
 def responses_input_suffix_matches_pending_tool_calls(
@@ -628,6 +669,9 @@ def _tool_call_is_self_contained(item_type: str, item: Mapping[str, JsonValue]) 
         return _is_nonblank_string(item.get("name")) and isinstance(item.get("arguments"), str)
     if item_type == "custom_tool_call":
         return _is_nonblank_string(item.get("name")) and isinstance(item.get("input"), str)
+    if item_type == "tool_search_call":
+        arguments = item.get("arguments")
+        return isinstance(arguments, dict) and item.get("execution") in (None, "client")
     operation = item.get("operation")
     patch = item.get("patch")
     input_value = item.get("input")
@@ -638,6 +682,10 @@ def _tool_call_is_self_contained(item_type: str, item: Mapping[str, JsonValue]) 
     if "patch" in item:
         return _is_nonblank_string(patch)
     return _is_nonblank_string(input_value)
+
+
+def _compaction_item_is_self_contained(item: Mapping[str, JsonValue]) -> bool:
+    return item.get("status") in (None, "completed") and _is_nonblank_string(item.get("encrypted_content"))
 
 
 def _caller_is_self_contained(item: Mapping[str, JsonValue]) -> bool:
@@ -1017,6 +1065,8 @@ def _contains_account_scoped_input_state(value: JsonValue) -> bool:
                 return True
             if item_type == "additional_tools" and not _tools_are_account_neutral(current.get("tools")):
                 return True
+            if item_type == "compaction" and _compaction_item_is_self_contained(current):
+                continue
             if (
                 isinstance(item_type, str)
                 and (item_type.endswith("_call") or item_type.endswith("_call_output"))

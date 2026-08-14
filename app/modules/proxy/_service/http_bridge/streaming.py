@@ -2789,16 +2789,16 @@ class _HTTPBridgeStreamingMixin:
                     previous_request_state.proxy_injected_anchor_had_full_resend_payload
                 )
                 request_state.fresh_upstream_request_text = fresh_upstream_request_text
-                # The trim branch only fires when the untrimmed payload
-                # is a true full resend whose prefix exactly matches the
-                # already-stored context, so the unanchored request text
-                # is a safe fresh-turn replay target regardless of
-                # whether the anchor came from the durable or
-                # session-level injection path. Injection-only re-prepares
-                # keep the replay-safety decision made when the anchor was
-                # injected.
+                # The trim branch proves the upstream submission can omit the
+                # stored prefix, but it does not by itself prove that dropping
+                # the injected anchor is safe. Keep the original anchor site's
+                # decision unless this was a durable full-resend proof with a
+                # verified safe fresh suffix. Session-level anchors may still be
+                # compacted follow-ups whose prior context only exists behind
+                # previous_response_id.
                 request_state.fresh_upstream_request_is_retry_safe = (
-                    (durable_full_resend_anchor_count is None or durable_full_resend_has_safe_fresh_context)
+                    previous_request_state.fresh_upstream_request_is_retry_safe
+                    or (durable_full_resend_anchor_count is not None and durable_full_resend_has_safe_fresh_context)
                     if store_context_trim_applied
                     else previous_request_state.fresh_upstream_request_is_retry_safe
                 )
