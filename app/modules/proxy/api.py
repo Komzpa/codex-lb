@@ -6439,6 +6439,11 @@ async def _stream_response_error_events(
                 await _release_reservation(reservation)
             except Exception:
                 logger.warning("Failed to release stream reservation after upstream proxy error", exc_info=True)
+        response_id = None
+        if isinstance(exc.payload, Mapping):
+            response_id = _response_id_from_event_payload(exc.payload)
+        if response_id is None:
+            response_id = f"resp_{uuid4().hex}"
         envelope = _parse_error_envelope(exc.payload)
         _, envelope = _mask_previous_response_not_found_error(
             envelope,
@@ -6461,6 +6466,7 @@ async def _stream_response_error_events(
                 error.code if error and error.code else "upstream_error",
                 error.message if error and error.message else "Upstream error",
                 error.type if error and error.type else "server_error",
+                response_id=response_id,
                 error_param=error.param if error else None,
             )
         )

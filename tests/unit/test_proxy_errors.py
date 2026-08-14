@@ -267,6 +267,12 @@ async def test_indefinite_recovery_exhaustion_emits_terminal_response_failed(mon
     assert "response.failed" in events[-1]
     assert "stream_incomplete" in events[-1]
     assert "still closed attempt 2" in events[-1]
+    payload = proxy_api._parse_sse_payload(events[-1])
+    assert payload is not None
+    response = payload.get("response")
+    assert isinstance(response, dict)
+    assert isinstance(response.get("id"), str)
+    assert response["id"]
 
 
 @pytest.mark.asyncio
