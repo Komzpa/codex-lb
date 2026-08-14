@@ -13018,9 +13018,7 @@ async def test_reconnect_account_neutral_replay_does_not_re_require_excluded_own
                 "preferred_account_id": kwargs.get("preferred_account_id"),
                 "exclude_account_ids": set(kwargs.get("exclude_account_ids") or ()),
                 "preferred_account_is_continuity_owner": kwargs.get("preferred_account_is_continuity_owner"),
-                "fallback_on_preferred_account_unavailable": kwargs.get(
-                    "fallback_on_preferred_account_unavailable"
-                ),
+                "fallback_on_preferred_account_unavailable": kwargs.get("fallback_on_preferred_account_unavailable"),
             }
         )
         return AccountSelection(account=replacement_account, error_message=None, error_code=None)
@@ -13103,9 +13101,7 @@ async def test_reconnect_required_owner_still_fails_when_owner_unavailable(app_i
             {
                 "preferred_account_id": kwargs.get("preferred_account_id"),
                 "preferred_account_is_continuity_owner": kwargs.get("preferred_account_is_continuity_owner"),
-                "fallback_on_preferred_account_unavailable": kwargs.get(
-                    "fallback_on_preferred_account_unavailable"
-                ),
+                "fallback_on_preferred_account_unavailable": kwargs.get("fallback_on_preferred_account_unavailable"),
             }
         )
         return AccountSelection(

@@ -8005,7 +8005,7 @@ async def test_reconnect_http_bridge_session_passes_dashboard_reset_window_to_se
 
 
 @pytest.mark.asyncio
-async def test_reconnect_account_neutral_recovery_requires_typed_owner_without_callsite_flag(
+async def test_reconnect_account_neutral_recovery_can_fallback_without_callsite_owner_pin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
@@ -8044,11 +8044,11 @@ async def test_reconnect_account_neutral_recovery_requires_typed_owner_without_c
     with pytest.raises(ProxyResponseError) as exc_info:
         await service._reconnect_http_bridge_session(session, request_state=request_state)
 
-    assert exc_info.value.status_code == 502
-    assert exc_info.value.payload["error"]["code"] == "previous_response_owner_unavailable"
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.payload["error"]["code"] == "continuity_owner_unavailable"
     assert selection_kwargs[0]["preferred_account_id"] == session.account.id
     assert selection_kwargs[0]["preferred_account_is_continuity_owner"] is True
-    assert selection_kwargs[0]["fallback_on_preferred_account_unavailable"] is False
+    assert selection_kwargs[0]["fallback_on_preferred_account_unavailable"] is True
 
 
 @pytest.mark.asyncio

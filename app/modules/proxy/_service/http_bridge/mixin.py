@@ -2028,9 +2028,7 @@ class _HTTPBridgeMixin(
             session.api_key = request_state.api_key
             forced_refresh_account_id = request_state.force_refresh_account_id
             excluded_account_ids: set[str] = set(request_state.excluded_account_ids)
-            requested_preferred_account_id = (
-                request_state.preferred_account_id if require_preferred_account else None
-            )
+            requested_preferred_account_id = request_state.preferred_account_id if require_preferred_account else None
             required_preferred_account_id = resolve_required_account_id(
                 ("requested reconnect owner", requested_preferred_account_id),
             )
