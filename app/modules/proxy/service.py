@@ -222,6 +222,9 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_payload_without_previous_response_id as _http_bridge_payload_without_previous_response_id,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
+    _http_bridge_pending_response_events_seen as _http_bridge_pending_response_events_seen,
+)
+from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_precreated_retry_failure_error as _http_bridge_precreated_retry_failure_error,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
@@ -1316,20 +1319,7 @@ class ProxyService(
                     pending_states = list(bridge_session.pending_requests)
                     pending_count = len(pending_states)
                     queued_count = bridge_session.queued_request_count
-                pending_response_events_seen = max(
-                    (
-                        max(
-                            state.response_event_count,
-                            int(
-                                state.response_id is not None
-                                or state.latency_response_created_ms is not None
-                                or state.downstream_visible
-                            ),
-                        )
-                        for state in pending_states
-                    ),
-                    default=0,
-                )
+                pending_response_events_seen = _http_bridge_pending_response_events_seen(pending_states)
                 pending_request_ids = [state.request_log_id or state.request_id for state in pending_states]
                 pending_request_ages_seconds = [max(0.0, now - state.started_at) for state in pending_states]
                 threshold_seconds = float(
@@ -2615,19 +2605,11 @@ def _service_tier_from_event_payload(payload: dict[str, JsonValue] | None) -> st
 
 
 def _effective_service_tier(requested_service_tier: str | None, actual_service_tier: str | None) -> str | None:
-    if isinstance(actual_service_tier, str):
-        return actual_service_tier
-    if isinstance(requested_service_tier, str):
-        return requested_service_tier
-    return None
+    return actual_service_tier if isinstance(actual_service_tier, str) else requested_service_tier
 
 
 def _normalize_service_tier_value(value: JsonValue) -> str | None:
     if not isinstance(value, str):
         return None
     stripped = value.strip()
-    if not stripped:
-        return None
-    if stripped.lower() == "fast":
-        return "priority"
-    return stripped
+    return "priority" if stripped.lower() == "fast" else stripped or None

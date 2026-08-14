@@ -2345,7 +2345,9 @@ async def test_response_create_gate_timeout_retires_old_pending_without_upstream
         retire_session: proxy_service._HTTPBridgeSession,
         *,
         detail: str,
+        response_events_seen: int | None = None,
     ) -> None:
+        del response_events_seen
         retire_calls.append(detail)
         retire_session.closed = True
 
@@ -2452,7 +2454,9 @@ async def test_response_create_gate_timeout_retires_closed_anchored_pending_with
         retire_session: proxy_service._HTTPBridgeSession,
         *,
         detail: str,
+        response_events_seen: int | None = None,
     ) -> None:
+        del response_events_seen
         retire_calls.append(detail)
         retire_session.closed = True
 
@@ -2541,7 +2545,9 @@ async def test_response_create_gate_timeout_retires_old_precreated_request_after
         retire_session: proxy_service._HTTPBridgeSession,
         *,
         detail: str,
+        response_events_seen: int | None = None,
     ) -> None:
+        del response_events_seen
         retire_calls.append(detail)
         retire_session.closed = True
 
@@ -2642,7 +2648,9 @@ async def test_response_create_gate_timeout_does_not_retire_active_response_prog
         retire_session: proxy_service._HTTPBridgeSession,
         *,
         detail: str,
+        response_events_seen: int | None = None,
     ) -> None:
+        del response_events_seen
         retire_calls.append(detail)
         retire_session.closed = True
 
@@ -21345,18 +21353,19 @@ async def test_stream_via_http_bridge_fails_closed_before_file_affinity_when_pre
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("unsafe_replay_input", "replace_retired_gate", "stored_model"),
+    ("unsafe_replay_input", "replace_retired_gate", "stored_model", "pending_manifest_replay"),
     [
-        (None, False, None),
-        (None, False, "gpt-5.3"),
-        (None, True, None),
-        ("conversation", False, None),
-        ("file", False, None),
-        ("missing_prior_output", False, None),
-        ("orphan_output", False, None),
-        ("response_owned_developer", False, None),
-        ("response_owned_stored_developer", False, None),
-        ("missing_owner", False, None),
+        pytest.param(None, False, None, False, id="retained-output"),
+        pytest.param(None, False, "gpt-5.3", False, id="retained-output-stored-model"),
+        pytest.param(None, True, None, False, id="retained-output-replace-retired-gate"),
+        pytest.param(None, False, None, True, id="pending-tool-manifest"),
+        pytest.param("conversation", False, None, False, id="conversation"),
+        pytest.param("file", False, None, False, id="file"),
+        pytest.param("missing_prior_output", False, None, False, id="missing-prior-output"),
+        pytest.param("orphan_output", False, None, False, id="orphan-output"),
+        pytest.param("response_owned_developer", False, None, False, id="response-owned-developer"),
+        pytest.param("response_owned_stored_developer", False, None, False, id="response-owned-stored-developer"),
+        pytest.param("missing_owner", False, None, False, id="missing-owner"),
     ],
 )
 async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_when_owner_is_unavailable(
@@ -21364,6 +21373,7 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
     unsafe_replay_input: str | None,
     replace_retired_gate: bool,
     stored_model: str | None,
+    pending_manifest_replay: bool,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     account_neutral_classifier = Mock(
@@ -21418,16 +21428,14 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
         )
     elif unsafe_replay_input == "orphan_output":
         historical_input.append({"type": "function_call_output", "call_id": "call_missing", "output": "orphan output"})
-    historical_input.append(
-        {
-            "type": "function_call",
-            "id": "fc_owner",
-            "call_id": "call_old",
-            "name": "lookup",
-            "arguments": "{}",
-            "internal_chat_message_metadata_passthrough": owner_metadata,
-        }
-    )
+    retained_boundary_call: proxy_service.JsonValue = {
+        "type": "function_call",
+        "id": "fc_owner",
+        "call_id": "call_old",
+        "name": "lookup",
+        "arguments": "{}",
+        "internal_chat_message_metadata_passthrough": owner_metadata,
+    }
     retained_boundary_output: proxy_service.JsonValue = {
         "type": "function_call_output",
         "call_id": "call_old",
@@ -21439,6 +21447,21 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
         "content": [{"type": "input_text", "text": "next question"}],
         "internal_chat_message_metadata_passthrough": {"turn_id": "turn-next"},
     }
+    pending_tool_loop: list[proxy_service.JsonValue] = [
+        {
+            "type": "function_call",
+            "call_id": "call_pending",
+            "name": "lookup",
+            "arguments": "{}",
+            "internal_chat_message_metadata_passthrough": {"turn_id": "turn-next"},
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_pending",
+            "output": "fresh result",
+            "internal_chat_message_metadata_passthrough": {"turn_id": "turn-next"},
+        },
+    ]
     retained_prior_output: proxy_service.JsonValue = {
         "type": "message",
         "id": "msg_owner",
@@ -21463,6 +21486,7 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
             "call_id": "call_search",
             "execution": "client",
             "status": "completed",
+            "output": "found docs",
             "tools": [],
             "internal_chat_message_metadata_passthrough": owner_metadata,
         },
@@ -21479,10 +21503,17 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
         "instructions": "hi",
         "input": [
             *historical_input,
+            retained_boundary_call,
             retained_boundary_output,
             *completed_search_bookkeeping,
-            *([] if unsafe_replay_input == "missing_prior_output" else [retained_prior_output]),
-            new_input,
+            *(
+                pending_tool_loop
+                if pending_manifest_replay
+                else [
+                    *([] if unsafe_replay_input == "missing_prior_output" else [retained_prior_output]),
+                    new_input,
+                ]
+            ),
             *(
                 [
                     {
@@ -21501,6 +21532,16 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
     if unsafe_replay_input == "conversation":
         payload_data["conversation"] = "conv_owner_scoped"
     payload = proxy_service.ResponsesRequest.model_validate(payload_data)
+    stored_context_items = (
+        [
+            *historical_input,
+            retained_boundary_call,
+            retained_boundary_output,
+            *completed_search_bookkeeping,
+        ]
+        if pending_manifest_replay
+        else historical_input
+    )
     durable_lookup = proxy_service.DurableBridgeLookup(
         session_id="durable-owner-unavailable",
         canonical_kind="session_header",
@@ -21513,9 +21554,10 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
         state=HttpBridgeSessionState.ACTIVE,
         latest_turn_state="sid-owner-unavailable",
         latest_response_id="resp_completed_anchor",
-        latest_input_item_count=len(historical_input),
-        latest_input_full_fingerprint=proxy_service._fingerprint_input_items(historical_input),
+        latest_input_item_count=len(stored_context_items),
+        latest_input_full_fingerprint=proxy_service._fingerprint_input_items(stored_context_items),
         model=stored_model,
+        latest_pending_tool_calls={"call_pending": "function_call"} if pending_manifest_replay else None,
     )
     owner_unavailable = ProxyResponseError(
         502,
@@ -21550,9 +21592,7 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
     replacement_session = _make_bridge_session(key=session.key, key_value=session.key.affinity_key)
     get_or_create = AsyncMock(
         side_effect=(
-            [owner_unavailable, session, replacement_session]
-            if replace_retired_gate
-            else [owner_unavailable, capacity_unavailable, session]
+            [owner_unavailable, session, replacement_session] if replace_retired_gate else [owner_unavailable, session]
         )
     )
     captured_request_states: list[proxy_service._WebSocketRequestState] = []
@@ -21663,13 +21703,13 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
     chunks = [chunk async for chunk in stream]
 
     assert chunks == ['data: {"type":"response.completed"}\n\n']
-    assert get_or_create.await_count == 3
+    assert get_or_create.await_count == (3 if replace_retired_gate else 2)
     first_call = get_or_create.await_args_list[0]
     second_call = get_or_create.await_args_list[1]
-    third_call = get_or_create.await_args_list[2]
+    third_call = get_or_create.await_args_list[2] if replace_retired_gate else None
     assert first_call.kwargs["previous_response_id"] is None
-    assert first_call.kwargs["preferred_account_id"] == "acc-owner"
-    assert first_call.kwargs["allow_forward_to_owner"] is True
+    assert first_call.kwargs["preferred_account_id"] == (None if stored_model else "acc-owner")
+    assert first_call.kwargs["allow_forward_to_owner"] is (False if stored_model else True)
     assert second_call.kwargs["previous_response_id"] is None
     assert second_call.kwargs["preferred_account_id"] is None
     assert second_call.kwargs["durable_lookup"] is None
@@ -21677,29 +21717,30 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
         kind=second_call.args[0].affinity_kind,
         key=second_call.args[0].affinity_key,
     )
-    assert second_call.args[0] == third_call.args[0]
+    if third_call is not None:
+        assert second_call.args[0] == third_call.args[0]
     assert second_call.args[0] != first_call.args[0]
     assert second_call.kwargs["affinity"] == proxy_service._AffinityPolicy()
     assert second_call.kwargs["session_header_fallback_key"] is None
-    assert second_call.kwargs["exclude_account_ids"] == {"acc-owner"}
+    assert second_call.kwargs["exclude_account_ids"] == (None if stored_model else {"acc-owner"})
     assert second_call.kwargs["allow_forward_to_owner"] is False
     assert all(key.lower() != "x-codex-turn-state" for key in second_call.kwargs["headers"])
-    assert third_call.kwargs["previous_response_id"] is None
-    assert third_call.kwargs["preferred_account_id"] is None
-    assert third_call.kwargs["durable_lookup"] is None
+    if third_call is not None:
+        assert third_call.kwargs["previous_response_id"] is None
+        assert third_call.kwargs["preferred_account_id"] is None
+        assert third_call.kwargs["durable_lookup"] is None
     # When the fresh-replay session's own gate later times out (session.account
     # is "acc-fallback"), the next replacement must also exclude it — a
     # "replacement" that could legally reselect the account that just proved
     # stuck isn't a replacement at all.
-    assert third_call.kwargs["exclude_account_ids"] == (
-        {"acc-owner", "acc-fallback"} if replace_retired_gate else {"acc-owner"}
-    )
-    assert third_call.kwargs["allow_forward_to_owner"] is False
+    if third_call is not None:
+        assert third_call.kwargs["exclude_account_ids"] == {"acc-owner", "acc-fallback"}
+        assert third_call.kwargs["allow_forward_to_owner"] is False
     assert captured_request_states[0].previous_response_id is None
     assert captured_request_states[0].enforce_openai_sdk_contract is False
     replay_payload = json.loads(captured_text_data[0])
     assert "previous_response_id" not in replay_payload
-    assert replay_payload["input"] == [
+    expected_replay_input = [
         {
             "role": "user",
             "content": [{"type": "input_text", "text": "old question"}],
@@ -21719,19 +21760,44 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
             "internal_chat_message_metadata_passthrough": owner_metadata,
         },
         {
-            "type": "message",
-            "role": "assistant",
+            "type": "tool_search_call",
+            "call_id": "call_search",
+            "arguments": {"query": "docs"},
+            "execution": "client",
             "status": "completed",
-            "phase": "final_answer",
-            "content": [{"type": "output_text", "text": "old answer"}],
             "internal_chat_message_metadata_passthrough": owner_metadata,
         },
         {
-            "role": "user",
-            "content": [{"type": "input_text", "text": "next question"}],
-            "internal_chat_message_metadata_passthrough": {"turn_id": "turn-next"},
+            "type": "tool_search_output",
+            "call_id": "call_search",
+            "execution": "client",
+            "status": "completed",
+            "output": "found docs",
+            "tools": [],
+            "internal_chat_message_metadata_passthrough": owner_metadata,
         },
     ]
+    if pending_manifest_replay:
+        expected_replay_input.extend(pending_tool_loop)
+    else:
+        expected_replay_input.extend(
+            [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "phase": "final_answer",
+                    "content": [{"type": "output_text", "text": "old answer"}],
+                    "internal_chat_message_metadata_passthrough": owner_metadata,
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "next question"}],
+                    "internal_chat_message_metadata_passthrough": {"turn_id": "turn-next"},
+                },
+            ]
+        )
+    assert replay_payload["input"] == expected_replay_input
     assert "encrypted_content" not in captured_text_data[0]
     assert all("id" not in item for item in replay_payload["input"])
     account_neutral_classifier.assert_called_once()
