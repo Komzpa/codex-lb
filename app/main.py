@@ -796,8 +796,17 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def codex_alpha_search_cors_middleware(request: Request, call_next: Any) -> Response:
-        response = await call_next(request)
-        if request.url.path == "/backend-api/codex/alpha/search":
+        route_path = proxy_api.codex_alpha_search_route_path(request.url.path)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            if route_path is None:
+                raise
+            exception_handler = app.exception_handlers.get(Exception)
+            if exception_handler is None:
+                raise
+            response = await exception_handler(request, exc)
+        if route_path is not None:
             response.headers.update(proxy_api._codex_alpha_search_cors_headers(request))
         return response
 

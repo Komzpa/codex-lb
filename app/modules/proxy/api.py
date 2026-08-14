@@ -894,7 +894,7 @@ async def _codex_control_proxy(
         response = await context.service.codex_control_request(
             path,
             method=request.method,
-            payload=await request.body() if request.method.upper() not in {"GET", "HEAD"} else None,
+            payload=await _codex_control_payload(request),
             query_params=list(request.query_params.multi_items()),
             headers=request.headers,
             codex_session_affinity=True,
@@ -989,6 +989,25 @@ async def codex_safety_arc(
 
 _CODEX_ALPHA_SEARCH_ALLOWED_METHODS = "GET, POST, OPTIONS"
 _CODEX_ALPHA_SEARCH_ALLOWED_ORIGINS = frozenset({"https://chatgpt.com"})
+_CODEX_ALPHA_SEARCH_ROUTE_PATHS = frozenset(
+    {
+        "/backend-api/codex/alpha/search",
+        "/backend-api/codex/v1/alpha/search",
+    }
+)
+
+
+def codex_alpha_search_route_path(path: str | None) -> str | None:
+    if path in _CODEX_ALPHA_SEARCH_ROUTE_PATHS:
+        return path
+    return None
+
+
+async def _codex_control_payload(request: Request) -> bytes | None:
+    if request.method.upper() == "HEAD":
+        return None
+    payload = await request.body()
+    return payload or None
 
 
 def _codex_alpha_search_cors_headers(request: Request) -> dict[str, str]:

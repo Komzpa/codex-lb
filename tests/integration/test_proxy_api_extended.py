@@ -892,6 +892,77 @@ async def test_codex_alpha_search_get_forwards_query_without_body(async_client, 
 
 
 @pytest.mark.asyncio
+async def test_codex_alpha_search_get_preserves_body_when_present(async_client, monkeypatch):
+    await _import_account(async_client, "acc_codex_search_get_body", "codex-search-get-body@example.com")
+    calls = []
+    upstream_body = b'{"results":[{"title":"OpenAI","url":"https://openai.com/"}]}'
+
+    async def fake_codex_control_request(
+        path,
+        *,
+        method,
+        payload: bytes | None,
+        query_params,
+        headers,
+        access_token,
+        account_id,
+        timeout_seconds=None,
+        **_kwargs,
+    ):
+        calls.append(
+            {
+                "path": path,
+                "method": method,
+                "payload": payload,
+                "query_params": list(query_params),
+                "session_id": headers.get("session_id"),
+                "access_token": access_token,
+                "account_id": account_id,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return core_proxy.CodexControlResponse(
+            status_code=200,
+            body=upstream_body,
+            headers={
+                "content-type": "application/json",
+                "x-request-id": "search-get-body-request",
+            },
+        )
+
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", fake_codex_control_request)
+    payload = b'{ "query": "OpenAI official website" }'
+
+    response = await async_client.request(
+        "GET",
+        "/backend-api/codex/alpha/search?query=OpenAI&result_count=10",
+        content=payload,
+        headers={
+            "content-type": "application/json",
+            "session_id": "search-get-body-session",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.content == upstream_body
+    assert response.headers["x-request-id"] == "search-get-body-request"
+    assert calls == [
+        {
+            "path": "alpha/search",
+            "method": "GET",
+            "payload": payload,
+            "query_params": [("query", "OpenAI"), ("result_count", "10")],
+            "session_id": "search-get-body-session",
+            "access_token": "access-token",
+            "account_id": "acc_codex_search_get_body",
+            "timeout_seconds": calls[0]["timeout_seconds"],
+        }
+    ]
+    assert isinstance(calls[0]["timeout_seconds"], float)
+    assert calls[0]["timeout_seconds"] > 0
+
+
+@pytest.mark.asyncio
 async def test_codex_alpha_search_options_returns_local_preflight(async_client, monkeypatch):
     codex_control_request = AsyncMock()
     monkeypatch.setattr(proxy_module.ProxyService, "codex_control_request", codex_control_request)
@@ -994,6 +1065,49 @@ async def test_codex_alpha_search_cors_survives_auth_rejection(async_client):
     )
 
     assert response.status_code in {401, 403, 503}
+    assert response.headers["access-control-allow-origin"] == "https://chatgpt.com"
+    assert response.headers["vary"] == "Origin"
+
+
+@pytest.mark.asyncio
+async def test_codex_alpha_search_alias_cors_survives_auth_rejection(async_client):
+    response = await async_client.post(
+        "/backend-api/codex/v1/alpha/search",
+        json={"query": "OpenAI official website"},
+        headers={
+            "origin": "https://chatgpt.com",
+            "authorization": "Bearer definitely-invalid-for-this-request",
+        },
+    )
+
+    assert response.status_code in {401, 403, 503}
+    assert response.headers["access-control-allow-origin"] == "https://chatgpt.com"
+    assert response.headers["vary"] == "Origin"
+
+
+@pytest.mark.asyncio
+async def test_codex_alpha_search_cors_survives_unhandled_exception(async_client, monkeypatch):
+    await _import_account(async_client, "acc_codex_search_exception", "codex-search-exception@example.com")
+
+    async def explode_codex_control_request(*_args, **_kwargs):
+        raise RuntimeError("search exploded")
+
+    monkeypatch.setattr(proxy_module.ProxyService, "codex_control_request", explode_codex_control_request)
+
+    response = await async_client.post(
+        "/backend-api/codex/alpha/search",
+        json={"query": "OpenAI official website"},
+        headers={"origin": "https://chatgpt.com"},
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {
+            "code": "server_error",
+            "message": "Internal server error",
+            "type": "server_error",
+        }
+    }
     assert response.headers["access-control-allow-origin"] == "https://chatgpt.com"
     assert response.headers["vary"] == "Origin"
 

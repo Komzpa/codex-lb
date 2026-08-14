@@ -44,6 +44,7 @@ _FAIL_CLOSED_HTTP_ROUTES: frozenset[_RouteKey] = frozenset(
         ("HTTP", "POST", "/backend-api/codex/memories/trace_summarize"),
         ("HTTP", "POST", "/backend-api/codex/safety/arc"),
         ("HTTP", "POST", "/backend-api/codex/alpha/search"),
+        ("HTTP", "GET", "/backend-api/codex/alpha/search"),
         ("HTTP", "GET", "/backend-api/codex/agent-identities/jwks"),
         ("HTTP", "POST", "/backend-api/codex/responses"),
         ("HTTP", "POST", "/backend-api/codex/responses/"),
@@ -80,6 +81,16 @@ _LOCAL_AUTHENTICATED_ROUTES: frozenset[_RouteKey] = frozenset(
         ("HTTP", "GET", "/api/codex/usage"),
     }
 )
+_LOCAL_UNAUTHENTICATED_ROUTES: frozenset[_RouteKey] = frozenset(
+    {
+        ("HTTP", "OPTIONS", "/backend-api/codex/alpha/search"),
+        ("HTTP", "DELETE", "/backend-api/codex/alpha/search"),
+        ("HTTP", "HEAD", "/backend-api/codex/alpha/search"),
+        ("HTTP", "PATCH", "/backend-api/codex/alpha/search"),
+        ("HTTP", "PUT", "/backend-api/codex/alpha/search"),
+        ("HTTP", "TRACE", "/backend-api/codex/alpha/search"),
+    }
+)
 _RESPONSES_WEBSOCKET_ROUTES: frozenset[_RouteKey] = frozenset(
     {
         ("WS", "WEBSOCKET", "/backend-api/codex/responses"),
@@ -114,6 +125,7 @@ def test_registered_proxy_route_inventory_has_one_explicit_capability_policy(app
     policy_groups = (
         _FAIL_CLOSED_HTTP_ROUTES,
         _LOCAL_AUTHENTICATED_ROUTES,
+        _LOCAL_UNAUTHENTICATED_ROUTES,
         _RESPONSES_WEBSOCKET_ROUTES,
         _FAIL_CLOSED_WEBSOCKET_ROUTES,
         _SEPARATE_NAMESPACE_ROUTES,

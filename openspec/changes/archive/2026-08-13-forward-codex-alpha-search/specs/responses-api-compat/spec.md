@@ -9,11 +9,13 @@ query parameters, MUST apply the existing API-key scope, account selection,
 token refresh, session affinity, failover, and upstream-route policies, and MUST
 forward the request to the upstream `/codex/alpha/search` path using the same
 HTTP method. Successful downstream responses MUST preserve the upstream status
-and body and MUST include only response headers allowed by the existing Codex
-control-response policy. Final non-2xx responses MUST preserve their status
-while using the existing Codex control OpenAI error-envelope normalization. The
-proxy MUST NOT parse, normalize, or invent a local schema for successful search
-requests or responses.
+and body. The proxy MUST include only response headers allowed by the existing
+Codex control-response policy, except for the route-scoped browser CORS headers
+required on this surface for the allowed origin. Final non-2xx responses MUST
+preserve their status while using the existing Codex control OpenAI
+error-envelope normalization and MUST keep that same route-scoped CORS contract
+on proxy-produced failures. The proxy MUST NOT parse, normalize, or invent a
+local schema for successful search requests or responses.
 
 #### Scenario: authenticated standalone search reaches the upstream Codex path
 
@@ -33,6 +35,15 @@ requests or responses.
   `GET /codex/alpha/search` using the selected account credentials
 - **AND** the downstream client receives the upstream status and body
 
+#### Scenario: authenticated standalone search preserves GET request bodies
+
+- **GIVEN** a valid proxy API key and at least one eligible ChatGPT account
+- **WHEN** Codex sends `GET /backend-api/codex/alpha/search` with a request body
+  and query parameters
+- **THEN** the proxy forwards the unchanged request body and query parameters to
+  `GET /codex/alpha/search` using the selected account credentials
+- **AND** the downstream client receives the upstream status and body
+
 #### Scenario: browser preflight succeeds locally for the allowed origin
 
 - **WHEN** a browser sends `OPTIONS /backend-api/codex/alpha/search` with
@@ -42,8 +53,19 @@ requests or responses.
 - **AND** the response includes `Access-Control-Allow-Origin:
   https://chatgpt.com`, `Vary: Origin`, `Access-Control-Allow-Methods: GET,
   POST, OPTIONS`, and the requested access-control headers
+- **AND** the response includes `Access-Control-Allow-Private-Network: true`
+  whenever the request asks for private-network access
 - **AND** the proxy does not forward the preflight upstream or require proxy API
   key authentication for the preflight
+
+#### Scenario: allowed-origin search responses keep route-scoped CORS headers
+
+- **WHEN** an allowed-origin browser request reaches either
+  `/backend-api/codex/alpha/search` or the equivalent
+  `/backend-api/codex/v1/alpha/search` path
+- **THEN** successful upstream search responses include
+  `Access-Control-Allow-Origin: https://chatgpt.com` and `Vary: Origin`
+- **AND** proxy-produced early failures on the same routes keep those headers
 
 #### Scenario: unsafe upstream response headers are not exposed
 
