@@ -195,6 +195,8 @@ def project_responses_input_for_account_neutral_fresh_replay(
 
     if stored_count <= 0 or stored_count > len(input_items):
         return None
+    if not _stored_prefix_compaction_boundary_is_safe(input_items, stored_count=stored_count):
+        return None
 
     projected_items: list[JsonValue] = []
     projected_stored_count = 0
@@ -226,6 +228,14 @@ def project_responses_input_for_account_neutral_fresh_replay(
         stored_prefix_count=projected_stored_count,
         canonical_lite_developer_index=canonical_lite_developer_index,
     )
+
+
+def _stored_prefix_compaction_boundary_is_safe(input_items: list[JsonValue], *, stored_count: int) -> bool:
+    stored_prefix = input_items[:stored_count]
+    for item in stored_prefix[:-1]:
+        if isinstance(item, dict) and item.get("type") == "compaction" and _compaction_item_is_self_contained(item):
+            return False
+    return True
 
 
 def _is_canonical_lite_tool_bundle(item: JsonValue) -> bool:
@@ -264,6 +274,8 @@ def _project_account_neutral_replay_item(
     ):
         return None
 
+    if item_type == "compaction":
+        return item
     if "id" not in item:
         return item
     projected_item = dict(item)
@@ -725,8 +737,13 @@ def _apply_patch_operation_is_self_contained(operation: JsonValue | None) -> boo
 def _tool_output_is_self_contained(item_type: str, item: Mapping[str, JsonValue]) -> bool:
     if item.get("status") not in (None, "completed", "failed"):
         return False
-    if item_type == "tool_search_output" and _tool_search_output_tools_are_self_contained(item):
-        return True
+    if item_type == "tool_search_output":
+        if item.get("execution") not in (None, "client"):
+            return False
+        if "tools" in item and not _tools_are_account_neutral(item.get("tools")):
+            return False
+        if _tool_search_output_tools_are_self_contained(item):
+            return True
     output = item.get("output")
     if isinstance(output, str):
         return True

@@ -171,11 +171,37 @@ def test_account_neutral_fresh_replay_accepts_compaction_context_item() -> None:
     assert responses_payload_is_account_neutral_fresh_replay(payload) is True
 
 
-def test_account_neutral_replay_projection_preserves_compaction_without_response_id() -> None:
+def test_account_neutral_replay_projection_preserves_owner_bound_compaction_id_to_fail_closed() -> None:
     input_items: list[JsonValue] = [
         {
             "type": "compaction",
             "id": "cmp_owner_a",
+            "status": "completed",
+            "encrypted_content": "encrypted-compact-context",
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "continue"}],
+        },
+    ]
+
+    projection = project_responses_input_for_account_neutral_fresh_replay(input_items, stored_count=1)
+
+    assert projection is not None
+    assert projection.input_items[0] == {
+        "type": "compaction",
+        "id": "cmp_owner_a",
+        "status": "completed",
+        "encrypted_content": "encrypted-compact-context",
+    }
+    assert responses_payload_is_account_neutral_fresh_replay({"input": projection.input_items}) is False
+
+
+def test_account_neutral_replay_projection_accepts_compaction_without_owner_id() -> None:
+    input_items: list[JsonValue] = [
+        {
+            "type": "compaction",
             "status": "completed",
             "encrypted_content": "encrypted-compact-context",
         },
@@ -197,11 +223,48 @@ def test_account_neutral_replay_projection_preserves_compaction_without_response
     assert responses_payload_is_account_neutral_fresh_replay({"input": projection.input_items}) is True
 
 
-def test_account_neutral_replay_projection_preserves_post_compact_tool_search_context() -> None:
+def test_account_neutral_replay_projection_rejects_compaction_before_later_raw_prefix_bookkeeping() -> None:
     input_items: list[JsonValue] = [
         {
             "type": "compaction",
-            "id": "cmp_owner_a",
+            "status": "completed",
+            "encrypted_content": "encrypted-compact-context",
+        },
+        {
+            "type": "web_search_call",
+            "id": "ws_owner_a",
+            "action": {"type": "search", "query": "codex-lb"},
+            "status": "completed",
+        },
+        {
+            "type": "tool_search_call",
+            "call_id": "call_search",
+            "arguments": {"query": "codex-lb"},
+            "execution": "client",
+            "status": "completed",
+        },
+        {
+            "type": "tool_search_output",
+            "call_id": "call_search",
+            "execution": "client",
+            "output": "result",
+            "status": "completed",
+            "tools": [],
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "continue after compaction"}],
+        },
+    ]
+
+    assert project_responses_input_for_account_neutral_fresh_replay(input_items, stored_count=2) is None
+
+
+def test_account_neutral_replay_projection_preserves_post_compact_tool_search_context_without_owner_id() -> None:
+    input_items: list[JsonValue] = [
+        {
+            "type": "compaction",
             "status": "completed",
             "encrypted_content": "encrypted-compact-context",
         },
@@ -323,6 +386,7 @@ def test_account_neutral_fresh_replay_accepts_tools_only_client_tool_search_outp
             "execution": "server",
             "status": "completed",
             "tools": [],
+            "output": "Found codex-lb",
         },
         {
             "type": "tool_search_output",
@@ -330,6 +394,15 @@ def test_account_neutral_fresh_replay_accepts_tools_only_client_tool_search_outp
             "execution": "client",
             "status": "completed",
             "tools": [{"type": "file_search", "vector_store_ids": ["vs_owner"]}],
+            "output": "Found codex-lb",
+        },
+        {
+            "type": "tool_search_output",
+            "call_id": "call_search",
+            "execution": "client",
+            "status": "completed",
+            "tools": [{"type": "function", "name": "lookup", "namespace": "private"}],
+            "output": "Found codex-lb",
         },
     ],
 )
