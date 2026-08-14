@@ -1947,6 +1947,7 @@ class _HTTPBridgeStreamingMixin:
             else dict(headers)
         )
         fresh_replay_excluded_account_ids: set[str] = set()
+        model_transition_owner_conflict_fork_attempted = False
         unanchored_fork_spill_attempted = False
 
         def durable_full_resend_allows_account_neutral_replay() -> bool:
@@ -2010,8 +2011,10 @@ class _HTTPBridgeStreamingMixin:
             nonlocal account_neutral_recovery
             nonlocal affinity
             nonlocal bridge_session_key
+            nonlocal downstream_turn_state
             nonlocal force_local_recovery_creation
             nonlocal incoming_turn_state_header
+            nonlocal model_transition_owner_conflict_fork_attempted
             nonlocal preferred_account_has_continuity_provenance
             nonlocal request_state
             nonlocal session_creation_headers
@@ -2021,12 +2024,16 @@ class _HTTPBridgeStreamingMixin:
             if (
                 durable_model_transition_lookup is None
                 or error_code != "continuity_owner_conflict"
+                or model_transition_owner_conflict_fork_attempted
                 or forwarded_request
                 or not _http_bridge_payload_is_account_neutral_fresh_replay(effective_payload)
                 or request_state.previous_response_id is not None
                 or rewritten_file_account_id is not None
             ):
                 return False
+            reused_parent_turn_state = (
+                incoming_turn_state_header is not None and downstream_turn_state == incoming_turn_state_header
+            )
             failed_owner_id = request_state.preferred_account_id
             _log_http_bridge_event(
                 "model_transition_owner_conflict_fork",
@@ -2048,9 +2055,12 @@ class _HTTPBridgeStreamingMixin:
             bridge_session_key = _HTTPBridgeSessionKey(replay_kind, replay_key, bridge_session_key.api_key_id)
             account_neutral_recovery = True
             force_local_recovery_creation = True
+            model_transition_owner_conflict_fork_attempted = True
             request_state.preferred_account_id = None
             request_state.excluded_account_ids.update(fresh_replay_excluded_account_ids)
             preferred_account_has_continuity_provenance = False
+            if reused_parent_turn_state:
+                downstream_turn_state = None
             return True
 
         def owner_unavailable_allows_account_neutral_replay(exc: ProxyResponseError) -> bool:
