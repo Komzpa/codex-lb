@@ -35,6 +35,7 @@ _HTTP_BRIDGE_QUARANTINE_MAX_ENTRIES = 1024
 
 _HTTP_BRIDGE_QUARANTINE_WEDGED_REATTACH_REASON = "reattach_missing_response_created"
 _HTTP_BRIDGE_QUARANTINE_REPEATED_EVENTLESS_REASON = "repeated_eventless_timeout"
+_HTTP_BRIDGE_QUARANTINE_DRAINED_EVENTLESS_REASON = "drained_eventless_reader_failure"
 
 
 @dataclass(slots=True)
@@ -166,6 +167,16 @@ def _record_http_bridge_quarantine_eventless_timeout(service: Any, session: _HTT
         service,
         session,
         reason=_HTTP_BRIDGE_QUARANTINE_REPEATED_EVENTLESS_REASON,
+    )
+
+
+def _record_http_bridge_quarantine_drained_eventless_failure(service: Any, session: _HTTPBridgeSession) -> None:
+    """Quarantine after an eventless reader failure races past pending cleanup."""
+
+    _quarantine_http_bridge_session(
+        service,
+        session,
+        reason=_HTTP_BRIDGE_QUARANTINE_DRAINED_EVENTLESS_REASON,
     )
 
 

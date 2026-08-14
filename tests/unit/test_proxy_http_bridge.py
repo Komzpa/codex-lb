@@ -22887,6 +22887,54 @@ async def test_http_bridge_eventless_timeout_does_not_mark_or_clear_after_late_r
 
 
 @pytest.mark.asyncio
+async def test_http_bridge_drained_eventless_reader_failure_clears_anchor_and_quarantines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    session = _make_bridge_session(key_value="drained-eventless-anchor")
+    session.durable_session_id = "durable-session-1"
+    session.durable_owner_epoch = 3
+    session.last_completed_response_id = "resp_stale_anchor"
+    service._http_bridge_sessions[session.key] = session
+    settings = _make_app_settings()
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "_handle_stream_error", AsyncMock())
+    clear_anchor = AsyncMock(
+        return_value=proxy_service.DurableBridgeLookup(
+            session_id="durable-session-1",
+            canonical_kind="session_header",
+            canonical_key="drained-eventless-anchor",
+            api_key_scope="__anonymous__",
+            account_id="acc-bridge",
+            owner_instance_id=settings.http_responses_session_bridge_instance_id,
+            owner_epoch=3,
+            lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+            state=HttpBridgeSessionState.ACTIVE,
+            latest_turn_state="http_turn_stuck",
+            latest_response_id=None,
+        )
+    )
+    monkeypatch.setattr(service._durable_bridge, "clear_live_session_response_anchor", clear_anchor)
+
+    retired = await service._fail_http_bridge_reader_and_maybe_retire(
+        session,
+        error_code="stream_incomplete",
+        error_message="closed before any replacement event",
+        penalize_account=False,
+        response_events_seen=0,
+    )
+
+    assert retired is True
+    clear_anchor.assert_awaited_once_with(
+        session_id="durable-session-1",
+        instance_id=settings.http_responses_session_bridge_instance_id,
+        owner_epoch=3,
+    )
+    assert session.quarantined is True
+    assert http_bridge_quarantine_module._http_bridge_session_key_quarantined(service, session.key) is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("returned_lookup", "expect_logged"),
     [
