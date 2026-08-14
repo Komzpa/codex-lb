@@ -15,15 +15,15 @@ owner has been excluded or proved silent. Requests that explicitly require a
 preferred previous-response owner MUST continue to fail closed when that owner
 is unavailable.
 
-#### Scenario: completed compaction and tool-search context survives fresh replay projection
+#### Scenario: id-free completed compaction and tool-search context survives fresh replay projection
 
 - **GIVEN** a follow-up payload starts with a completed `compaction` item whose
   encrypted content is non-empty
+- **AND** that compaction item does not carry an `id`
 - **AND** the payload also carries a completed `tool_search_call` /
   `tool_search_output` pair followed by a fresh user message
 - **WHEN** codex-lb projects an account-neutral fresh replay payload
-- **THEN** the projected payload includes the compaction item without its
-  response-owned id
+- **THEN** the projected payload includes the compaction item
 - **AND** it preserves the completed tool-search pair without response-owned ids
 - **AND** the projected payload is eligible for account-neutral replay
 

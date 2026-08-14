@@ -1502,7 +1502,7 @@ class _HTTPBridgeStreamingMixin:
             and not forwarded_request
             and rewritten_file_account_id is None
             and durable_full_resend_fresh_payload is not None
-            and durable_full_resend_retains_prior_output
+            and durable_full_resend_has_safe_fresh_context
             and durable_full_resend_is_account_neutral is True
         )
         durable_model_transition_requires_owner = durable_model_transition_lookup is not None and (
@@ -1548,6 +1548,7 @@ class _HTTPBridgeStreamingMixin:
                 effective_payload = durable_full_resend_fresh_payload
                 untrimmed_effective_payload = durable_full_resend_fresh_payload
                 force_local_recovery_creation = True
+                preferred_account_has_continuity_provenance = False
                 _log_http_bridge_event(
                     "model_transition_fresh_resend",
                     bridge_session_key,
@@ -1742,6 +1743,7 @@ class _HTTPBridgeStreamingMixin:
             durable_lookup.account_id
             if (
                 durable_lookup is not None
+                and not durable_model_transition_uses_fresh_replay
                 and (
                     request_state.previous_response_id is not None
                     or bridge_session_key.strength == "hard"
@@ -1758,6 +1760,7 @@ class _HTTPBridgeStreamingMixin:
             request_state.preferred_account_id is None
             and durable_model_transition_lookup is not None
             and durable_model_transition_requires_owner
+            and not durable_model_transition_uses_fresh_replay
         ):
             request_state.preferred_account_id = durable_model_transition_lookup.account_id
         local_previous_response_owner: str | None = None
