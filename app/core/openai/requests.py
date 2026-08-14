@@ -944,18 +944,20 @@ def _plaintext_compaction_replay_replacement(item: JsonValue) -> JsonValue | Non
         return None
     assert is_json_mapping(item)
     encrypted_content = item.get("encrypted_content")
-    if isinstance(encrypted_content, str) and _looks_like_provider_encrypted_content(encrypted_content):
+    if isinstance(encrypted_content, str):
         return None
 
     text = _compaction_plaintext_summary(item)
     if text is None:
-        return {"role": "assistant", "content": _COMPACT_STATE_TEXT_PREFIX + "[unverified compact state omitted]"}
-    return {"role": "assistant", "content": _COMPACT_STATE_TEXT_PREFIX + text}
+        return _assistant_compact_state_item("[unverified compact state omitted]")
+    return _assistant_compact_state_item(text)
 
 
-def _looks_like_provider_encrypted_content(value: str) -> bool:
-    stripped = value.strip()
-    return stripped.startswith("gAAAA") and len(stripped) >= 80
+def _assistant_compact_state_item(text: str) -> JsonValue:
+    return {
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": _COMPACT_STATE_TEXT_PREFIX + text}],
+    }
 
 
 def _compaction_plaintext_summary(item: Mapping[str, JsonValue]) -> str | None:

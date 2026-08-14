@@ -1227,7 +1227,7 @@ def test_compact_strips_poisoned_local_compact_fallback_items():
     assert request.to_payload()["input"] == [{"role": "user", "content": "continue"}]
 
 
-def test_compact_rewrites_plaintext_compaction_replay_without_encrypted_content():
+def test_compact_preserves_opaque_encrypted_compaction_replay():
     payload = {
         "model": "gpt-5.5",
         "instructions": "compact",
@@ -1245,14 +1245,7 @@ def test_compact_rewrites_plaintext_compaction_replay_without_encrypted_content(
 
     request = ResponsesCompactRequest.model_validate(payload)
 
-    assert request.to_payload()["input"] == [
-        {"role": "user", "content": "before"},
-        {
-            "role": "assistant",
-            "content": "[compact state] [unverified compact state omitted]",
-        },
-        {"role": "user", "content": "continue"},
-    ]
+    assert request.to_payload()["input"] == payload["input"]
 
 
 def test_compact_rewrites_plaintext_compaction_replay_summary():
@@ -1277,7 +1270,12 @@ def test_compact_rewrites_plaintext_compaction_replay_summary():
         {"role": "user", "content": "before"},
         {
             "role": "assistant",
-            "content": "[compact state] I have the concrete code and evidence blockers in hand.",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": "[compact state] I have the concrete code and evidence blockers in hand.",
+                }
+            ],
         },
         {"role": "user", "content": "continue"},
     ]
@@ -1315,6 +1313,26 @@ def test_responses_preserves_provider_encrypted_compaction_replay():
                 "type": "compaction",
                 "status": "completed",
                 "encrypted_content": encrypted_content,
+            },
+            {"role": "user", "content": "continue"},
+        ],
+    }
+
+    request = ResponsesRequest.model_validate(payload)
+
+    assert request.to_payload()["input"] == payload["input"]
+
+
+def test_responses_preserves_opaque_encrypted_compaction_replay():
+    payload = {
+        "model": "gpt-5.5",
+        "instructions": "continue",
+        "input": [
+            {
+                "id": "cmp_opaque_provider_state",
+                "type": "compaction",
+                "status": "completed",
+                "encrypted_content": "opaque-provider-envelope-without-recognized-prefix",
             },
             {"role": "user", "content": "continue"},
         ],

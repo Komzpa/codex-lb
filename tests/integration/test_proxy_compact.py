@@ -396,11 +396,18 @@ async def test_proxy_compact_sanitizes_plaintext_replay_before_upstream(async_cl
         {"role": "user", "content": "before"},
         {
             "role": "assistant",
-            "content": "[compact state] I have the concrete code and evidence blockers in hand.",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": "[compact state] I have the concrete code and evidence blockers in hand.",
+                }
+            ],
         },
         {
-            "role": "assistant",
-            "content": "[compact state] [unverified compact state omitted]",
+            "id": "cmp_opaque_state",
+            "type": "compaction",
+            "status": "completed",
+            "encrypted_content": "opaque-provider-envelope-without-recognized-prefix",
         },
         {"role": "user", "content": "continue"},
     ]
