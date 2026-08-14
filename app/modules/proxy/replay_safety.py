@@ -725,6 +725,8 @@ def _apply_patch_operation_is_self_contained(operation: JsonValue | None) -> boo
 def _tool_output_is_self_contained(item_type: str, item: Mapping[str, JsonValue]) -> bool:
     if item.get("status") not in (None, "completed", "failed"):
         return False
+    if item_type == "tool_search_output" and _tool_search_output_tools_are_self_contained(item):
+        return True
     output = item.get("output")
     if isinstance(output, str):
         return True
@@ -737,6 +739,15 @@ def _tool_output_is_self_contained(item_type: str, item: Mapping[str, JsonValue]
             isinstance(part, dict) and _input_content_part_is_self_contained(part, allow_output=False)
             for part in output
         )
+    )
+
+
+def _tool_search_output_tools_are_self_contained(item: Mapping[str, JsonValue]) -> bool:
+    return (
+        item.get("execution") == "client"
+        and "tools" in item
+        and _tools_are_account_neutral(item.get("tools"))
+        and item.get("output") in (None, "")
     )
 
 
@@ -979,6 +990,13 @@ def _input_items_have_valid_account_neutral_shape(input_items: list[JsonValue]) 
         item_type = item.get("type")
         if item_type in {"input_file", "input_image", "input_text"}:
             if not _input_content_part_is_self_contained(item, allow_output=False):
+                return False
+            continue
+        if item_type == "tool_search_output":
+            execution = item.get("execution")
+            if execution is not None and execution != "client":
+                return False
+            if "tools" in item and not _tools_are_account_neutral(item.get("tools")):
                 return False
             continue
         if item_type == "additional_tools":

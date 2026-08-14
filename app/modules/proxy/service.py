@@ -1311,7 +1311,6 @@ class ProxyService(
             pending_request_ids: list[str] | None = None
             pending_request_ages_seconds: list[float] | None = None
             should_retire_stuck_session = False
-            pending_response_events_seen = 0
             stale_pending_requests_to_fail: list[_WebSocketRequestState] = []
             if bridge_session is not None:
                 now = time.monotonic()
@@ -1319,7 +1318,6 @@ class ProxyService(
                     pending_states = list(bridge_session.pending_requests)
                     pending_count = len(pending_states)
                     queued_count = bridge_session.queued_request_count
-                pending_response_events_seen = _http_bridge_pending_response_events_seen(pending_states)
                 pending_request_ids = [state.request_log_id or state.request_id for state in pending_states]
                 pending_request_ages_seconds = [max(0.0, now - state.started_at) for state in pending_states]
                 threshold_seconds = float(
@@ -1389,7 +1387,6 @@ class ProxyService(
                 await self._retire_stale_pending_http_bridge_session(
                     bridge_session,
                     detail="response_create_gate_timeout_stuck_pending",
-                    response_events_seen=pending_response_events_seen,
                 )
             raise _http_bridge_startup_wait_timeout_error(
                 "http_bridge_response_create_gate",

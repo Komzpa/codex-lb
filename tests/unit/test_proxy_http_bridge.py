@@ -26775,13 +26775,37 @@ async def test_retire_stale_pending_http_bridge_session_quarantines_wedged_reatt
     await service._retire_stale_pending_http_bridge_session(
         session,
         detail="response_create_gate_timeout_stuck_pending",
-        response_events_seen=wedged.response_event_count,
     )
 
     assert session.quarantined is expect_quarantined
     assert (
         http_bridge_quarantine_module._http_bridge_session_key_quarantined(service, session.key) is expect_quarantined
     )
+
+
+@pytest.mark.asyncio
+async def test_retire_stale_pending_http_bridge_session_recomputes_event_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    eventful = _make_wedged_reattach_request_state(request_id="req-direct-retire-eventful")
+    eventful.response_id = "resp_eventful_direct_retire"
+    eventful.latency_response_created_ms = 700
+    session = _make_bridge_session(
+        key_value="quarantine-direct-retire-eventful",
+        pending_requests=deque([eventful]),
+        queued_request_count=1,
+    )
+    record_failure = AsyncMock()
+    monkeypatch.setattr(service, "_close_http_bridge_session_bounded", AsyncMock())
+    monkeypatch.setattr(service, "_record_http_bridge_retry_circuit_failure", record_failure)
+
+    await service._retire_stale_pending_http_bridge_session(
+        session,
+        detail="response_create_gate_timeout_stuck_pending",
+    )
+
+    record_failure.assert_not_awaited()
 
 
 @pytest.mark.asyncio

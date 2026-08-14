@@ -291,6 +291,66 @@ def test_account_neutral_fresh_replay_accepts_self_contained_tool_search_pair() 
     assert responses_payload_is_account_neutral_fresh_replay({"input": input_items}) is True
 
 
+def test_account_neutral_fresh_replay_accepts_tools_only_client_tool_search_output() -> None:
+    input_items: list[JsonValue] = [
+        {
+            "type": "tool_search_call",
+            "call_id": "call_search",
+            "arguments": {"query": "codex-lb"},
+            "execution": "client",
+            "status": "completed",
+        },
+        {
+            "type": "tool_search_output",
+            "call_id": "call_search",
+            "execution": "client",
+            "status": "completed",
+            "tools": [],
+        },
+        {"role": "user", "content": [{"type": "input_text", "text": "continue"}]},
+    ]
+
+    assert responses_input_items_are_self_contained_fresh_replay(input_items) is True
+    assert responses_payload_is_account_neutral_fresh_replay({"input": input_items}) is True
+
+
+@pytest.mark.parametrize(
+    "tool_search_output",
+    [
+        {
+            "type": "tool_search_output",
+            "call_id": "call_search",
+            "execution": "server",
+            "status": "completed",
+            "tools": [],
+        },
+        {
+            "type": "tool_search_output",
+            "call_id": "call_search",
+            "execution": "client",
+            "status": "completed",
+            "tools": [{"type": "file_search", "vector_store_ids": ["vs_owner"]}],
+        },
+    ],
+)
+def test_account_neutral_fresh_replay_rejects_account_scoped_tool_search_output(
+    tool_search_output: dict[str, JsonValue],
+) -> None:
+    input_items: list[JsonValue] = [
+        {
+            "type": "tool_search_call",
+            "call_id": "call_search",
+            "arguments": {"query": "codex-lb"},
+            "execution": "client",
+            "status": "completed",
+        },
+        tool_search_output,
+        {"role": "user", "content": [{"type": "input_text", "text": "continue"}]},
+    ]
+
+    assert responses_payload_is_account_neutral_fresh_replay({"input": input_items}) is False
+
+
 def test_account_neutral_replay_projection_removes_response_owned_bookkeeping() -> None:
     metadata = {"turn_id": "turn_owner_a"}
     input_items: list[JsonValue] = [
