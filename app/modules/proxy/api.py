@@ -6348,8 +6348,7 @@ async def _stream_response_error_events(
         error_code = exc.payload.get("error", {}).get("code") if isinstance(exc.payload, dict) else None
         settings = get_settings()
         indefinite_recovery = (
-            settings.http_responses_session_bridge_ambiguous_continuation_recovery_mode
-            == "server_indefinite_recovery"
+            settings.http_responses_session_bridge_ambiguous_continuation_recovery_mode == "server_indefinite_recovery"
         )
         if (
             recovery_stream_factory is not None

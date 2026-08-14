@@ -235,9 +235,9 @@ async def test_indefinite_recovery_exhaustion_emits_terminal_response_failed(mon
         exc = ProxyResponseError(
             502,
             {"error": {"code": "stream_incomplete", "message": message, "type": "server_error"}},
-            retry_after_seconds=0.001,
+            retry_after_seconds=1,
         )
-        exc.http_bridge_durable_recovery_eligible = True
+        setattr(exc, "http_bridge_durable_recovery_eligible", True)
         return exc
 
     async def stream():

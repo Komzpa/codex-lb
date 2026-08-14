@@ -65,7 +65,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.quarantine import (
     _clear_http_bridge_quarantine,
-    _record_http_bridge_quarantine_drained_eventless_failure,
     _record_http_bridge_quarantine_eventless_timeout,
     _record_http_bridge_quarantine_wedged_pending,
 )
@@ -816,7 +815,7 @@ async def _cancel_http_bridge_reader_child(
 async def _clear_durable_http_bridge_response_anchor(
     service: Any,
     session: "_HTTPBridgeSession",
-) -> bool:
+) -> None:
     """Invalidate a durable proxy-injected anchor that proved eventless.
 
     Runs while ``session`` still owns the durable row (before retirement
@@ -824,7 +823,7 @@ async def _clear_durable_http_bridge_response_anchor(
     owner epoch instead of silently losing the fence to a released owner.
     """
     if session.durable_session_id is None or session.durable_owner_epoch is None:
-        return False
+        return
     try:
         lookup = await service._durable_bridge.clear_live_session_response_anchor(
             session_id=session.durable_session_id,
@@ -833,14 +832,14 @@ async def _clear_durable_http_bridge_response_anchor(
         )
     except Exception:
         logger.warning("Failed to clear durable HTTP bridge response anchor after stuck timeout", exc_info=True)
-        return False
+        return
     if lookup is None or lookup.owner_epoch != session.durable_owner_epoch or lookup.latest_response_id is not None:
         # None means the durable row is gone entirely (e.g. purged); an
         # epoch or anchor mismatch means a newer owner already claimed the
         # session before this fenced write executed. Either way, the anchor
         # was never actually cleared, so do not report an invalidation that
         # did not happen.
-        return False
+        return
     _log_http_bridge_event(
         "durable_anchor_invalidated",
         session.key,
@@ -850,7 +849,6 @@ async def _clear_durable_http_bridge_response_anchor(
         cache_key_family=session.key.affinity_kind,
         model_class=_extract_model_class(session.request_model) if session.request_model else None,
     )
-    return True
 
 
 async def _abandon_durable_http_bridge_continuity(
@@ -938,17 +936,6 @@ class _HTTPBridgeUpstreamEventsMixin:
         observed_response_events = (
             response_events_seen if response_events_seen is not None else observed_response_events
         )
-        if (
-            failed_pending_count == 0
-            and observed_response_events == 0
-            and error_code == "stream_incomplete"
-            and session.last_completed_response_id is not None
-        ):
-            # A reader close can race after the downstream request detached its
-            # pending state. Live evidence showed this rehydrating the same
-            # durable anchor on the next turn, rebuilding an eventless attach.
-            if await _clear_durable_http_bridge_response_anchor(self, session):
-                _record_http_bridge_quarantine_drained_eventless_failure(self, session)
         close_classification = (
             _classify_upstream_close(observed_close_code, response_events_seen=observed_response_events)
             if observed_close_code is not None
