@@ -22017,6 +22017,166 @@ async def test_durable_model_transition_preserves_owner_provenance_when_replacin
 
 
 @pytest.mark.asyncio
+async def test_durable_model_transition_full_resend_uses_account_neutral_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    owner_metadata: proxy_service.JsonValue = {"turn_id": "turn-owner"}
+    historical_input: list[proxy_service.JsonValue] = [
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "old question"}],
+            "internal_chat_message_metadata_passthrough": owner_metadata,
+        },
+        {
+            "type": "function_call",
+            "id": "fc_owner",
+            "call_id": "call_old",
+            "name": "lookup",
+            "arguments": "{}",
+            "internal_chat_message_metadata_passthrough": owner_metadata,
+        },
+    ]
+    payload = proxy_service.ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.3-codex-spark",
+            "instructions": "hi",
+            "input": [
+                *historical_input,
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_old",
+                    "output": "old output",
+                    "internal_chat_message_metadata_passthrough": owner_metadata,
+                },
+                {
+                    "type": "message",
+                    "id": "msg_owner",
+                    "role": "assistant",
+                    "status": "completed",
+                    "phase": "final_answer",
+                    "content": [{"type": "output_text", "text": "old answer"}],
+                    "internal_chat_message_metadata_passthrough": owner_metadata,
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "next question"}],
+                    "internal_chat_message_metadata_passthrough": {"turn_id": "turn-next"},
+                },
+            ],
+        }
+    )
+    durable_lookup = proxy_service.DurableBridgeLookup(
+        session_id="durable-model-full-resend",
+        canonical_kind="session_header",
+        canonical_key="shared-root",
+        api_key_scope="__anonymous__",
+        account_id="acc-model-owner",
+        owner_instance_id="instance-a",
+        owner_epoch=18,
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+        state=HttpBridgeSessionState.ACTIVE,
+        latest_turn_state="http_turn_parent",
+        latest_response_id="resp_model_parent",
+        latest_input_item_count=len(historical_input),
+        latest_input_full_fingerprint=proxy_service._fingerprint_input_items(historical_input),
+        model="gpt-5.4-mini",
+    )
+    captured_keys: list[proxy_service._HTTPBridgeSessionKey] = []
+    captured_kwargs: list[dict[str, Any]] = []
+    captured_text_data: list[str] = []
+
+    async def fake_get_or_create(
+        key: proxy_service._HTTPBridgeSessionKey,
+        **kwargs: Any,
+    ) -> proxy_service._HTTPBridgeSession:
+        captured_keys.append(key)
+        captured_kwargs.append(kwargs)
+        session = _make_bridge_session(key=key, key_value=key.affinity_key)
+        session.account = cast(Any, SimpleNamespace(id="acc-fresh", status=AccountStatus.ACTIVE))
+        session.request_model = payload.model
+        return session
+
+    async def fake_stream_events(
+        _session: proxy_service._HTTPBridgeSession,
+        *,
+        request_state: proxy_service._WebSocketRequestState,
+        text_data: str,
+        **_kwargs: Any,
+    ):
+        assert request_state.previous_response_id is None
+        assert request_state.preferred_account_id is None
+        captured_text_data.append(text_data)
+        yield 'data: {"type":"response.completed"}\n\n'
+
+    monkeypatch.setattr(
+        proxy_service,
+        "get_settings_cache",
+        lambda: cast(
+            Any,
+            SimpleNamespace(
+                get=AsyncMock(
+                    return_value=SimpleNamespace(
+                        sticky_threads_enabled=False,
+                        openai_cache_affinity_max_age_seconds=1800,
+                        http_responses_session_bridge_prompt_cache_idle_ttl_seconds=3600,
+                        http_responses_session_bridge_gateway_safe_mode=False,
+                    )
+                )
+            ),
+        ),
+    )
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
+    monkeypatch.setattr(service._durable_bridge, "lookup_request_targets", AsyncMock(return_value=durable_lookup))
+    monkeypatch.setattr(service, "_http_bridge_has_live_local_session", AsyncMock(return_value=False))
+    monkeypatch.setattr(service, "_http_bridge_can_forward_to_active_owner", AsyncMock(return_value=False))
+    monkeypatch.setattr(service, "_resolve_file_account_for_responses", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_get_or_create_http_bridge_session", fake_get_or_create)
+    monkeypatch.setattr(service, "_stream_http_bridge_session_events", fake_stream_events)
+
+    chunks = [
+        chunk
+        async for chunk in service._stream_via_http_bridge(
+            payload,
+            headers={
+                "authorization": "Bearer test-token",
+                "x-codex-session-id": "shared-root",
+                "x-codex-turn-state": "http_turn_child",
+            },
+            codex_session_affinity=True,
+            propagate_http_errors=True,
+            openai_cache_affinity=True,
+            api_key=None,
+            api_key_reservation=None,
+            suppress_text_done_events=False,
+            idle_ttl_seconds=120.0,
+            codex_idle_ttl_seconds=1800.0,
+            max_sessions=8,
+            queue_limit=4,
+        )
+    ]
+
+    assert chunks == ['data: {"type":"response.completed"}\n\n']
+    assert len(captured_keys) == 1
+    assert is_http_bridge_account_neutral_replay(
+        kind=captured_keys[0].affinity_kind,
+        key=captured_keys[0].affinity_key,
+    )
+    assert captured_keys[0].strength == "soft"
+    assert captured_kwargs[0]["durable_lookup"] is None
+    assert captured_kwargs[0]["previous_response_id"] is None
+    assert captured_kwargs[0]["preferred_account_id"] is None
+    assert captured_kwargs[0]["preferred_account_has_continuity_provenance"] is False
+    assert captured_kwargs[0]["allow_forward_to_owner"] is False
+    assert captured_kwargs[0]["headers"] == {"authorization": "Bearer test-token"}
+    replay_payload = json.loads(captured_text_data[0])
+    assert "previous_response_id" not in replay_payload
+    assert replay_payload["model"] == "gpt-5.3-codex-spark"
+    assert replay_payload["input"][-1]["content"] == [{"type": "input_text", "text": "next question"}]
+    assert all("id" not in item for item in replay_payload["input"])
+
+
+@pytest.mark.asyncio
 async def test_stream_via_http_bridge_preserves_verified_replay_kind_for_durable_model_transition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

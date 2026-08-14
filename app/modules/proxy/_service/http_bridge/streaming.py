@@ -1497,18 +1497,29 @@ class _HTTPBridgeStreamingMixin:
             if durable_lookup is not None and not _http_bridge_models_compatible(durable_lookup.model, payload.model)
             else None
         )
+        durable_model_transition_uses_fresh_replay = (
+            durable_model_transition_lookup is not None
+            and not forwarded_request
+            and rewritten_file_account_id is None
+            and durable_full_resend_fresh_payload is not None
+            and durable_full_resend_retains_prior_output
+            and durable_full_resend_is_account_neutral is True
+        )
         durable_model_transition_requires_owner = durable_model_transition_lookup is not None and (
-            payload.previous_response_id is not None
-            or bridge_session_key.strength == "hard"
-            or (
-                bridge_session_key.affinity_kind == "prompt_cache"
-                and _http_bridge_request_stage(
-                    headers=headers,
-                    payload=payload,
-                    durable_lookup=durable_model_transition_lookup,
+            not durable_model_transition_uses_fresh_replay
+            and (
+                payload.previous_response_id is not None
+                or bridge_session_key.strength == "hard"
+                or (
+                    bridge_session_key.affinity_kind == "prompt_cache"
+                    and _http_bridge_request_stage(
+                        headers=headers,
+                        payload=payload,
+                        durable_lookup=durable_model_transition_lookup,
+                    )
+                    == "follow_up"
+                    and durable_model_transition_lookup.latest_turn_state is not None
                 )
-                == "follow_up"
-                and durable_model_transition_lookup.latest_turn_state is not None
             )
         )
         if durable_model_transition_lookup is not None:
@@ -1522,7 +1533,35 @@ class _HTTPBridgeStreamingMixin:
                 model_class=_extract_model_class(payload.model) if payload.model else None,
                 owner_check_applied=durable_model_transition_requires_owner,
             )
-            if is_http_bridge_account_neutral_replay(
+            if durable_model_transition_uses_fresh_replay:
+                replay_kind, replay_key = make_http_bridge_account_neutral_replay_key(uuid4().hex)
+                bridge_session_key = _HTTPBridgeSessionKey(
+                    replay_kind,
+                    replay_key,
+                    bridge_session_key.api_key_id,
+                    strength="soft",
+                )
+                affinity = _AffinityPolicy()
+                incoming_turn_state_header = None
+                incoming_session_header = None
+                session_header_fallback_key = None
+                effective_payload = durable_full_resend_fresh_payload
+                untrimmed_effective_payload = durable_full_resend_fresh_payload
+                force_local_recovery_creation = True
+                _log_http_bridge_event(
+                    "model_transition_fresh_resend",
+                    bridge_session_key,
+                    account_id=durable_model_transition_lookup.account_id,
+                    model=payload.model,
+                    detail=(
+                        "outcome=account_neutral_full_resend_without_owner,"
+                        f"previous_model={durable_model_transition_lookup.model}"
+                    ),
+                    cache_key_family=bridge_session_key.affinity_kind,
+                    model_class=_extract_model_class(payload.model) if payload.model else None,
+                    owner_check_applied=False,
+                )
+            elif is_http_bridge_account_neutral_replay(
                 kind=durable_model_transition_lookup.canonical_kind,
                 key=durable_model_transition_lookup.canonical_key,
             ):
