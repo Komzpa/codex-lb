@@ -2963,6 +2963,7 @@ class _HTTPBridgeStreamingMixin:
                     owner_check_applied=True,
                 )
                 replacement_preferred_account_id = request_state.preferred_account_id
+                replacement_excluded_account_ids = set(request_state.excluded_account_ids)
                 if request_state.previous_response_id is not None and replacement_preferred_account_id is None:
                     replacement_preferred_account_id = session.account.id
                 elif replacement_preferred_account_id is None:
@@ -2975,9 +2976,8 @@ class _HTTPBridgeStreamingMixin:
                     # impossible (fallback_on_preferred_account_unavailable is
                     # False for exactly this pinned case below) and would
                     # keep poisoning every later recovery call on this
-                    # request, since excluded_account_ids persists on
-                    # request_state.
-                    request_state.excluded_account_ids.add(session.account.id)
+                    # request.
+                    replacement_excluded_account_ids.add(session.account.id)
                 while True:
                     try:
                         replacement_session = await self._get_or_create_http_bridge_session(
@@ -3010,7 +3010,7 @@ class _HTTPBridgeStreamingMixin:
                             request_usage_budget=request_state.request_usage_budget,
                             request_deadline=request_deadline,
                             session_header_fallback_key=session_header_fallback_key,
-                            exclude_account_ids=request_state.excluded_account_ids or None,
+                            exclude_account_ids=replacement_excluded_account_ids or None,
                             deferred_account_backoff_lifecycle=request_state.deferred_account_backoff_lifecycle,
                             defer_account_health_writes=request_state.api_key_reservation is not None,
                         )
