@@ -6332,7 +6332,7 @@ async def _compact_responses(
             await reservation_cleanup.release(action="compact response")
     result_payload = result.model_dump(mode="json", exclude_none=True)
     if codex_session_affinity:
-        result_payload = _normalize_codex_remote_compaction_v2_result(result, result_payload)
+        result_payload = _normalize_codex_remote_compaction_v2_result(result, result_payload, payload)
     return JSONResponse(
         content=result_payload,
         headers=rate_limit_headers,
@@ -6342,6 +6342,7 @@ async def _compact_responses(
 def _normalize_codex_remote_compaction_v2_result(
     payload: CompactResponsePayload,
     result_payload: dict[str, JsonValue],
+    compact_request: ResponsesCompactRequest,
 ) -> dict[str, JsonValue]:
     compaction_item = _compact_response_output_item(payload)
     if compaction_item is None:
@@ -6393,6 +6394,41 @@ def _normalize_compaction_output_item(item: Mapping[str, JsonValue]) -> dict[str
     return normalized
 
 
+def _compaction_output_item_id(value: JsonValue) -> str | None:
+    if not isinstance(value, str):
+        return None
+    item_id = value.strip()
+    if not item_id.startswith("cmp"):
+        return None
+    return item_id
+
+
+def _compaction_item_texts(value: JsonValue) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if not is_json_mapping(value):
+        return []
+    content = value.get("content")
+    if isinstance(content, str):
+        return [content]
+    if is_json_mapping(content):
+        content_items: list[JsonValue] = [content]
+    elif is_json_list(content):
+        content_items = content
+    else:
+        return []
+    texts: list[str] = []
+    for part in content_items:
+        if isinstance(part, str):
+            texts.append(part)
+            continue
+        if is_json_mapping(part):
+            text = part.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+    return texts
+
+
 def _json_mapping_from_model_or_mapping(value: object) -> Mapping[str, JsonValue] | None:
     if is_json_mapping(value):
         return value
@@ -6418,13 +6454,15 @@ async def _synthetic_compaction_response_stream(
     response_id: str,
     usage: object | None,
 ) -> AsyncIterator[str]:
-    item = dict(compact_item)
-    item.setdefault("status", "completed")
+    compact_output: dict[str, JsonValue] = dict(compact_item)
+    compact_output.setdefault("status", "completed")
+    output_items: list[dict[str, JsonValue]] = [compact_output]
     completed_response: dict[str, JsonValue] = {
         "id": response_id,
         "object": "response",
         "status": "completed",
-        "output": [item],
+        # list is invariant, so the JSON-valid element type needs a cast here.
+        "output": cast(JsonValue, output_items),
     }
     usage_mapping = _json_mapping_from_model_or_mapping(usage)
     if usage_mapping is not None:
@@ -6441,29 +6479,33 @@ async def _synthetic_compaction_response_stream(
             },
         }
     )
-    yield format_sse_event(
-        {
-            "type": "response.output_item.added",
-            "sequence_number": 1,
-            "output_index": 0,
-            "item": {
-                **item,
-                "status": "in_progress",
-            },
-        }
-    )
-    yield format_sse_event(
-        {
-            "type": "response.output_item.done",
-            "sequence_number": 2,
-            "output_index": 0,
-            "item": item,
-        }
-    )
+    sequence_number = 1
+    for output_index, item in enumerate(output_items):
+        yield format_sse_event(
+            {
+                "type": "response.output_item.added",
+                "sequence_number": sequence_number,
+                "output_index": output_index,
+                "item": {
+                    **item,
+                    "status": "in_progress",
+                },
+            }
+        )
+        sequence_number += 1
+        yield format_sse_event(
+            {
+                "type": "response.output_item.done",
+                "sequence_number": sequence_number,
+                "output_index": output_index,
+                "item": item,
+            }
+        )
+        sequence_number += 1
     yield format_sse_event(
         {
             "type": "response.completed",
-            "sequence_number": 3,
+            "sequence_number": sequence_number,
             "response": completed_response,
         }
     )
