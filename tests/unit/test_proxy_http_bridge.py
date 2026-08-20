@@ -28743,6 +28743,119 @@ def test_http_bridge_live_durable_owner_is_not_reclaimable() -> None:
     )
 
 
+def _make_anchored_bridge_request_state(request_id: str) -> Any:
+    request_state = proxy_service._WebSocketRequestState(
+        request_id=request_id,
+        model="gpt-5.6-luna",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=time.monotonic(),
+        transport="http",
+        awaiting_response_created=True,
+        request_text='{"type":"response.create","previous_response_id":"resp_anchor"}',
+        previous_response_id="resp_anchor",
+    )
+    request_state.response_create_attempt = proxy_support_module._HTTPBridgeResponseCreateAttempt(ordinal=1)
+    request_state.response_create_sent_at = time.monotonic()
+    return request_state
+
+
+async def _reset_for_continuity_loss(service: Any, session: Any, *, server_continuity_loss: bool) -> None:
+    cast(Any, service)._detach_http_bridge_session_locked = Mock(return_value=session)
+    cast(Any, service)._fail_pending_websocket_requests = AsyncMock(return_value=True)
+    cast(Any, service)._close_http_bridge_session = AsyncMock()
+    await service._reset_http_bridge_session_after_local_terminal_error(
+        session,
+        error_code="stream_incomplete",
+        error_message="Upstream websocket closed before response.completed",
+        **({"server_continuity_loss_detail": "previous_response_not_found"} if server_continuity_loss else {}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_stale_anchor_reset_does_not_arm_its_own_cooldown() -> None:
+    """The reset used to escape a stale anchor must not manufacture a circuit strike.
+
+    Closing the session tears down a websocket other turns are pending on. The
+    reader reports that teardown as ``stream_incomplete``, which the circuit
+    counts, so the escape hatch re-arms the cooldown that forced the escape.
+    """
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    request_state = _make_anchored_bridge_request_state("req-stale-anchor-reset")
+    session = _make_bridge_session(
+        key_value="bridge-stale-anchor-reset",
+        pending_requests=deque([request_state]),
+        queued_request_count=1,
+    )
+    service._durable_bridge = SimpleNamespace(
+        lookup_retry_circuit=AsyncMock(return_value=None),
+        persist_retry_circuit=AsyncMock(return_value=None),
+        clear_retry_circuit=AsyncMock(),
+    )
+
+    await _reset_for_continuity_loss(service, session, server_continuity_loss=True)
+
+    attempt = request_state.response_create_attempt
+    assert attempt.disarmed is True
+    selection = http_bridge_helpers_module._http_bridge_retry_circuit_attempt_selection_for_pending_requests(
+        (request_state,)
+    )
+    assert selection.kind == "settled"
+    # The reader failure that follows the teardown must not charge the circuit.
+    assert (
+        await service._record_http_bridge_retry_circuit_failure_for_attempt_selection(
+            session,
+            detail="stream_incomplete",
+            selection=selection,
+        )
+        is None
+    )
+    assert session.key not in cast(Any, service)._http_bridge_retry_circuits
+    assert await service._http_bridge_precreated_retry_allowed(session) is True
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_upstream_teardown_without_continuity_loss_still_arms_cooldown() -> None:
+    """NEGATIVE CONTROL: the loop reproduces exactly when the reset is not ours.
+
+    Same teardown, same detail, but no server-side continuity-loss marker: the
+    physical send stays eligible and the circuit is charged as before.
+    """
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    request_state = _make_anchored_bridge_request_state("req-genuine-teardown")
+    session = _make_bridge_session(
+        key_value="bridge-genuine-teardown",
+        pending_requests=deque([request_state]),
+        queued_request_count=1,
+    )
+    service._durable_bridge = SimpleNamespace(
+        lookup_retry_circuit=AsyncMock(return_value=None),
+        persist_retry_circuit=AsyncMock(return_value=None),
+        clear_retry_circuit=AsyncMock(),
+    )
+
+    await _reset_for_continuity_loss(service, session, server_continuity_loss=False)
+
+    attempt = request_state.response_create_attempt
+    assert attempt.disarmed is False
+    selection = http_bridge_helpers_module._http_bridge_retry_circuit_attempt_selection_for_pending_requests(
+        (request_state,)
+    )
+    assert selection.kind == "eligible"
+    assert (
+        await service._record_http_bridge_retry_circuit_failure_for_attempt_selection(
+            session,
+            detail="stream_incomplete",
+            selection=selection,
+        )
+        == 1
+    )
+    state = cast(Any, service)._http_bridge_retry_circuits[session.key]
+    assert state.consecutive_failures == 1
+    assert state.last_detail == "stream_incomplete"
+
+
 @pytest.mark.asyncio
 async def test_http_bridge_retry_circuit_allows_fresh_hard_account_switch_during_cooldown() -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))

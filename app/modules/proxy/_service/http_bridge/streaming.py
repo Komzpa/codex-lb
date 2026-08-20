@@ -3749,6 +3749,19 @@ class _HTTPBridgeStreamingMixin:
                 session,
                 detail=server_continuity_loss_detail,
             )
+            # Closing this session below tears down a websocket that other
+            # turns may still be pending on. The reader wakes on that teardown
+            # and reports the ordinary transport class, ``stream_incomplete``,
+            # which the circuit counts -- so the reset we perform to escape a
+            # stale anchor manufactures the exact failure detail that re-arms
+            # the cooldown. Disarm the physical sends we are settling here,
+            # using the same marker a failed send already uses, so the reader's
+            # attempt selection classifies them as settled instead of eligible.
+            async with session.pending_lock:
+                for pending_request_state in session.pending_requests:
+                    pending_attempt = getattr(pending_request_state, "response_create_attempt", None)
+                    if pending_attempt is not None:
+                        pending_attempt.disarmed = True
         async with self._http_bridge_lock:
             # Pending settlement below may block or fail before resource close
             # starts. Transfer canonical routing into detached lifecycle
