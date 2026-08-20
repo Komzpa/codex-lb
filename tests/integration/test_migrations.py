@@ -1911,6 +1911,40 @@ async def test_file_account_pins_migration_upgrade_and_downgrade(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_file_account_pins_migration_repairs_existing_table_missing_index(tmp_path):
+    from sqlalchemy import inspect as sa_inspect
+
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'partial-file-account-pins.sqlite'}"
+    parent_revision = "20260806_000000_add_anonymous_telemetry"
+    pin_revision = "20260813_000000_add_file_account_pins"
+
+    await to_thread.run_sync(lambda: run_upgrade(db_url, parent_revision, bootstrap_legacy=False))
+    engine = create_async_engine(db_url, future=True)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "CREATE TABLE file_account_pins ("
+                    "file_id VARCHAR NOT NULL PRIMARY KEY, "
+                    "account_id VARCHAR NOT NULL, "
+                    "expires_at DATETIME NOT NULL)"
+                )
+            )
+
+        await to_thread.run_sync(lambda: run_upgrade(db_url, pin_revision, bootstrap_legacy=False))
+        await to_thread.run_sync(lambda: run_upgrade(db_url, pin_revision, bootstrap_legacy=False))
+        async with engine.connect() as conn:
+            indexes = await conn.run_sync(
+                lambda sync_conn: {index["name"] for index in sa_inspect(sync_conn).get_indexes("file_account_pins")}
+            )
+        assert indexes == {"ix_file_account_pins_expires_at"}
+        await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+        assert check_schema_drift(db_url) == ()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_retired_identity_and_warmup_merge_stamp_repairs_to_head(tmp_path):
     from alembic import command
     from sqlalchemy import inspect as sa_inspect
