@@ -95,7 +95,7 @@ function parseNonNegativeFloat(value: string): number | undefined {
 const DEFAULT_REASONING_EFFORTS = ["low", "medium", "high"];
 
 function normalizeReasoningEffort(value: string): string {
-  return value.trim().toLowerCase();
+  return value.trim();
 }
 
 function dedupeReasoningEfforts(values: Iterable<string>): string[] {
