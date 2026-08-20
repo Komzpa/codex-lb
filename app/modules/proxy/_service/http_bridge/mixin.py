@@ -2180,6 +2180,14 @@ class _HTTPBridgeMixin(
                     complete_failed_handoff()
                     raise
                 if account_neutral_recovery and selection.error_code == CONTINUITY_OWNER_UNAVAILABLE:
+                    # The continuity owner this session is pinned to is gone.
+                    # That is a routing/ownership failure of ours, so a
+                    # half-open probe consumed by this reattach goes back
+                    # instead of leaving the bridge key suppressed.
+                    await self._release_http_bridge_retry_circuit_half_open(
+                        session,
+                        detail=CONTINUITY_OWNER_UNAVAILABLE,
+                    )
                     complete_failed_handoff()
                     raise _http_bridge_previous_response_owner_unavailable_error()
                 if (

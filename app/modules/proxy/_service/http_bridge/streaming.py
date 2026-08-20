@@ -3391,6 +3391,7 @@ class _HTTPBridgeStreamingMixin:
                         # either rolled back or settled. Releasing it here
                         # would make both transitions fail their owner fence.
                         preserve_durable_lease=True,
+                        server_continuity_loss_detail="previous_response_not_found",
                     )
                     switch_to_account_neutral_replay()
                     request_state.recovery_attempt_fingerprint = durable_recovery_attempt_fingerprint
@@ -3498,6 +3499,7 @@ class _HTTPBridgeStreamingMixin:
                     session,
                     error_code="stream_incomplete",
                     error_message="Upstream websocket closed before response.completed",
+                    server_continuity_loss_detail="previous_response_not_found",
                 )
                 recovery_path = "local_previous_response_error"
                 retry_payload = effective_payload
@@ -3734,7 +3736,19 @@ class _HTTPBridgeStreamingMixin:
         error_code: str,
         error_message: str,
         preserve_durable_lease: bool = False,
+        server_continuity_loss_detail: str | None = None,
     ) -> None:
+        if server_continuity_loss_detail is not None:
+            # This reset is the proxy abandoning its own stale anchor, not an
+            # upstream transport failure. If this turn was the half-open probe,
+            # hand the lease back before the session is detached; otherwise the
+            # bridge key stays suppressed for the full lease while every
+            # reconnect is told to retry in a second, which is the endless
+            # "cooling down" loop this path is supposed to recover from.
+            await self._release_http_bridge_retry_circuit_half_open(
+                session,
+                detail=server_continuity_loss_detail,
+            )
         async with self._http_bridge_lock:
             # Pending settlement below may block or fail before resource close
             # starts. Transfer canonical routing into detached lifecycle
