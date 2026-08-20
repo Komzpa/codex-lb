@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import { mergeReasoningMetadata, parseReasoningEffortsInput } from "./model-source-form";
 
 describe("model-source-form reasoning effort normalization", () => {
@@ -24,4 +23,3 @@ describe("model-source-form reasoning effort normalization", () => {
     expect(parsed.default_reasoning_level).toBe("provider-specific");
   });
 });
-
