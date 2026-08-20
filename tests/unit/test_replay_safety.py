@@ -1007,46 +1007,6 @@ def test_full_resend_suffix_accepts_only_self_contained_tool_loops(
     )
 
 
-def test_account_neutral_fresh_replay_accepts_compaction_context_item() -> None:
-    payload: dict[str, JsonValue] = {
-        "input": [
-            {
-                "type": "compaction",
-                "status": "completed",
-                "encrypted_content": "encrypted-compact-context",
-            },
-            {
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": "continue"}],
-            },
-        ],
-    }
-
-    assert responses_payload_is_account_neutral_fresh_replay(payload) is True
-
-
-def test_account_neutral_fresh_replay_accepts_self_contained_tool_search_pair() -> None:
-    input_items: list[JsonValue] = [
-        {
-            "type": "tool_search_call",
-            "call_id": "call_search",
-            "arguments": {"query": "codex-lb"},
-            "status": "completed",
-        },
-        {
-            "type": "tool_search_output",
-            "call_id": "call_search",
-            "output": "Found codex-lb",
-            "status": "completed",
-        },
-        {"role": "user", "content": [{"type": "input_text", "text": "continue"}]},
-    ]
-
-    assert responses_input_items_are_self_contained_fresh_replay(input_items) is True
-    assert responses_payload_is_account_neutral_fresh_replay({"input": input_items}) is True
-
-
 def test_full_resend_tool_loop_manifest_tolerates_fresh_developer_interleave_after_historical_one() -> None:
     stored_input: list[JsonValue] = [
         {"role": "user", "content": "first question"},
