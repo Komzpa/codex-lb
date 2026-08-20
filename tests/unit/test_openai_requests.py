@@ -2556,6 +2556,72 @@ def test_compact_trimming_preserves_plan_and_goal_tool_call_outputs():
     assert unrelated_output not in dumped_input
 
 
+def test_compact_trimming_elides_old_state_tool_pairs_when_required_state_exceeds_budget():
+    input_items: list[JsonValue] = [{"role": "user", "content": "initial request"}]
+    old_plan_pairs: list[tuple[JsonValue, JsonValue]] = []
+    for index in range(14):
+        call = {
+            "type": "function_call",
+            "name": "update_plan",
+            "call_id": f"call-plan-{index}",
+            "arguments": json.dumps({"plan": [{"step": f"step {index}", "status": "completed"}]}),
+        }
+        output = {
+            "type": "function_call_output",
+            "call_id": f"call-plan-{index}",
+            "output": "Plan updated " + str(index) + " " + "x" * 32_000,
+        }
+        old_plan_pairs.append((call, output))
+        input_items.extend([call, output])
+    latest_request = {"role": "user", "content": "continue after compaction"}
+    input_items.append(latest_request)
+    payload = {
+        "model": "gpt-5.6-sol",
+        "instructions": "",
+        "input": input_items,
+    }
+
+    dumped_input = ResponsesCompactRequest.model_validate(payload).to_payload()["input"]
+
+    assert isinstance(dumped_input, list)
+    latest_call, latest_output = old_plan_pairs[-1]
+    assert latest_call in dumped_input
+    assert latest_output in dumped_input
+    assert latest_request in dumped_input
+    assert any(call not in dumped_input and output not in dumped_input for call, output in old_plan_pairs[:-1])
+    assert all((call in dumped_input) == (output in dumped_input) for call, output in old_plan_pairs)
+    assert _estimated_json_tokens(dumped_input) <= _MAX_COMPACT_UPSTREAM_ESTIMATED_TOKENS
+
+
+def test_compact_trimming_rejects_current_state_tool_pair_that_cannot_fit():
+    current_call = {
+        "type": "function_call",
+        "name": "update_plan",
+        "call_id": "call-current-plan",
+        "arguments": json.dumps({"plan": [{"step": "current", "status": "in_progress"}]}),
+    }
+    current_output = {
+        "type": "function_call_output",
+        "call_id": "call-current-plan",
+        "output": "Plan updated " + "x" * 450_000,
+    }
+    payload = {
+        "model": "gpt-5.6-sol",
+        "instructions": "",
+        "input": [
+            {"role": "user", "content": "initial request"},
+            current_call,
+            current_output,
+        ],
+    }
+
+    with pytest.raises(ClientPayloadError, match="cannot be trimmed without removing required state anchors") as raised:
+        ResponsesCompactRequest.model_validate(payload).to_payload()
+
+    assert raised.value.param == "input"
+    assert raised.value.code == "responses_compact_input_too_large"
+
+
 def test_compact_trimming_preserves_historical_side_effect_tool_pair():
     pr_create_call = {
         "type": "function_call",
