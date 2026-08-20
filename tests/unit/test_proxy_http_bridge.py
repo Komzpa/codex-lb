@@ -20768,6 +20768,205 @@ async def test_previous_response_not_found_drops_session_anchor_by_rejected_id(
     assert session.last_pending_tool_calls == {}
 
 
+async def _run_rejected_anchor_retry_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    replay_safe: bool,
+    initial_replay_count: int = 0,
+    initial_previous_response_id: str | None = "resp_dead_anchor_retry",
+) -> tuple[
+    proxy_service.ProxyService,
+    proxy_service._WebSocketRequestState,
+    proxy_service._HTTPBridgeSession,
+    list[dict[str, Any]],
+    AsyncMock,
+    AsyncMock,
+]:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    fresh_text = (
+        '{"type":"response.create","model":"gpt-5.6-sol",'
+        '"input":[{"role":"user","content":"full retry context"}]}'
+    )
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-rejected-anchor-retry",
+        model="gpt-5.6-sol",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        previous_response_id=initial_previous_response_id,
+        proxy_injected_previous_response_id=initial_previous_response_id is not None,
+        fresh_upstream_request_text=fresh_text,
+        fresh_upstream_request_is_retry_safe=replay_safe,
+        replay_count=initial_replay_count,
+        awaiting_response_created=True,
+        event_queue=asyncio.Queue(),
+        request_text=(
+            '{"type":"response.create","model":"gpt-5.6-sol",'
+            '"previous_response_id":"resp_dead_anchor_retry","input":"trimmed"}'
+        ),
+        transport="http",
+        skip_request_log=True,
+    )
+    session = _make_bridge_session(
+        key_value="sid-rejected-anchor-retry",
+        pending_requests=deque([request_state]),
+        queued_request_count=1,
+    )
+    session.durable_session_id = "durable-rejected-anchor-retry"
+    session.durable_owner_epoch = 3
+    session.last_completed_response_id = "resp_dead_anchor_retry"
+    session.last_completed_response_account_id = "acc-bridge"
+
+    clear_anchor = AsyncMock(
+        return_value=proxy_service.DurableBridgeLookup(
+            session_id="durable-rejected-anchor-retry",
+            canonical_kind="session_header",
+            canonical_key="sid-rejected-anchor-retry",
+            api_key_scope="__anonymous__",
+            account_id="acc-bridge",
+            owner_instance_id=_make_app_settings().http_responses_session_bridge_instance_id,
+            owner_epoch=3,
+            lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+            state=HttpBridgeSessionState.ACTIVE,
+            latest_turn_state=None,
+            latest_response_id=None,
+        )
+    )
+    reconnect = AsyncMock()
+    sent_payloads: list[dict[str, Any]] = []
+
+    async def send_text(
+        _session: proxy_service._HTTPBridgeSession,
+        sent_state: proxy_service._WebSocketRequestState,
+        text_data: str,
+    ) -> None:
+        assert sent_state is request_state
+        sent_payloads.append(_without_installation_metadata(text_data))
+        event_queue = sent_state.event_queue
+        assert event_queue is not None
+        await event_queue.put('data: {"type":"response.created","response":{"id":"resp_retry_completed"}}\n\n')
+        await event_queue.put('data: {"type":"response.completed","response":{"id":"resp_retry_completed"}}\n\n')
+        await event_queue.put(None)
+
+    retry_circuit_failure = AsyncMock()
+    monkeypatch.setattr(service._durable_bridge, "clear_live_session_response_anchor", clear_anchor)
+    monkeypatch.setattr(service, "_reconnect_http_bridge_session", reconnect)
+    monkeypatch.setattr(service, "_handle_stream_error", AsyncMock())
+    monkeypatch.setattr(
+        http_bridge_request_submit_module,
+        "_send_http_bridge_request_text_with_archive_id",
+        send_text,
+    )
+    monkeypatch.setattr(
+        service,
+        "_record_http_bridge_retry_circuit_failure_for_attempt_selection",
+        retry_circuit_failure,
+    )
+
+    await service._process_http_bridge_upstream_text(
+        session,
+        json.dumps(
+            {
+                "type": "error",
+                "status": 400,
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "previous_response_not_found",
+                    "message": "Previous response with id 'resp_dead_anchor_retry' not found.",
+                    "param": "previous_response_id",
+                },
+            },
+            separators=(",", ":"),
+        ),
+    )
+
+    return service, request_state, session, sent_payloads, reconnect, retry_circuit_failure
+
+
+@pytest.mark.asyncio
+async def test_previous_response_not_found_retries_replay_safe_cleared_anchor_to_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _service, request_state, session, sent_payloads, reconnect, retry_circuit_failure = (
+        await _run_rejected_anchor_retry_sequence(monkeypatch, replay_safe=True)
+    )
+
+    assert reconnect.await_count == 1
+    assert sent_payloads == [
+        {
+            "type": "response.create",
+            "model": "gpt-5.6-sol",
+            "input": [{"role": "user", "content": "full retry context"}],
+        }
+    ]
+    assert request_state.previous_response_id is None
+    assert request_state.proxy_injected_previous_response_id is False
+    assert request_state.replay_count == 1
+    assert session.last_completed_response_id is None
+    assert list(session.pending_requests) == [request_state]
+    assert session.queued_request_count == 1
+    retry_circuit_failure.assert_not_awaited()
+
+    event_queue = request_state.event_queue
+    assert event_queue is not None
+    created = await asyncio.wait_for(event_queue.get(), timeout=0.2)
+    completed = await asyncio.wait_for(event_queue.get(), timeout=0.2)
+    assert await asyncio.wait_for(event_queue.get(), timeout=0.2) is None
+    assert created is not None and '"type":"response.created"' in created
+    assert completed is not None and '"type":"response.completed"' in completed
+    assert "previous_response_not_found" not in created + completed
+
+
+@pytest.mark.asyncio
+async def test_previous_response_not_found_does_not_retry_when_replay_is_unsafe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _service, request_state, session, sent_payloads, reconnect, _retry_circuit_failure = (
+        await _run_rejected_anchor_retry_sequence(monkeypatch, replay_safe=False)
+    )
+
+    assert reconnect.await_count == 0
+    assert sent_payloads == []
+    assert session.pending_requests == deque()
+    assert session.queued_request_count == 0
+    event_queue = request_state.event_queue
+    assert event_queue is not None
+    event_block = await asyncio.wait_for(event_queue.get(), timeout=0.2)
+    assert await asyncio.wait_for(event_queue.get(), timeout=0.2) is None
+    payload = proxy_service.parse_sse_data_json(event_block)
+    assert isinstance(payload, dict)
+    error = cast(dict[str, Any], cast(dict[str, Any], payload["response"])["error"])
+    assert error["code"] == "stream_incomplete"
+
+
+@pytest.mark.asyncio
+async def test_previous_response_not_found_does_not_loop_after_fresh_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _service, request_state, session, sent_payloads, reconnect, _retry_circuit_failure = (
+        await _run_rejected_anchor_retry_sequence(
+            monkeypatch,
+            replay_safe=True,
+            initial_replay_count=1,
+            initial_previous_response_id=None,
+        )
+    )
+
+    assert reconnect.await_count == 0
+    assert sent_payloads == []
+    assert request_state.replay_count == 1
+    assert session.pending_requests == deque()
+    event_queue = request_state.event_queue
+    assert event_queue is not None
+    event_block = await asyncio.wait_for(event_queue.get(), timeout=0.2)
+    assert await asyncio.wait_for(event_queue.get(), timeout=0.2) is None
+    payload = proxy_service.parse_sse_data_json(event_block)
+    assert isinstance(payload, dict)
+    error = cast(dict[str, Any], cast(dict[str, Any], payload["response"])["error"])
+    assert error["code"] == "stream_incomplete"
+
+
 @pytest.mark.asyncio
 async def test_previous_response_not_found_does_not_clear_anchor_after_durable_fence_miss(
     monkeypatch: pytest.MonkeyPatch,

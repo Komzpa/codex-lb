@@ -1126,7 +1126,7 @@ async def _drop_rejected_http_bridge_response_anchor(
     *,
     request_states: Iterable[_WebSocketRequestState | None],
     previous_response_id_hint: str | None,
-) -> None:
+) -> bool:
     """Stop replaying an anchor upstream has said does not exist.
 
     ``previous_response_not_found`` naming a response id is a definitive
@@ -1146,7 +1146,7 @@ async def _drop_rejected_http_bridge_response_anchor(
         session=session,
     )
     if rejected_response_id is None:
-        return
+        return False
     durable_fence_required = session.durable_session_id is not None and session.durable_owner_epoch is not None
     durable_cleared = await _clear_durable_http_bridge_response_anchor(
         service,
@@ -1169,6 +1169,66 @@ async def _drop_rejected_http_bridge_response_anchor(
         local_cleared,
         durable_cleared,
     )
+    return local_cleared or durable_cleared
+
+
+async def _retry_http_bridge_after_rejected_anchor_clear(
+    service: Any,
+    session: "_HTTPBridgeSession",
+    *,
+    request_state: _WebSocketRequestState | None,
+    claimed_terminal_request_states: list[_WebSocketRequestState],
+) -> bool:
+    if request_state is None:
+        return False
+    if (
+        request_state.previous_response_id is None
+        or not request_state.fresh_upstream_request_text
+        or not request_state.fresh_upstream_request_is_retry_safe
+        or request_state.replay_count >= 1
+        or request_state.response_event_count > 0
+        or request_state.event_queue is None
+        or request_state.draining_until_terminal
+        or not request_state.request_text
+    ):
+        return False
+
+    async with session.pending_lock:
+        if request_state.draining_until_terminal or request_state.event_queue is None:
+            return False
+        restored_to_pending = request_state not in session.pending_requests
+        if restored_to_pending:
+            session.pending_requests.appendleft(request_state)
+            if _http_bridge_request_counts_against_queue(request_state):
+                session.queued_request_count += 1
+        request_state.awaiting_response_created = True
+        request_state.response_id = None
+        request_state.terminal_settlement_phase = None
+
+    original_previous_response_id = request_state.previous_response_id
+    original_proxy_injected_previous_response_id = request_state.proxy_injected_previous_response_id
+    retried = await service._retry_http_bridge_request_on_fresh_upstream(
+        session,
+        request_state=request_state,
+        text_data=request_state.request_text,
+        send_request=True,
+    )
+    if retried:
+        if request_state in claimed_terminal_request_states:
+            claimed_terminal_request_states.remove(request_state)
+        return True
+
+    async with session.pending_lock:
+        request_state.previous_response_id = original_previous_response_id
+        request_state.proxy_injected_previous_response_id = original_proxy_injected_previous_response_id
+        if request_state in session.pending_requests:
+            session.pending_requests.remove(request_state)
+            if _http_bridge_request_counts_against_queue(request_state):
+                session.queued_request_count = max(0, session.queued_request_count - 1)
+        request_state.terminal_settlement_phase = "claimed"
+        if request_state not in claimed_terminal_request_states:
+            claimed_terminal_request_states.append(request_state)
+    return False
 
 
 async def _abandon_durable_http_bridge_continuity(
@@ -2221,7 +2281,7 @@ class _HTTPBridgeUpstreamEventsMixin:
                         claimed_terminal_request_states.append(claimed_request_state)
 
         if is_previous_response_not_found_event:
-            await _drop_rejected_http_bridge_response_anchor(
+            rejected_anchor_cleared = await _drop_rejected_http_bridge_response_anchor(
                 self,
                 session,
                 request_states=(
@@ -2231,6 +2291,20 @@ class _HTTPBridgeUpstreamEventsMixin:
                 ),
                 previous_response_id_hint=previous_response_id_hint,
             )
+            retry_request_state = terminal_request_state or matched_request_state
+            if retry_request_state is None and len(grouped_previous_response_request_states) == 1:
+                retry_request_state = grouped_previous_response_request_states[0]
+            if (
+                rejected_anchor_cleared
+                and not has_other_pending_requests
+                and await _retry_http_bridge_after_rejected_anchor_clear(
+                    self,
+                    session,
+                    request_state=retry_request_state,
+                    claimed_terminal_request_states=claimed_terminal_request_states,
+                )
+            ):
+                return
 
         if len(grouped_previous_response_request_states) > 1:
             session.upstream_control.reconnect_requested = True
