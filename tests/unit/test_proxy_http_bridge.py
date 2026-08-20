@@ -28762,9 +28762,9 @@ def _make_anchored_bridge_request_state(request_id: str) -> Any:
 
 
 async def _reset_for_continuity_loss(service: Any, session: Any, *, server_continuity_loss: bool) -> None:
-    cast(Any, service)._detach_http_bridge_session_locked = Mock(return_value=session)
-    cast(Any, service)._fail_pending_websocket_requests = AsyncMock(return_value=True)
-    cast(Any, service)._close_http_bridge_session = AsyncMock()
+    service._detach_http_bridge_session_locked = Mock(return_value=session)
+    service._fail_pending_websocket_requests = AsyncMock(return_value=True)
+    service._close_http_bridge_session = AsyncMock()
     await service._reset_http_bridge_session_after_local_terminal_error(
         session,
         error_code="stream_incomplete",
