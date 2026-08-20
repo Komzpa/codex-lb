@@ -38,9 +38,19 @@ from app.core.clients.proxy_websocket import (
 from app.core.config.settings import Settings
 from app.core.errors import openai_error
 from app.core.utils.request_id import get_request_id, reset_request_scope_id, set_request_scope_id
-from app.db.models import AccountStatus, Base, HttpBridgeSessionState
+from app.db.models import (
+    AccountStatus,
+    HttpBridgeOperationEvent,
+    HttpBridgeOperationRecord,
+    HttpBridgeRecoveryAttemptRecord,
+    HttpBridgeRetryCircuit,
+    HttpBridgeSessionAlias,
+    HttpBridgeSessionRecord,
+    HttpBridgeSessionState,
+)
 from app.modules.proxy import affinity as proxy_affinity
 from app.modules.proxy import http_bridge_forwarding as http_bridge_forwarding_module
+from app.modules.proxy import ring_membership as ring_membership_module
 from app.modules.proxy import service as proxy_service
 from app.modules.proxy._service import support as proxy_support_module
 from app.modules.proxy._service.http_bridge import helpers as http_bridge_helpers_module
@@ -67,6 +77,42 @@ from app.modules.proxy.http_bridge_forwarding import OwnerForwardRelayFailure
 from app.modules.proxy.load_balancer import CONTINUITY_OWNER_UNAVAILABLE, CatalogOmissionQuotaAdmission
 
 pytestmark = pytest.mark.unit
+
+
+def _create_sqlite_tables(sync_conn: Any, *tables: Any) -> None:
+    for table in tables:
+        table.create(sync_conn, checkfirst=True)
+
+
+def _create_durable_bridge_tables(sync_conn: Any) -> None:
+    _create_sqlite_tables(
+        sync_conn,
+        HttpBridgeSessionRecord.__table__,
+        HttpBridgeSessionAlias.__table__,
+        HttpBridgeRetryCircuit.__table__,
+        HttpBridgeRecoveryAttemptRecord.__table__,
+        HttpBridgeOperationRecord.__table__,
+        HttpBridgeOperationEvent.__table__,
+    )
+
+
+class _EndpointlessBridgeRing:
+    def __init__(self, *active_instances: str) -> None:
+        self._active_instances = frozenset(active_instances)
+
+    async def list_active(self, *, require_endpoint: bool = False) -> list[str]:
+        active = sorted(self._active_instances)
+        if not require_endpoint:
+            return active
+        return [instance_id for instance_id in active if await self.resolve_endpoint(instance_id) is not None]
+
+    async def resolve_endpoint(self, instance_id: str) -> str | None:
+        if instance_id not in self._active_instances:
+            return None
+        try:
+            return ring_membership_module._bridge_ring_endpoint_from_metadata(None, instance_id=instance_id)
+        except TypeError:
+            return ring_membership_module._bridge_ring_endpoint_from_metadata(None)
 
 
 def _durable_owner_lookup(*, process_epoch: str, lease_expires_at: datetime) -> DurableBridgeLookup:
@@ -16827,6 +16873,126 @@ async def test_get_or_create_http_bridge_session_returns_owner_forward_for_hard_
 
 
 @pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_forwards_endpointless_blue_green_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    service._ring_membership = cast(
+        Any,
+        _EndpointlessBridgeRing("instance-a", "codex-lb-before-live-stack-abc-20260821T010203Z"),
+    )
+    key = proxy_service._HTTPBridgeSessionKey("turn_state_header", "http_turn_123", None)
+    created_session = _make_bridge_session(key=key, key_value="http_turn_123")
+    claim_409 = ProxyResponseError(
+        409,
+        proxy_service.openai_error(
+            "bridge_instance_mismatch",
+            "HTTP bridge session is owned by a different instance; retry to reach the correct replica",
+            error_type="server_error",
+        ),
+    )
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_create_http_bridge_session", AsyncMock(return_value=created_session))
+    claim_durable = AsyncMock(side_effect=claim_409)
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", claim_durable)
+    monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        proxy_service,
+        "get_settings",
+        lambda: _make_app_settings(http_responses_session_bridge_instance_id="instance-a"),
+    )
+
+    resolved = await service._get_or_create_http_bridge_session(
+        key,
+        headers={"x-codex-turn-state": "http_turn_123"},
+        affinity=proxy_service._AffinityPolicy(key="http_turn_123"),
+        api_key=None,
+        request_model="gpt-5.4",
+        idle_ttl_seconds=120.0,
+        max_sessions=8,
+        previous_response_id="resp_prev_1",
+        allow_forward_to_owner=True,
+        durable_lookup=proxy_service.DurableBridgeLookup(
+            session_id="durable-1",
+            canonical_kind="turn_state_header",
+            canonical_key="http_turn_123",
+            api_key_scope="__anonymous__",
+            account_id="acc-1",
+            owner_instance_id="codex-lb-before-live-stack-abc-20260821T010203Z",
+            owner_epoch=2,
+            lease_expires_at=proxy_service.utcnow() + timedelta(seconds=60),
+            state=HttpBridgeSessionState.ACTIVE,
+            latest_turn_state="http_turn_123",
+            latest_response_id="resp_prev_1",
+        ),
+    )
+
+    assert isinstance(resolved, proxy_service._HTTPBridgeOwnerForward)
+    assert resolved.owner_instance == "codex-lb-before-live-stack-abc-20260821T010203Z"
+    assert resolved.owner_endpoint == "http://codex-lb-before-live-stack-abc-20260821T010203Z:2455"
+    assert resolved.key == key
+    claim_durable.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_fails_closed_for_unresolvable_blue_green_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    service._ring_membership = cast(Any, _EndpointlessBridgeRing("instance-a"))
+    key = proxy_service._HTTPBridgeSessionKey("turn_state_header", "http_turn_123", None)
+    created_session = _make_bridge_session(key=key, key_value="http_turn_123")
+    claim_409 = ProxyResponseError(
+        409,
+        proxy_service.openai_error(
+            "bridge_instance_mismatch",
+            "HTTP bridge session is owned by a different instance; retry to reach the correct replica",
+            error_type="server_error",
+        ),
+    )
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_create_http_bridge_session", AsyncMock(return_value=created_session))
+    claim_durable = AsyncMock(side_effect=claim_409)
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", claim_durable)
+    monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        proxy_service,
+        "get_settings",
+        lambda: _make_app_settings(http_responses_session_bridge_instance_id="instance-a"),
+    )
+
+    with pytest.raises(ProxyResponseError) as exc_info:
+        await service._get_or_create_http_bridge_session(
+            key,
+            headers={"x-codex-turn-state": "http_turn_123"},
+            affinity=proxy_service._AffinityPolicy(key="http_turn_123"),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=8,
+            previous_response_id="resp_prev_1",
+            allow_forward_to_owner=True,
+            durable_lookup=proxy_service.DurableBridgeLookup(
+                session_id="durable-1",
+                canonical_kind="turn_state_header",
+                canonical_key="http_turn_123",
+                api_key_scope="__anonymous__",
+                account_id="acc-1",
+                owner_instance_id="codex-lb-before-live-stack-abc-20260821T010203Z",
+                owner_epoch=2,
+                lease_expires_at=proxy_service.utcnow() + timedelta(seconds=60),
+                state=HttpBridgeSessionState.ACTIVE,
+                latest_turn_state="http_turn_123",
+                latest_response_id="resp_prev_1",
+            ),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.payload["error"]["code"] == "bridge_instance_mismatch"
+    claim_durable.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_get_or_create_http_bridge_session_forwards_durable_parallel_lane_to_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -18685,7 +18851,7 @@ async def test_get_or_create_does_not_steal_when_active_lookup_becomes_live_drai
 ) -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_create_durable_bridge_tables)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     coordinator = DurableBridgeSessionCoordinator(cast(Callable[[], AsyncSession], session_factory))
     stale_lookup = await coordinator.claim_live_session(
