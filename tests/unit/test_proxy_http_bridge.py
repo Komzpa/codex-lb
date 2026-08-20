@@ -25370,6 +25370,9 @@ async def test_stream_via_http_bridge_forks_account_neutral_model_transition_aft
         kind=creation_keys[1].affinity_kind,
         key=creation_keys[1].affinity_key,
     )
+    # The child lane stays owner-bound so a later capacity failure cannot soft
+    # reroute this request onto a third account.
+    assert creation_keys[1].strength == "hard"
     assert creation_calls[0]["preferred_account_id"] == "acc-model-owner"
     assert creation_calls[0]["preferred_account_has_continuity_provenance"] is True
     assert creation_calls[1]["preferred_account_id"] is None
@@ -25597,8 +25600,45 @@ async def test_stream_via_http_bridge_model_transition_owner_conflict_fork_does_
                 }
             ],
         ),
+        # Negative controls for the widened account-neutral classifier (#1849):
+        # a `compaction` item is admitted only when it carries its own
+        # completed encrypted content. A placeholder that merely references the
+        # owner's compacted context, or one still being produced, keeps the
+        # prior turns behind the old owner, so forking would silently drop
+        # them.
+        (
+            False,
+            [
+                {"type": "compaction", "id": "cmpct_model_parent"},
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "continue on the new model"}],
+                },
+            ],
+        ),
+        (
+            False,
+            [
+                {
+                    "type": "compaction",
+                    "status": "in_progress",
+                    "encrypted_content": "gAAAAABopaque",
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "continue on the new model"}],
+                },
+            ],
+        ),
     ],
-    ids=["forwarded-request", "unpinned-input-file"],
+    ids=[
+        "forwarded-request",
+        "unpinned-input-file",
+        "post-compaction-placeholder",
+        "post-compaction-in-progress",
+    ],
 )
 async def test_stream_via_http_bridge_keeps_model_transition_owner_conflict_fail_closed_for_unsafe_fork(
     monkeypatch: pytest.MonkeyPatch,

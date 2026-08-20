@@ -4,7 +4,7 @@ An HTTP bridge model transition can resolve a durable model owner while a
 legacy hard alias resolves to a different account. The bridge then returns
 `continuity_owner_conflict` before dispatch even when the request is a fresh,
 account-neutral payload that can safely start a model-transition child lane.
-Forwarded requests and payloads containing opaque account-scoped inputs must
+Forwarded requests and payloads that still depend on account-scoped state must
 remain fail-closed.
 
 ## What Changes
@@ -14,8 +14,10 @@ remain fail-closed.
 - Require a local request, no `previous_response_id`, no resolved file owner,
   and a payload proven account-neutral by the existing replay-safety validator.
 - Clear session/turn aliases, exclude the conflicting owner, and create a
-  server-namespaced account-neutral lane without changing persisted aliases.
-- Keep forwarded requests, unpinned hosted files, and other owner failures
+  server-namespaced account-neutral lane, pinned `hard`, without changing
+  persisted aliases.
+- Keep forwarded requests, unpinned hosted files, post-compaction payloads whose
+  compacted context is not carried in the request, and other owner failures
   fail-closed.
 
 ## Capabilities

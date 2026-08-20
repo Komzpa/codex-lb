@@ -9,9 +9,11 @@ server-namespaced lane only when the
 request is local (not forwarded), has no `previous_response_id`, has no
 resolved file owner, and the effective payload passes the existing
 account-neutral fresh-replay validator. The child lane MUST clear session and
-turn aliases, exclude the conflicting owner, and force local creation. The
-service MUST preserve the original conflict for every other owner error or
-payload shape.
+turn aliases, exclude the conflicting owner, force local creation, and remain
+owner-bound (`hard`) once created so a later capacity failure cannot reroute the
+same request to a third account. The service MUST attempt this child lane at
+most once per request and MUST preserve the original conflict for every other
+owner error or payload shape.
 
 #### Scenario: Neutral model transition conflict forks locally
 
@@ -22,6 +24,7 @@ payload shape.
 - **AND** bridge creation returns `continuity_owner_conflict`
 - **WHEN** the request is local to the current replica
 - **THEN** the service creates one server-namespaced account-neutral child lane
+- **AND** that child lane key is owner-bound (`hard`)
 - **AND** it excludes account A and does not forward the request
 - **AND** it leaves the original hard aliases unchanged
 
@@ -34,8 +37,25 @@ payload shape.
 
 #### Scenario: Account-bound payload remains fail-closed
 
-- **GIVEN** the effective model-transition payload contains an opaque or
-  account-scoped hosted input such as an unpinned `input_file.file_id`
+- **GIVEN** the effective model-transition payload contains an account-scoped
+  hosted reference such as an unpinned `input_file.file_id`
 - **WHEN** bridge creation returns `continuity_owner_conflict`
 - **THEN** the service returns `continuity_owner_conflict`
 - **AND** it does not retry on another account
+
+#### Scenario: Post-compaction payload without carried compact context stays fail-closed
+
+- **GIVEN** the effective model-transition payload contains a `compaction` item
+  that is not self-contained, such as a placeholder with no encrypted content or
+  a compaction still in progress
+- **WHEN** bridge creation returns `continuity_owner_conflict`
+- **THEN** the service returns `continuity_owner_conflict`
+- **AND** it does not fork the request onto an account that never held the
+  compacted context
+
+#### Scenario: Child lane conflict is not forked again
+
+- **GIVEN** the guarded child lane was already created for this request
+- **WHEN** creation on that lane also returns `continuity_owner_conflict`
+- **THEN** the service returns that error to the caller
+- **AND** it does not create a further account-neutral lane

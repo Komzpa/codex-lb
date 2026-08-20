@@ -2052,7 +2052,18 @@ class _HTTPBridgeStreamingMixin:
             session_header_fallback_key = None
             affinity = _AffinityPolicy()
             replay_kind, replay_key = make_http_bridge_account_neutral_replay_key(uuid4().hex)
-            bridge_session_key = _HTTPBridgeSessionKey(replay_kind, replay_key, bridge_session_key.api_key_id)
+            # Pin the child lane hard instead of inheriting the implicit
+            # default: this fork keeps the client's own payload rather than a
+            # proved full-resend projection like the model-transition fresh
+            # resend above, so once the lane owns upstream turn state there is
+            # no verified replay text that would make a later soft reroute to a
+            # third account safe.
+            bridge_session_key = _HTTPBridgeSessionKey(
+                replay_kind,
+                replay_key,
+                bridge_session_key.api_key_id,
+                strength="hard",
+            )
             account_neutral_recovery = True
             force_local_recovery_creation = True
             model_transition_owner_conflict_fork_attempted = True
