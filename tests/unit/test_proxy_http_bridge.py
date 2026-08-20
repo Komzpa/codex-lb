@@ -25525,6 +25525,7 @@ async def test_stream_via_http_bridge_model_transition_owner_conflict_fork_does_
         ),
     )
     stream_downstream_turn_states: list[str | None] = []
+    stream_request_states: list[Any] = []
 
     async def fake_get_or_create(
         key: proxy_service._HTTPBridgeSessionKey,
@@ -25545,6 +25546,7 @@ async def test_stream_via_http_bridge_model_transition_owner_conflict_fork_does_
         **kwargs: Any,
     ):
         stream_downstream_turn_states.append(kwargs["downstream_turn_state"])
+        stream_request_states.append(kwargs["request_state"])
         yield 'data: {"type":"response.completed"}\n\n'
 
     monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
@@ -25577,6 +25579,15 @@ async def test_stream_via_http_bridge_model_transition_owner_conflict_fork_does_
 
     assert chunks == ['data: {"type":"response.completed"}\n\n']
     assert stream_downstream_turn_states == [None]
+    # The child lane must not inherit the parent's continuity identity: a stale
+    # hard anchor or parent affinity policy would make the submit and
+    # clean-close paths treat this account-neutral fork as the old owner-bound
+    # turn.
+    (child_request_state,) = stream_request_states
+    assert child_request_state.session_id is None
+    assert child_request_state.hard_continuity_anchor is False
+    assert child_request_state.affinity_policy.key is None
+    assert child_request_state.affinity_policy.codex_session_source is None
 
 
 @pytest.mark.asyncio

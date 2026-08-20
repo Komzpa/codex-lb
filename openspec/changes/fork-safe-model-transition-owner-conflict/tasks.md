@@ -10,7 +10,9 @@
 - [x] 2.1 Add the guarded account-neutral model-transition child-lane path.
 - [x] 2.2 Pin the child lane key strength explicitly instead of relying on the
   implicit default.
-- [x] 2.3 Add positive and forwarded/unpinned-file/post-compaction negative
+- [x] 2.3 Reset the child request state's parent-derived affinity policy,
+  continuity anchor, and reused parent turn state.
+- [x] 2.4 Add positive and forwarded/unpinned-file/post-compaction negative
   regressions plus the single-retry bound.
 
 ## 3. Verification

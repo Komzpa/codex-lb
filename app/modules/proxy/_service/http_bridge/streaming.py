@@ -2067,10 +2067,20 @@ class _HTTPBridgeStreamingMixin:
             account_neutral_recovery = True
             force_local_recovery_creation = True
             model_transition_owner_conflict_fork_attempted = True
+            # request_state was prepared for the parent lane before the
+            # creation loop, and `continue` re-enters the loop without
+            # rebuilding it. Reset the parent-derived continuity fields so the
+            # submit, retry, and clean-close paths classify the child as the
+            # account-neutral fresh request it is: a stale hard anchor here
+            # would block a later fresh account switch and let a clean close
+            # treat the parent turn alias as this lane's continuation.
+            request_state.affinity_policy = affinity
+            request_state.hard_continuity_anchor = False
             request_state.preferred_account_id = None
             request_state.excluded_account_ids.update(fresh_replay_excluded_account_ids)
             preferred_account_has_continuity_provenance = False
             if reused_parent_turn_state:
+                request_state.session_id = None
                 downstream_turn_state = None
             return True
 

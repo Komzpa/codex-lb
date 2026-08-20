@@ -28,6 +28,15 @@ server-namespaced account-neutral key, exclude the failed owner, clear the
 preferred owner/provenance, and force local creation. Persisted hard aliases
 are not rewritten.
 
+The request state itself is reset to the child's own identity. It was prepared
+for the parent lane before the creation loop, and the retry re-enters that loop
+without rebuilding it, so the fork clears the parent affinity policy, the hard
+continuity anchor, and a reused parent turn state. Leaving those set would let
+the submit and clean-close paths treat the account-neutral child as the old
+owner-bound turn: a stale anchor blocks the pre-output account switch that the
+neutrality proof already permits, and a clean close would recover it as a
+continuation of the parent turn alias.
+
 The child lane key is pinned `hard` rather than inheriting the implicit
 strength default. The sibling model-transition fresh-resend path may use a
 `soft` key because it substitutes a proved full-resend projection that any
@@ -47,3 +56,5 @@ replay text that would make a later soft reroute to a third account safe.
   exist only behind the previous owner.
 - A second conflict on the child lane must surface the original error instead of
   forking again.
+- The forked child request must not keep the parent's affinity policy, hard
+  continuity anchor, or reused parent turn state.

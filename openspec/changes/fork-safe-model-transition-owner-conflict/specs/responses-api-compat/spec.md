@@ -9,9 +9,10 @@ server-namespaced lane only when the
 request is local (not forwarded), has no `previous_response_id`, has no
 resolved file owner, and the effective payload passes the existing
 account-neutral fresh-replay validator. The child lane MUST clear session and
-turn aliases, exclude the conflicting owner, force local creation, and remain
-owner-bound (`hard`) once created so a later capacity failure cannot reroute the
-same request to a third account. The service MUST attempt this child lane at
+turn aliases, reset the request's parent-derived affinity policy, hard
+continuity anchor, and reused parent turn state, exclude the conflicting owner,
+force local creation, and remain owner-bound (`hard`) once created so a later
+capacity failure cannot reroute the same request to a third account. The service MUST attempt this child lane at
 most once per request and MUST preserve the original conflict for every other
 owner error or payload shape.
 
@@ -26,6 +27,8 @@ owner error or payload shape.
 - **THEN** the service creates one server-namespaced account-neutral child lane
 - **AND** that child lane key is owner-bound (`hard`)
 - **AND** it excludes account A and does not forward the request
+- **AND** the child request carries no parent affinity policy, hard continuity
+  anchor, or reused parent turn state
 - **AND** it leaves the original hard aliases unchanged
 
 #### Scenario: Forwarded model transition conflict remains fail-closed
