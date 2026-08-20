@@ -30230,6 +30230,49 @@ async def test_http_bridge_reader_failure_keeps_waiter_count_when_draining_reque
 
 
 @pytest.mark.asyncio
+async def test_http_bridge_terminal_stale_anchor_seeds_websocket_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    request_state = _make_eventless_http_bridge_owner(request_id="req-bridge-stale-anchor-diagnostics")
+    request_state.previous_response_id = "resp-poisoned-anchor"
+    request_state.proxy_injected_previous_response_id = True
+    request_state.session_id = "sid-bridge-stale-anchor-diagnostics"
+    request_state.upstream_transport = "websocket"
+    log_calls: list[dict[str, Any]] = []
+
+    async def write_request_log(**kwargs: Any) -> None:
+        log_calls.append(kwargs)
+
+    monkeypatch.setattr(service, "_write_request_log", write_request_log)
+
+    await service._finalize_claimed_websocket_requests(
+        account=None,
+        account_id_value="acc-bridge",
+        remaining=[request_state],
+        error_code="previous_response_not_found",
+        error_message="Previous response with id 'resp-poisoned-anchor' not found.",
+        api_key=None,
+        websocket=None,
+        client_send_lock=None,
+        response_create_gate=None,
+        downstream_activity=None,
+        status="error",
+        penalize_account=False,
+        suppress_sequenced_downstream_errors=False,
+    )
+
+    assert len(log_calls) == 1
+    failure_detail = log_calls[0]["failure_detail"]
+    assert isinstance(failure_detail, str)
+    assert "previous_response_source=proxy_injected" in failure_detail
+    assert "owner_lookup_source=http_bridge_session" in failure_detail
+    assert "owner_lookup_outcome=hit" in failure_detail
+    assert "owner_lookup_source=unknown" not in failure_detail
+    assert "owner_lookup_outcome=unknown" not in failure_detail
+
+
+@pytest.mark.asyncio
 async def test_http_bridge_repeated_zero_event_idle_timeouts_poison_anchor_with_waiter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
