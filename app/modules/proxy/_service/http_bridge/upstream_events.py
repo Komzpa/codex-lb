@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any, TypeVar, cast
 
@@ -1019,15 +1019,24 @@ async def _cancel_http_bridge_reader_child(
         return task.done()
 
 
+_HTTP_BRIDGE_REJECTED_ANCHOR_DETAIL = "previous_response_not_found"
+
+
 async def _clear_durable_http_bridge_response_anchor(
     service: Any,
     session: "_HTTPBridgeSession",
+    *,
+    expected_response_id: str | None = None,
+    detail: str = _HTTP_BRIDGE_MISSING_RESPONSE_CREATED_TIMEOUT_DETAIL,
 ) -> None:
-    """Invalidate a durable proxy-injected anchor that proved eventless.
+    """Invalidate a durable proxy-injected anchor that cannot be used again.
 
     Runs while ``session`` still owns the durable row (before retirement
     releases the lease), so the fenced write lands under the session's own
     owner epoch instead of silently losing the fence to a released owner.
+    ``expected_response_id`` additionally requires the row to still hold that
+    exact anchor, so a concurrent turn that already stored a newer one keeps
+    it.
     """
     if session.durable_session_id is None or session.durable_owner_epoch is None:
         return
@@ -1036,9 +1045,10 @@ async def _clear_durable_http_bridge_response_anchor(
             session_id=session.durable_session_id,
             instance_id=_service_get_settings().http_responses_session_bridge_instance_id,
             owner_epoch=session.durable_owner_epoch,
+            expected_response_id=expected_response_id,
         )
     except Exception:
-        logger.warning("Failed to clear durable HTTP bridge response anchor after stuck timeout", exc_info=True)
+        logger.warning("Failed to clear durable HTTP bridge response anchor detail=%s", detail, exc_info=True)
         return
     if lookup is None or lookup.owner_epoch != session.durable_owner_epoch or lookup.latest_response_id is not None:
         # None means the durable row is gone entirely (e.g. purged); an
@@ -1052,9 +1062,70 @@ async def _clear_durable_http_bridge_response_anchor(
         session.key,
         account_id=session.account.id,
         model=session.request_model,
-        detail=_HTTP_BRIDGE_MISSING_RESPONSE_CREATED_TIMEOUT_DETAIL,
+        detail=detail,
         cache_key_family=session.key.affinity_kind,
         model_class=_extract_model_class(session.request_model) if session.request_model else None,
+    )
+
+
+def _http_bridge_rejected_proxy_injected_anchor(
+    request_states: Iterable[_WebSocketRequestState | None],
+    *,
+    previous_response_id_hint: str | None,
+) -> str | None:
+    """Return the proxy-injected anchor upstream has just rejected, if any."""
+    for request_state in request_states:
+        if request_state is None or not request_state.proxy_injected_previous_response_id:
+            continue
+        previous_response_id = request_state.previous_response_id
+        if not previous_response_id:
+            continue
+        # When upstream names the id it could not find, only that id is proven
+        # gone. A differently anchored request that merely matched the same
+        # anonymous error event keeps its own anchor.
+        if previous_response_id_hint is not None and previous_response_id != previous_response_id_hint:
+            continue
+        return previous_response_id
+    return None
+
+
+async def _drop_rejected_http_bridge_response_anchor(
+    service: Any,
+    session: "_HTTPBridgeSession",
+    *,
+    request_states: Iterable[_WebSocketRequestState | None],
+    previous_response_id_hint: str | None,
+) -> None:
+    """Stop replaying an anchor upstream has said does not exist.
+
+    ``previous_response_not_found`` is a definitive upstream answer about one
+    response id, unlike the ambiguous transport outcomes the continuation
+    recovery mode covers. codex-lb keeps that id in two places and re-injects
+    it on later turns for the same session: the durable
+    ``http_bridge_sessions.latest_response_id`` row used by the fresh-reattach
+    path, and ``session.last_completed_response_id`` used by the session-level
+    anchor path. Neither was dropped on this outcome, so every following turn
+    re-sent the rejected id, was trimmed against it, and failed the same way,
+    and the session could not recover on its own. Both are invalidated here,
+    each only while it still holds the exact rejected id.
+    """
+    rejected_response_id = _http_bridge_rejected_proxy_injected_anchor(
+        request_states,
+        previous_response_id_hint=previous_response_id_hint,
+    )
+    if rejected_response_id is None:
+        return
+    if session.last_completed_response_id == rejected_response_id:
+        session.last_completed_response_id = None
+        session.last_completed_response_account_id = None
+        session.last_completed_input_count = 0
+        session.last_completed_input_prefix_fingerprint = None
+        session.last_pending_tool_calls.clear()
+    await _clear_durable_http_bridge_response_anchor(
+        service,
+        session,
+        expected_response_id=rejected_response_id,
+        detail=_HTTP_BRIDGE_REJECTED_ANCHOR_DETAIL,
     )
 
 
@@ -2106,6 +2177,18 @@ class _HTTPBridgeUpstreamEventsMixin:
                     claimed_request_state.terminal_settlement_phase = "claimed"
                     if claimed_request_state not in claimed_terminal_request_states:
                         claimed_terminal_request_states.append(claimed_request_state)
+
+        if is_previous_response_not_found_event:
+            await _drop_rejected_http_bridge_response_anchor(
+                self,
+                session,
+                request_states=(
+                    matched_request_state,
+                    terminal_request_state,
+                    *grouped_previous_response_request_states,
+                ),
+                previous_response_id_hint=previous_response_id_hint,
+            )
 
         if len(grouped_previous_response_request_states) > 1:
             session.upstream_control.reconnect_requested = True

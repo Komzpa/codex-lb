@@ -20492,6 +20492,105 @@ async def test_process_http_bridge_upstream_text_masks_single_previous_response_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("proxy_injected", "upstream_names_this_anchor"),
+    [(True, True), (False, True), (True, False)],
+)
+async def test_previous_response_not_found_drops_only_the_proxy_injected_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+    proxy_injected: bool,
+    upstream_names_this_anchor: bool,
+) -> None:
+    # ``previous_response_not_found`` is upstream's definitive answer that the
+    # anchor no longer exists. When codex-lb is the one that injected it, both
+    # of its own carriers for that id have to stop replaying it, otherwise the
+    # next turn on the same session re-sends the rejected id and fails the same
+    # way indefinitely. A client-supplied anchor is the client's own state, so
+    # neither carrier is touched for it, and neither is an anchor upstream did
+    # not name.
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    rejected_anchor = "resp_upstream_forgot_this_one"
+    named_anchor = rejected_anchor if upstream_names_this_anchor else "resp_some_other_turn"
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-rejected-anchor",
+        model="gpt-5.4",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        previous_response_id=rejected_anchor,
+        event_queue=asyncio.Queue(),
+        transport="http",
+        skip_request_log=True,
+    )
+    request_state.proxy_injected_previous_response_id = proxy_injected
+    session = proxy_service._HTTPBridgeSession(
+        key=proxy_service._HTTPBridgeSessionKey("thread_header", "thread-anchor", None),
+        headers={"x-codex-session-id": "thread-anchor"},
+        affinity=proxy_service._AffinityPolicy(
+            key="thread-anchor",
+            kind=proxy_service.StickySessionKind.CODEX_SESSION,
+        ),
+        request_model="gpt-5.4",
+        account=cast(Any, SimpleNamespace(id="acc-1", status=AccountStatus.ACTIVE)),
+        upstream=cast(UpstreamWebSocket, SimpleNamespace(close=AsyncMock())),
+        upstream_control=proxy_service._WebSocketUpstreamControl(),
+        pending_requests=deque([request_state]),
+        pending_lock=anyio.Lock(),
+        response_create_gate=asyncio.Semaphore(1),
+        queued_request_count=1,
+        last_used_at=1.0,
+        idle_ttl_seconds=120.0,
+    )
+    session.durable_session_id = "durable-rejected-anchor"
+    session.durable_owner_epoch = 7
+    session.last_completed_response_id = rejected_anchor
+    session.last_completed_response_account_id = "acc-1"
+    session.last_completed_input_count = 12
+    session.last_completed_input_prefix_fingerprint = "e" * 64
+    session.last_pending_tool_calls["call_open"] = "function_call"
+    clear_anchor = AsyncMock(return_value=None)
+    monkeypatch.setattr(service._durable_bridge, "clear_live_session_response_anchor", clear_anchor)
+    monkeypatch.setattr(service, "_handle_stream_error", AsyncMock())
+
+    await service._process_http_bridge_upstream_text(
+        session,
+        json.dumps(
+            {
+                "type": "error",
+                "status": 400,
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "previous_response_not_found",
+                    "message": f"Previous response with id '{named_anchor}' not found.",
+                    "param": "previous_response_id",
+                },
+            },
+            separators=(",", ":"),
+        ),
+    )
+
+    if not proxy_injected or not upstream_names_this_anchor:
+        assert clear_anchor.await_count == 0
+        assert session.last_completed_response_id == rejected_anchor
+        assert session.last_completed_input_count == 12
+        return
+
+    assert clear_anchor.await_count == 1
+    assert clear_anchor.await_args is not None
+    assert clear_anchor.await_args.kwargs["session_id"] == "durable-rejected-anchor"
+    assert clear_anchor.await_args.kwargs["owner_epoch"] == 7
+    # The fenced write names the rejected id, so a turn that already stored a
+    # newer anchor on the same durable row keeps it.
+    assert clear_anchor.await_args.kwargs["expected_response_id"] == rejected_anchor
+    assert session.last_completed_response_id is None
+    assert session.last_completed_response_account_id is None
+    assert session.last_completed_input_count == 0
+    assert session.last_completed_input_prefix_fingerprint is None
+    assert session.last_pending_tool_calls == {}
+
+
+@pytest.mark.asyncio
 async def test_process_http_bridge_upstream_text_masks_previous_response_not_found_when_anchor_was_lost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -26643,6 +26742,7 @@ async def test_http_bridge_eventless_timeout_clears_durable_anchor_only_for_expi
         session_id: str,
         instance_id: str,
         owner_epoch: int,
+        expected_response_id: str | None = None,
     ) -> None:
         assert (session_id, instance_id, owner_epoch) == (
             "durable-session-1",
