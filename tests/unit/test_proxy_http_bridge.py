@@ -1626,6 +1626,94 @@ async def test_accepted_capacity_replay_keeps_the_response_identity_the_client_r
 
 
 @pytest.mark.asyncio
+async def test_terminal_capacity_retry_arms_the_eventless_precreated_deadline_after_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A capacity failure that is safe to replay must never surface to the
+    client as a terminal error, and the resend it triggers must not run
+    unsupervised: it has to re-arm the same eventless pre-response watchdog a
+    fresh request gets, so a replayed socket that accepts the send and then
+    goes silent is still caught by the existing deadline instead of hanging
+    the turn forever. This exercises the full send path (not a mocked one),
+    because the watchdog keys off fields only the real send sets."""
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    request_state = _accepted_capacity_retry_state()
+    session = _make_bridge_session(
+        pending_requests=deque([request_state]),
+        queued_request_count=1,
+    )
+    session.upstream = cast(
+        UpstreamWebSocket,
+        SimpleNamespace(send_text=AsyncMock(), close=AsyncMock()),
+    )
+
+    async def fake_acquire(
+        state: proxy_service._WebSocketRequestState,
+        *,
+        response_create_gate: asyncio.Semaphore,
+        **kwargs: object,
+    ) -> None:
+        del kwargs
+        await response_create_gate.acquire()
+        state.response_create_gate = response_create_gate
+        state.response_create_gate_acquired = True
+
+    reconnect = AsyncMock()
+    monkeypatch.setattr(service, "_acquire_request_state_response_create_admission", fake_acquire)
+    monkeypatch.setattr(service, "_reconnect_http_bridge_session", reconnect)
+    monkeypatch.setattr(http_bridge_request_submit_module, "backoff_seconds", lambda _attempt: 0.0)
+    monkeypatch.setattr(
+        http_bridge_request_submit_module,
+        "_service_time",
+        lambda: SimpleNamespace(monotonic=lambda: 500.0),
+    )
+
+    retried = await service._retry_http_bridge_terminal_capacity_request(
+        session,
+        request_state,
+        error_code="server_is_overloaded",
+    )
+
+    assert retried is True
+    reconnect.assert_awaited_once()
+    cast(AsyncMock, session.upstream.send_text).assert_awaited_once()
+
+    # The replay never became a client-visible error: nothing was queued for
+    # the downstream reader across the whole retry.
+    assert request_state.event_queue is not None
+    assert request_state.event_queue.empty()
+
+    # The resend re-arms exactly the fields the standing eventless-precreated
+    # watchdog keys off of, anchored to the resend time rather than the
+    # original failed attempt.
+    armed_deadline = http_bridge_helpers_module._http_bridge_eventless_precreated_deadline(
+        request_state,
+        stuck_gate_retire_after_seconds=300.0,
+    )
+    assert armed_deadline is not None
+    assert armed_deadline == pytest.approx(
+        500.0 + http_bridge_helpers_module._HTTP_BRIDGE_EVENTLESS_RESPONSE_CREATED_MAX_SECONDS
+    )
+
+    # Negative control: once the replayed socket is not silent and actually
+    # delivers a lifecycle event, the watchdog must stand down on its own --
+    # this is not a fixed cooldown, it tracks live evidence of an owner.
+    await service._process_http_bridge_upstream_text(
+        session,
+        json.dumps({"type": "response.created", "response": {"id": "resp-replay"}}, separators=(",", ":")),
+    )
+    assert (
+        http_bridge_helpers_module._http_bridge_eventless_precreated_deadline(
+            request_state,
+            stuck_gate_retire_after_seconds=300.0,
+        )
+        is None
+    )
+    assert request_state.event_queue.empty(), "the suppressed replay response.created still reached the client"
+
+
+@pytest.mark.asyncio
 async def test_terminal_capacity_retry_stops_after_downstream_detach_without_double_counting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

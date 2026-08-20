@@ -56,7 +56,8 @@ None.
 - HTTP bridge classification and replay
   (`app/modules/proxy/_service/http_bridge/upstream_events.py`,
   `app/modules/proxy/_service/http_bridge/request_submit.py`,
-  `app/modules/proxy/_service/http_bridge/protocol.py`), streaming retry
+  `app/modules/proxy/_service/http_bridge/protocol.py`,
+  `app/modules/proxy/_service/http_bridge/helpers.py`), streaming retry
   (`app/modules/proxy/_service/streaming/retry.py`,
   `app/modules/proxy/_service/streaming/mixin.py`), and output bookkeeping
   (`app/modules/proxy/_service/support.py`).
