@@ -673,8 +673,11 @@ async def test_proxy_compact_preserves_single_output_item_with_skill_context(asy
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
+    seen: dict[str, ResponsesCompactRequest] = {}
+
     async def fake_compact(payload, headers, access_token, account_id):
-        del payload, headers, access_token, account_id
+        del headers, access_token, account_id
+        seen["payload"] = payload
         return CompactResponsePayload.model_validate(
             {
                 "object": "response.compaction",
@@ -724,6 +727,7 @@ async def test_proxy_compact_preserves_single_output_item_with_skill_context(asy
             "encrypted_content": "enc_skill_recovery",
         }
     ]
+    assert "<name>grill-me</name>" in json.dumps(seen["payload"].to_payload())
 
 
 @pytest.mark.asyncio

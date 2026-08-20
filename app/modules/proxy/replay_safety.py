@@ -362,6 +362,7 @@ def responses_input_suffix_retains_prior_output(
     compact_context_prefix = _input_prefix_ends_with_self_contained_compaction(input_items[:stored_count])
     retained_output_seen = compact_context_prefix
     retained_output_is_final_answer = False
+    settled_suffix_call_types: set[str] = set()
     fresh_followup_seen = False
     fresh_followup_count = 0
     fresh_followup_is_user_message = False
@@ -400,7 +401,12 @@ def responses_input_suffix_retains_prior_output(
             if pending_suffix_calls[0] != (call_type, call_id):
                 return False
             pending_suffix_calls.popleft()
-            if compact_context_prefix and not pending_suffix_calls and call_type == "tool_search_call":
+            settled_suffix_call_types.add(call_type)
+            if (
+                compact_context_prefix
+                and not pending_suffix_calls
+                and settled_suffix_call_types == {"tool_search_call"}
+            ):
                 retained_output_seen = True
                 retained_output_is_final_answer = False
                 fresh_followup_seen = False

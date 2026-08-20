@@ -627,15 +627,15 @@ def _has_http_bridge_response_output_marker(item: JsonValue) -> bool:
     return status in {"completed", "in_progress"}
 
 
-def _http_bridge_pending_response_events_seen(pending_states: Sequence[Any]) -> int:
+def _http_bridge_pending_response_events_seen(pending_states: Sequence[_WebSocketRequestState]) -> int:
     return max(
         (
             max(
-                int(getattr(state, "response_event_count", 0)),
+                state.response_event_count,
                 int(
-                    getattr(state, "response_id", None) is not None
-                    or getattr(state, "latency_response_created_ms", None) is not None
-                    or bool(getattr(state, "downstream_visible", False))
+                    state.response_id is not None
+                    or state.latency_response_created_ms is not None
+                    or state.downstream_visible
                 ),
             )
             for state in pending_states

@@ -333,6 +333,38 @@ def test_account_neutral_replay_projection_preserves_post_compact_tool_search_co
     assert responses_payload_is_account_neutral_fresh_replay({"input": projection.input_items}) is True
 
 
+def test_account_neutral_fresh_replay_rejects_post_compact_mixed_tool_suffix_before_user_followup() -> None:
+    input_items: list[JsonValue] = [
+        {"type": "compaction", "status": "completed", "encrypted_content": "encrypted-compact-context"},
+        {
+            "type": "function_call",
+            "call_id": "call_function",
+            "name": "lookup",
+            "arguments": "{}",
+            "status": "completed",
+        },
+        {
+            "type": "tool_search_call",
+            "call_id": "call_search",
+            "arguments": {"query": "codex-lb post compact replay"},
+            "execution": "client",
+            "status": "completed",
+        },
+        {"type": "function_call_output", "call_id": "call_function", "output": "result", "status": "completed"},
+        {
+            "type": "tool_search_output",
+            "call_id": "call_search",
+            "output": "search result",
+            "execution": "client",
+            "status": "completed",
+            "tools": [],
+        },
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "continue"}]},
+    ]
+
+    assert responses_input_suffix_retains_prior_output(input_items, stored_count=1) is False
+
+
 def test_account_neutral_fresh_replay_accepts_self_contained_tool_search_pair() -> None:
     input_items: list[JsonValue] = [
         {
