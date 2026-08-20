@@ -2131,6 +2131,12 @@ class _HTTPBridgeMixin(
             _mark_http_bridge_reader_handoff_reconnect_failed(session, old_reader)
             _complete_http_bridge_handoff(session, self._http_bridge_inflight_sessions)
 
+        async def fail_owner_unavailable_after_probe(detail: str = "previous_response_owner_unavailable") -> None:
+            try:
+                await self._release_http_bridge_retry_circuit_half_open(session, detail=detail)
+            finally:
+                complete_failed_handoff()
+
         def require_bound_account() -> None:
             try:
                 _require_http_bridge_bound_account_not_excluded(
@@ -2180,12 +2186,7 @@ class _HTTPBridgeMixin(
                     complete_failed_handoff()
                     raise
                 if account_neutral_recovery and selection.error_code == CONTINUITY_OWNER_UNAVAILABLE:
-                    # Ownership loss is ours, so hand back any half-open probe
-                    # this reattach consumed instead of suppressing the key.
-                    await self._release_http_bridge_retry_circuit_half_open(
-                        session, detail=CONTINUITY_OWNER_UNAVAILABLE
-                    )
-                    complete_failed_handoff()
+                    await fail_owner_unavailable_after_probe(CONTINUITY_OWNER_UNAVAILABLE)
                     raise _http_bridge_previous_response_owner_unavailable_error()
                 if (
                     reuse_current_account_lease
@@ -2198,7 +2199,7 @@ class _HTTPBridgeMixin(
                 if selection.error_code == USAGE_LIMIT_REACHED and (
                     required_preferred_account_id is not None or hard_close_account_bound
                 ):
-                    complete_failed_handoff()
+                    await fail_owner_unavailable_after_probe()
                     raise _http_bridge_previous_response_owner_unavailable_error()
                 if selection.error_code == USAGE_LIMIT_REACHED:
                     record_selected_account_takeover(None)
@@ -2221,7 +2222,7 @@ class _HTTPBridgeMixin(
                 if should_retry_selection:
                     excluded_account_ids.update(request_state.excluded_account_ids)
                     if required_preferred_account_id in excluded_account_ids:
-                        complete_failed_handoff()
+                        await fail_owner_unavailable_after_probe()
                         raise _http_bridge_previous_response_owner_unavailable_error()
                     if skip_same_account:
                         excluded_account_ids.add(session.account.id)
@@ -2250,7 +2251,7 @@ class _HTTPBridgeMixin(
                     selected_account_lease = selection.lease
                     await release_selected_account_lease()
                 record_selected_account_takeover(account.id, required_preferred_account_id)
-                complete_failed_handoff()
+                await fail_owner_unavailable_after_probe()
                 raise _http_bridge_previous_response_owner_unavailable_error()
             selected_account_lease = (
                 session.account_lease

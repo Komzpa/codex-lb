@@ -3738,17 +3738,15 @@ class _HTTPBridgeStreamingMixin:
         preserve_durable_lease: bool = False,
         server_continuity_loss_detail: str | None = None,
     ) -> None:
+        release_half_open_detail = server_continuity_loss_detail
         if server_continuity_loss_detail is not None:
             # This reset is the proxy abandoning its own stale anchor, not an
             # upstream transport failure. If this turn was the half-open probe,
-            # hand the lease back before the session is detached; otherwise the
-            # bridge key stays suppressed for the full lease while every
-            # reconnect is told to retry in a second, which is the endless
-            # "cooling down" loop this path is supposed to recover from.
-            await self._release_http_bridge_retry_circuit_half_open(
-                session,
-                detail=server_continuity_loss_detail,
-            )
+            # hand the lease back after the local sends are disarmed and this
+            # session is detached; otherwise the bridge key stays suppressed
+            # for the full lease while every reconnect is told to retry in a
+            # second, which is the endless "cooling down" loop this path is
+            # supposed to recover from.
             # Closing this session below tears down a websocket that other
             # turns may still be pending on. The reader wakes on that teardown
             # and reports the ordinary transport class, ``stream_incomplete``,
@@ -3770,6 +3768,11 @@ class _HTTPBridgeStreamingMixin:
             self._detach_http_bridge_session_locked(session.key, expected_session=session)
         async with session.pending_lock:
             session.queued_request_count = 0
+        if release_half_open_detail is not None:
+            await self._release_http_bridge_retry_circuit_half_open(
+                session,
+                detail=release_half_open_detail,
+            )
         await self._fail_pending_websocket_requests(
             account=session.account,
             account_id_value=session.account.id,

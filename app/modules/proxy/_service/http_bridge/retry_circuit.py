@@ -84,6 +84,7 @@ class _HTTPBridgeRetryCircuitState:
     last_failure_monotonic: float = 0.0
     last_durable_load_monotonic: float = 0.0
     half_open_until: float = 0.0
+    half_open_owner_session_id: int | None = None
 
 
 def _initialize_http_bridge_retry_circuit(service: Any, reset_transient_cache: Any = None) -> None:
@@ -433,6 +434,7 @@ class _HTTPBridgeRetryCircuitMixin:
                 if state is not None and state.cooldown_until > 0:
                     state.cooldown_until = 0.0
                     state.half_open_until = now + _HTTP_BRIDGE_RETRY_CIRCUIT_HALF_OPEN_LEASE_SECONDS
+                    state.half_open_owner_session_id = id(session)
                     logger.info(
                         "http_bridge_retry_circuit event=half_open bridge_kind=%s bridge_key=%s failures=%s",
                         session.key.affinity_kind,
@@ -512,7 +514,9 @@ class _HTTPBridgeRetryCircuitMixin:
         lease leaks for its full duration and the key is refused for a reason
         the upstream never caused. Returning the lease leaves
         ``consecutive_failures`` and any live cooldown untouched: the next
-        request simply gets to be the probe.
+        request must acquire a new half-open lease before it becomes the
+        probe. Otherwise a returned lease would make every concurrent reconnect
+        pass until one records another upstream failure.
         """
         if session.key.strength != "hard":
             return False
@@ -521,7 +525,11 @@ class _HTTPBridgeRetryCircuitMixin:
             state = self._http_bridge_retry_circuits.get(session.key)
             if state is None or state.half_open_until <= now:
                 return False
+            if state.half_open_owner_session_id not in (None, id(session)):
+                return False
+            state.cooldown_until = now
             state.half_open_until = 0.0
+            state.half_open_owner_session_id = None
             state.last_touched_monotonic = now
             consecutive_failures = state.consecutive_failures
         if PROMETHEUS_AVAILABLE and http_bridge_retry_circuit_total is not None:
@@ -585,6 +593,7 @@ class _HTTPBridgeRetryCircuitMixin:
                 state.last_touched_monotonic = now
                 state.last_failure_monotonic = now
                 state.half_open_until = 0.0
+                state.half_open_owner_session_id = None
                 if scoped_attempt is not None:
                     scoped_attempt.retry_circuit_failure_recorded = True
                     scoped_attempt.retry_circuit_failure_settled = anyio.Event()

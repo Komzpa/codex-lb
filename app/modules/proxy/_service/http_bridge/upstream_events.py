@@ -1081,8 +1081,7 @@ async def _clear_durable_http_bridge_response_anchor(
         model_class=_extract_model_class(session.request_model) if session.request_model else None,
     )
     logger.info(
-        "http_bridge_anchor_clear anchor_id=%s reason=%s fence_decision=cleared "
-        "owner_epoch=%s",
+        "http_bridge_anchor_clear anchor_id=%s reason=%s fence_decision=cleared owner_epoch=%s",
         expected_response_id,
         detail,
         session.durable_owner_epoch,

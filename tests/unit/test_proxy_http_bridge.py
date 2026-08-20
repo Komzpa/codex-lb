@@ -28885,6 +28885,41 @@ async def test_http_bridge_retry_circuit_allows_only_one_half_open_probe() -> No
 
 
 @pytest.mark.asyncio
+async def test_http_bridge_retry_circuit_half_open_release_requires_probe_owner() -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    owner_session = _make_bridge_session(key_value="bridge-circuit-owned-half-open")
+    stale_session = _make_bridge_session(key_value="bridge-circuit-owned-half-open")
+    now = time.monotonic()
+    state = http_bridge_retry_circuit_module._HTTPBridgeRetryCircuitState(
+        consecutive_failures=2,
+        cooldown_until=now - 1.0,
+        last_detail="stream_incomplete",
+        last_touched_monotonic=now,
+    )
+    cast(Any, service)._http_bridge_retry_circuits[owner_session.key] = state
+    service._durable_bridge = SimpleNamespace(lookup_retry_circuit=AsyncMock(return_value=None))
+
+    assert await service._http_bridge_precreated_retry_allowed(owner_session) is True
+    assert state.half_open_owner_session_id == id(owner_session)
+    assert (
+        await service._release_http_bridge_retry_circuit_half_open(
+            stale_session,
+            detail="previous_response_owner_unavailable",
+        )
+        is False
+    )
+    assert state.half_open_until > time.monotonic()
+    assert (
+        await service._release_http_bridge_retry_circuit_half_open(
+            owner_session,
+            detail="previous_response_owner_unavailable",
+        )
+        is True
+    )
+    assert state.half_open_until == 0.0
+
+
+@pytest.mark.asyncio
 async def test_http_bridge_retry_circuit_ignores_server_continuity_ownership_loss() -> None:
     """Our own continuity loss must not charge the client's bridge-key circuit."""
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
@@ -28917,11 +28952,13 @@ async def test_http_bridge_retry_circuit_ignores_server_continuity_ownership_los
 
     assert state.consecutive_failures == 2
     assert state.last_detail == "stream_incomplete"
-    assert state.cooldown_until == 0.0
-    # The probe that died of our continuity loss handed its lease back, so the
-    # next reconnect gets to be the probe instead of waiting out the lease.
+    assert state.cooldown_until > 0.0
+    # The probe that died of our continuity loss handed its lease back as an
+    # elapsed cooldown: the next reconnect may acquire a new half-open probe,
+    # but concurrent reconnects are still suppressed by that fresh lease.
     assert state.half_open_until == 0.0
     assert await service._http_bridge_precreated_retry_allowed(hard_session) is True
+    assert await service._http_bridge_precreated_retry_allowed(hard_session) is False
     service._durable_bridge.persist_retry_circuit.assert_not_awaited()
 
 
@@ -28954,6 +28991,7 @@ async def test_http_bridge_local_terminal_error_reset_returns_half_open_probe() 
     assert state.consecutive_failures == 2
     assert state.half_open_until == 0.0
     assert await service._http_bridge_precreated_retry_allowed(hard_session) is True
+    assert await service._http_bridge_precreated_retry_allowed(hard_session) is False
 
 
 @pytest.mark.asyncio
