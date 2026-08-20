@@ -20493,21 +20493,19 @@ async def test_process_http_bridge_upstream_text_masks_single_previous_response_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("proxy_injected", "upstream_names_this_anchor"),
-    [(True, True), (False, True), (True, False)],
+    ("proxy_injected", "upstream_names_this_anchor", "expect_clear"),
+    [(True, True, True), (False, True, True), (True, False, False)],
 )
-async def test_previous_response_not_found_drops_only_the_proxy_injected_anchor(
+async def test_previous_response_not_found_drops_session_anchor_by_rejected_id(
     monkeypatch: pytest.MonkeyPatch,
     proxy_injected: bool,
     upstream_names_this_anchor: bool,
+    expect_clear: bool,
 ) -> None:
     # ``previous_response_not_found`` is upstream's definitive answer that the
-    # anchor no longer exists. When codex-lb is the one that injected it, both
-    # of its own carriers for that id have to stop replaying it, otherwise the
-    # next turn on the same session re-sends the rejected id and fails the same
-    # way indefinitely. A client-supplied anchor is the client's own state, so
-    # neither carrier is touched for it, and neither is an anchor upstream did
-    # not name.
+    # anchor no longer exists. When that exact id is one of codex-lb's current
+    # session/durable carriers, it has to stop replaying it even if the failed
+    # request did not carry the old proxy-injected marker.
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     rejected_anchor = "resp_upstream_forgot_this_one"
     named_anchor = rejected_anchor if upstream_names_this_anchor else "resp_some_other_turn"
@@ -20549,7 +20547,21 @@ async def test_previous_response_not_found_drops_only_the_proxy_injected_anchor(
     session.last_completed_input_count = 12
     session.last_completed_input_prefix_fingerprint = "e" * 64
     session.last_pending_tool_calls["call_open"] = "function_call"
-    clear_anchor = AsyncMock(return_value=None)
+    clear_anchor = AsyncMock(
+        return_value=proxy_service.DurableBridgeLookup(
+            session_id="durable-rejected-anchor",
+            canonical_kind="thread_header",
+            canonical_key="thread-anchor",
+            api_key_scope="__anonymous__",
+            account_id="acc-1",
+            owner_instance_id=_make_app_settings().http_responses_session_bridge_instance_id,
+            owner_epoch=7,
+            lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+            state=HttpBridgeSessionState.ACTIVE,
+            latest_turn_state=None,
+            latest_response_id=None,
+        )
+    )
     monkeypatch.setattr(service._durable_bridge, "clear_live_session_response_anchor", clear_anchor)
     monkeypatch.setattr(service, "_handle_stream_error", AsyncMock())
 
@@ -20570,7 +20582,7 @@ async def test_previous_response_not_found_drops_only_the_proxy_injected_anchor(
         ),
     )
 
-    if not proxy_injected or not upstream_names_this_anchor:
+    if not expect_clear:
         assert clear_anchor.await_count == 0
         assert session.last_completed_response_id == rejected_anchor
         assert session.last_completed_input_count == 12
@@ -20588,6 +20600,211 @@ async def test_previous_response_not_found_drops_only_the_proxy_injected_anchor(
     assert session.last_completed_input_count == 0
     assert session.last_completed_input_prefix_fingerprint is None
     assert session.last_pending_tool_calls == {}
+
+
+@pytest.mark.asyncio
+async def test_previous_response_not_found_does_not_clear_anchor_after_durable_fence_miss(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    rejected_anchor = "resp_rejected_but_replaced"
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-rejected-fenced",
+        model="gpt-5.4",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        previous_response_id=rejected_anchor,
+        event_queue=asyncio.Queue(),
+        transport="http",
+        skip_request_log=True,
+    )
+    session = _make_bridge_session(key_value="thread-anchor-fenced", pending_requests=deque([request_state]))
+    session.durable_session_id = "durable-rejected-fenced"
+    session.durable_owner_epoch = 7
+    session.last_completed_response_id = rejected_anchor
+    session.last_completed_response_account_id = "acc-bridge"
+    session.last_completed_input_count = 8
+    session.last_completed_input_prefix_fingerprint = "f" * 64
+    session.last_pending_tool_calls["call_live"] = "function_call"
+    newer_lookup = proxy_service.DurableBridgeLookup(
+        session_id="durable-rejected-fenced",
+        canonical_kind="session_header",
+        canonical_key="thread-anchor-fenced",
+        api_key_scope="__anonymous__",
+        account_id="acc-bridge",
+        owner_instance_id=_make_app_settings().http_responses_session_bridge_instance_id,
+        owner_epoch=8,
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+        state=HttpBridgeSessionState.ACTIVE,
+        latest_turn_state=None,
+        latest_response_id="resp_newer_live_anchor",
+    )
+    clear_anchor = AsyncMock(return_value=newer_lookup)
+    monkeypatch.setattr(service._durable_bridge, "clear_live_session_response_anchor", clear_anchor)
+    monkeypatch.setattr(service, "_handle_stream_error", AsyncMock())
+
+    caplog.set_level(logging.INFO, logger="app.modules.proxy.service")
+    await service._process_http_bridge_upstream_text(
+        session,
+        json.dumps(
+            {
+                "type": "error",
+                "status": 400,
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "previous_response_not_found",
+                    "message": f"Previous response with id '{rejected_anchor}' not found.",
+                    "param": "previous_response_id",
+                },
+            },
+            separators=(",", ":"),
+        ),
+    )
+
+    clear_anchor.assert_awaited_once()
+    assert clear_anchor.await_args is not None
+    assert clear_anchor.await_args.kwargs["expected_response_id"] == rejected_anchor
+    assert session.last_completed_response_id == rejected_anchor
+    assert session.last_completed_input_count == 8
+    assert session.last_pending_tool_calls == {"call_live": "function_call"}
+    assert "anchor_id=resp_rejected_but_replaced" in caplog.text
+    assert "reason=previous_response_not_found" in caplog.text
+    assert "fence_decision=declined" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_previous_response_not_found_clear_survives_local_rebind_followup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    settings = _make_app_settings(http_responses_session_bridge_instance_id="bridge-instance")
+    rejected_anchor = "resp_live_poison_anchor"
+    durable_latest_response_id: dict[str, str | None] = {"value": rejected_anchor}
+    failed_session = _make_bridge_session(key_value="sid-live-poison")
+    failed_session.durable_session_id = "durable-live-poison"
+    failed_session.durable_owner_epoch = 11
+    failed_session.last_completed_response_id = rejected_anchor
+    failed_session.last_completed_response_account_id = "acc-bridge"
+    failed_session.last_completed_input_count = 1
+    failed_session.last_completed_input_prefix_fingerprint = "a" * 64
+    failed_state = proxy_service._WebSocketRequestState(
+        request_id="req-live-poison-first",
+        model="gpt-5.4",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=1.0,
+        previous_response_id=rejected_anchor,
+        event_queue=asyncio.Queue(),
+        transport="http",
+        skip_request_log=True,
+    )
+    # This reproduces the live blind spot: the failed turn is anchored, but the
+    # old code only cleared request states still marked proxy-injected.
+    failed_state.proxy_injected_previous_response_id = False
+    failed_session.pending_requests.append(failed_state)
+    failed_session.queued_request_count = 1
+
+    def durable_lookup() -> proxy_service.DurableBridgeLookup:
+        return proxy_service.DurableBridgeLookup(
+            session_id="durable-live-poison",
+            canonical_kind="session_header",
+            canonical_key="sid-live-poison",
+            api_key_scope="__anonymous__",
+            account_id="acc-bridge",
+            owner_instance_id="bridge-instance",
+            owner_process_epoch=http_bridge_owner_process_epoch(),
+            owner_epoch=11,
+            lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+            state=HttpBridgeSessionState.ACTIVE,
+            latest_turn_state="turn-live-poison",
+            latest_response_id=durable_latest_response_id["value"],
+            model="gpt-5.4",
+        )
+
+    async def clear_anchor(**kwargs: Any) -> proxy_service.DurableBridgeLookup:
+        assert kwargs["session_id"] == "durable-live-poison"
+        assert kwargs["owner_epoch"] == 11
+        assert kwargs["expected_response_id"] == rejected_anchor
+        durable_latest_response_id["value"] = None
+        return durable_lookup()
+
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service._durable_bridge, "clear_live_session_response_anchor", clear_anchor)
+    monkeypatch.setattr(service, "_handle_stream_error", AsyncMock())
+    monkeypatch.setattr(service, "_release_http_bridge_retry_circuit_half_open", AsyncMock())
+    monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
+    monkeypatch.setattr(service, "_fail_pending_websocket_requests", AsyncMock())
+    monkeypatch.setattr(service, "_close_http_bridge_session", AsyncMock())
+
+    await asyncio.wait_for(
+        service._process_http_bridge_upstream_text(
+            failed_session,
+            json.dumps(
+                {
+                    "type": "error",
+                    "status": 400,
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "previous_response_not_found",
+                        "message": f"Previous response with id '{rejected_anchor}' not found.",
+                        "param": "previous_response_id",
+                    },
+                },
+                separators=(",", ":"),
+            ),
+        ),
+        timeout=1.0,
+    )
+
+    await asyncio.wait_for(
+        service._reset_http_bridge_session_after_local_terminal_error(
+            failed_session,
+            error_code="stream_incomplete",
+            error_message="Upstream websocket closed before response.completed",
+            server_continuity_loss_detail="previous_response_not_found",
+        ),
+        timeout=1.0,
+    )
+
+    followup_payload = proxy_service.ResponsesRequest.model_validate(
+        {"model": "gpt-5.4", "instructions": "", "input": "follow-up on same hard key"}
+    )
+    followup_text = json.dumps(followup_payload.to_payload(), separators=(",", ":"))
+    rebound_lookup = durable_lookup()
+    if rebound_lookup.latest_response_id is not None:
+        followup_text = http_bridge_request_submit_module._text_with_previous_response_id(
+            followup_text,
+            rebound_lookup.latest_response_id,
+        )
+
+    async def issue_followup(text_data: str) -> list[str]:
+        if json.loads(text_data).get("previous_response_id") == rejected_anchor:
+            payload = openai_error(
+                "previous_response_not_found",
+                f"Previous response with id '{rejected_anchor}' not found.",
+                error_type="invalid_request_error",
+            )
+            payload["error"]["param"] = "previous_response_id"
+            raise ProxyResponseError(
+                400,
+                payload,
+            )
+        return [
+            'data: {"type":"response.created","response":{"id":"resp_fresh"}}\n\n',
+            'data: {"type":"response.completed","response":{"id":"resp_fresh"}}\n\n',
+        ]
+
+    chunks = await issue_followup(followup_text)
+
+    assert chunks == [
+        'data: {"type":"response.created","response":{"id":"resp_fresh"}}\n\n',
+        'data: {"type":"response.completed","response":{"id":"resp_fresh"}}\n\n',
+    ]
+    assert json.loads(followup_text).get("previous_response_id") != rejected_anchor
 
 
 @pytest.mark.asyncio

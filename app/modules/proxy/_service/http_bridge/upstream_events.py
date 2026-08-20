@@ -1028,7 +1028,7 @@ async def _clear_durable_http_bridge_response_anchor(
     *,
     expected_response_id: str | None = None,
     detail: str = _HTTP_BRIDGE_MISSING_RESPONSE_CREATED_TIMEOUT_DETAIL,
-) -> None:
+) -> bool:
     """Invalidate a durable proxy-injected anchor that cannot be used again.
 
     Runs while ``session`` still owns the durable row (before retirement
@@ -1039,7 +1039,12 @@ async def _clear_durable_http_bridge_response_anchor(
     it.
     """
     if session.durable_session_id is None or session.durable_owner_epoch is None:
-        return
+        logger.info(
+            "http_bridge_anchor_clear anchor_id=%s reason=%s fence_decision=no_durable_owner",
+            expected_response_id,
+            detail,
+        )
+        return False
     try:
         lookup = await service._durable_bridge.clear_live_session_response_anchor(
             session_id=session.durable_session_id,
@@ -1049,14 +1054,23 @@ async def _clear_durable_http_bridge_response_anchor(
         )
     except Exception:
         logger.warning("Failed to clear durable HTTP bridge response anchor detail=%s", detail, exc_info=True)
-        return
+        return False
     if lookup is None or lookup.owner_epoch != session.durable_owner_epoch or lookup.latest_response_id is not None:
         # None means the durable row is gone entirely (e.g. purged); an
         # epoch or anchor mismatch means a newer owner already claimed the
         # session before this fenced write executed. Either way, the anchor
         # was never actually cleared, so do not report an invalidation that
         # did not happen.
-        return
+        logger.info(
+            "http_bridge_anchor_clear anchor_id=%s reason=%s fence_decision=declined "
+            "current_owner_epoch=%s expected_owner_epoch=%s current_anchor_id=%s",
+            expected_response_id,
+            detail,
+            getattr(lookup, "owner_epoch", None),
+            session.durable_owner_epoch,
+            getattr(lookup, "latest_response_id", None),
+        )
+        return False
     _log_http_bridge_event(
         "durable_anchor_invalidated",
         session.key,
@@ -1066,26 +1080,44 @@ async def _clear_durable_http_bridge_response_anchor(
         cache_key_family=session.key.affinity_kind,
         model_class=_extract_model_class(session.request_model) if session.request_model else None,
     )
+    logger.info(
+        "http_bridge_anchor_clear anchor_id=%s reason=%s fence_decision=cleared "
+        "owner_epoch=%s",
+        expected_response_id,
+        detail,
+        session.durable_owner_epoch,
+    )
+    return True
 
 
-def _http_bridge_rejected_proxy_injected_anchor(
+def _http_bridge_rejected_response_anchor(
     request_states: Iterable[_WebSocketRequestState | None],
     *,
     previous_response_id_hint: str | None,
+    session: "_HTTPBridgeSession",
 ) -> str | None:
-    """Return the proxy-injected anchor upstream has just rejected, if any."""
+    """Return this session's anchor upstream has just rejected, if any."""
+    candidates: set[str] = set()
     for request_state in request_states:
-        if request_state is None or not request_state.proxy_injected_previous_response_id:
+        if request_state is None:
             continue
         previous_response_id = request_state.previous_response_id
         if not previous_response_id:
             continue
-        # When upstream names the id it could not find, only that id is proven
-        # gone. A differently anchored request that merely matched the same
-        # anonymous error event keeps its own anchor.
-        if previous_response_id_hint is not None and previous_response_id != previous_response_id_hint:
+        candidates.add(previous_response_id)
+    if session.last_completed_response_id is not None:
+        candidates.add(session.last_completed_response_id)
+    # When upstream names the id it could not find, only that id is proven gone.
+    # A differently anchored request that merely matched the same anonymous
+    # error event keeps its own anchor.
+    if previous_response_id_hint is not None:
+        return previous_response_id_hint if previous_response_id_hint in candidates else None
+    for request_state in request_states:
+        if request_state is None or not request_state.proxy_injected_previous_response_id:
             continue
-        return previous_response_id
+        previous_response_id = request_state.previous_response_id
+        if previous_response_id:
+            return previous_response_id
     return None
 
 
@@ -1098,10 +1130,10 @@ async def _drop_rejected_http_bridge_response_anchor(
 ) -> None:
     """Stop replaying an anchor upstream has said does not exist.
 
-    ``previous_response_not_found`` is a definitive upstream answer about one
-    response id, unlike the ambiguous transport outcomes the continuation
-    recovery mode covers. codex-lb keeps that id in two places and re-injects
-    it on later turns for the same session: the durable
+    ``previous_response_not_found`` naming a response id is a definitive
+    upstream answer, unlike the ambiguous transport outcomes the continuation
+    recovery mode covers. codex-lb keeps that id in two places and re-injects it
+    on later turns for the same session: the durable
     ``http_bridge_sessions.latest_response_id`` row used by the fresh-reattach
     path, and ``session.last_completed_response_id`` used by the session-level
     anchor path. Neither was dropped on this outcome, so every following turn
@@ -1109,23 +1141,34 @@ async def _drop_rejected_http_bridge_response_anchor(
     and the session could not recover on its own. Both are invalidated here,
     each only while it still holds the exact rejected id.
     """
-    rejected_response_id = _http_bridge_rejected_proxy_injected_anchor(
+    rejected_response_id = _http_bridge_rejected_response_anchor(
         request_states,
         previous_response_id_hint=previous_response_id_hint,
+        session=session,
     )
     if rejected_response_id is None:
         return
-    if session.last_completed_response_id == rejected_response_id:
+    durable_fence_required = session.durable_session_id is not None and session.durable_owner_epoch is not None
+    durable_cleared = await _clear_durable_http_bridge_response_anchor(
+        service,
+        session,
+        expected_response_id=rejected_response_id,
+        detail=_HTTP_BRIDGE_REJECTED_ANCHOR_DETAIL,
+    )
+    local_cleared = False
+    if session.last_completed_response_id == rejected_response_id and (durable_cleared or not durable_fence_required):
         session.last_completed_response_id = None
         session.last_completed_response_account_id = None
         session.last_completed_input_count = 0
         session.last_completed_input_prefix_fingerprint = None
         session.last_pending_tool_calls.clear()
-    await _clear_durable_http_bridge_response_anchor(
-        service,
-        session,
-        expected_response_id=rejected_response_id,
-        detail=_HTTP_BRIDGE_REJECTED_ANCHOR_DETAIL,
+        local_cleared = True
+    logger.info(
+        "http_bridge_rejected_anchor_reset anchor_id=%s reason=%s local_cleared=%s durable_cleared=%s",
+        rejected_response_id,
+        _HTTP_BRIDGE_REJECTED_ANCHOR_DETAIL,
+        local_cleared,
+        durable_cleared,
     )
 
 
