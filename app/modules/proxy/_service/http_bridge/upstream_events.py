@@ -225,6 +225,8 @@ async def _advance_http_bridge_quarantine_clear_key(
     input_full_fingerprint: str | None,
     pending_tool_calls: Mapping[str, str] | None,
     quarantine_generation: int | None,
+    expected_session_id: str | None = None,
+    expected_owner_epoch: int | None = None,
 ) -> bool:
     def generation_matches() -> bool:
         if quarantine_generation is None:
@@ -242,6 +244,10 @@ async def _advance_http_bridge_quarantine_clear_key(
         previous_response_id=None,
     )
     if lookup is None:
+        return False
+    if expected_session_id is not None and lookup.session_id != expected_session_id:
+        return False
+    if expected_owner_epoch is not None and lookup.owner_epoch != expected_owner_epoch:
         return False
     if not generation_matches():
         return False
@@ -3099,6 +3105,8 @@ class _HTTPBridgeUpstreamEventsMixin:
                             ),
                             pending_tool_calls=_durable_pending_tool_call_manifest(terminal_request_state, payload),
                             quarantine_generation=terminal_request_state.quarantine_clear_generation,
+                            expected_session_id=terminal_request_state.quarantine_clear_session_id,
+                            expected_owner_epoch=terminal_request_state.quarantine_clear_owner_epoch,
                         )
                     except Exception:
                         logger.warning("Failed to advance quarantined HTTP bridge continuity", exc_info=True)
