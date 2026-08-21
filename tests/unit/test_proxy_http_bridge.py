@@ -20784,8 +20784,7 @@ async def _run_rejected_anchor_retry_sequence(
 ]:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     fresh_text = (
-        '{"type":"response.create","model":"gpt-5.6-sol",'
-        '"input":[{"role":"user","content":"full retry context"}]}'
+        '{"type":"response.create","model":"gpt-5.6-sol","input":[{"role":"user","content":"full retry context"}]}'
     )
     request_state = proxy_service._WebSocketRequestState(
         request_id="req-rejected-anchor-retry",
@@ -20888,9 +20887,14 @@ async def _run_rejected_anchor_retry_sequence(
 async def test_previous_response_not_found_retries_replay_safe_cleared_anchor_to_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _service, request_state, session, sent_payloads, reconnect, retry_circuit_failure = (
-        await _run_rejected_anchor_retry_sequence(monkeypatch, replay_safe=True)
-    )
+    (
+        _service,
+        request_state,
+        session,
+        sent_payloads,
+        reconnect,
+        retry_circuit_failure,
+    ) = await _run_rejected_anchor_retry_sequence(monkeypatch, replay_safe=True)
 
     assert reconnect.await_count == 1
     assert sent_payloads == [
@@ -20922,9 +20926,14 @@ async def test_previous_response_not_found_retries_replay_safe_cleared_anchor_to
 async def test_previous_response_not_found_does_not_retry_when_replay_is_unsafe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _service, request_state, session, sent_payloads, reconnect, _retry_circuit_failure = (
-        await _run_rejected_anchor_retry_sequence(monkeypatch, replay_safe=False)
-    )
+    (
+        _service,
+        request_state,
+        session,
+        sent_payloads,
+        reconnect,
+        _retry_circuit_failure,
+    ) = await _run_rejected_anchor_retry_sequence(monkeypatch, replay_safe=False)
 
     assert reconnect.await_count == 0
     assert sent_payloads == []
@@ -20945,13 +20954,18 @@ async def test_previous_response_not_found_does_not_retry_when_replay_is_unsafe(
 async def test_previous_response_not_found_does_not_loop_after_fresh_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _service, request_state, session, sent_payloads, reconnect, _retry_circuit_failure = (
-        await _run_rejected_anchor_retry_sequence(
-            monkeypatch,
-            replay_safe=True,
-            initial_replay_count=1,
-            initial_previous_response_id=None,
-        )
+    (
+        _service,
+        request_state,
+        session,
+        sent_payloads,
+        reconnect,
+        _retry_circuit_failure,
+    ) = await _run_rejected_anchor_retry_sequence(
+        monkeypatch,
+        replay_safe=True,
+        initial_replay_count=1,
+        initial_previous_response_id=None,
     )
 
     assert reconnect.await_count == 0

@@ -2087,12 +2087,9 @@ class _HTTPBridgeMixin(
         selected_account_model_replacement = False
 
         def record_selected_account_takeover(
-            selected_account_id: str | None, preferred_account_id: str | None = session.account.id
+            selected_account_id: str | None, preferred_id: str | None = session.account.id
         ) -> None:
-            _record_same_account_takeover(
-                preferred_account_id=preferred_account_id,
-                selected_account_id=selected_account_id,
-            )
+            _record_same_account_takeover(preferred_account_id=preferred_id, selected_account_id=selected_account_id)
 
         async def release_selected_account_lease() -> None:
             nonlocal selected_account_lease
@@ -2141,15 +2138,6 @@ class _HTTPBridgeMixin(
                 await self._release_http_bridge_retry_circuit_half_open(session, detail=detail)
             finally:
                 complete_failed_handoff()
-
-        def require_bound_account() -> None:
-            try:
-                _require_http_bridge_bound_account_not_excluded(
-                    hard_close_account_bound, session.account.id, excluded_account_ids
-                )
-            except BaseException:
-                complete_failed_handoff()
-                raise
 
         while True:
             reuse_current_account_lease = preferred_candidate_id == session.account.id and bool(session.account_lease)
@@ -2231,7 +2219,13 @@ class _HTTPBridgeMixin(
                         raise _http_bridge_previous_response_owner_unavailable_error()
                     if skip_same_account:
                         excluded_account_ids.add(session.account.id)
-                    require_bound_account()
+                    try:
+                        _require_http_bridge_bound_account_not_excluded(
+                            hard_close_account_bound, session.account.id, excluded_account_ids
+                        )
+                    except BaseException:
+                        complete_failed_handoff()
+                        raise
                     retry_same_account_once = not skip_same_account and session.account.id not in excluded_account_ids
                     if skip_same_account:
                         preferred_candidate_id = None
