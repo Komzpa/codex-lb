@@ -32669,6 +32669,55 @@ async def test_advance_http_bridge_quarantine_clear_key_rejects_stale_generation
 
 
 @pytest.mark.asyncio
+async def test_advance_http_bridge_quarantine_clear_key_rejects_successor_durable_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = SimpleNamespace()
+    key = proxy_service._HTTPBridgeSessionKey("session_header", "quarantine-successor-owner", None)
+    settings = _make_app_settings()
+    successor_lookup = proxy_service.DurableBridgeLookup(
+        session_id="durable-successor",
+        canonical_kind=key.affinity_kind,
+        canonical_key=key.affinity_key,
+        api_key_scope="__anonymous__",
+        account_id="acc-successor",
+        owner_instance_id=settings.http_responses_session_bridge_instance_id,
+        owner_epoch=12,
+        lease_expires_at=proxy_service.utcnow() + timedelta(seconds=60),
+        state=HttpBridgeSessionState.ACTIVE,
+        latest_turn_state=None,
+        latest_response_id="resp-successor",
+        model="gpt-5.6-sol",
+    )
+    service._durable_bridge = SimpleNamespace(
+        lookup_request_targets=AsyncMock(return_value=successor_lookup),
+        claim_live_session=AsyncMock(),
+        rebind_session_account=AsyncMock(),
+        renew_live_session=AsyncMock(),
+    )
+    monkeypatch.setattr(http_bridge_upstream_events_module, "_service_get_settings", lambda: settings)
+
+    advanced = await http_bridge_upstream_events_module._advance_http_bridge_quarantine_clear_key(
+        service,
+        key=key,
+        api_key_id=None,
+        account_id="acc-stale-recovery",
+        response_id="resp-stale-recovery",
+        input_item_count=3,
+        input_full_fingerprint="fp-stale-recovery",
+        pending_tool_calls={"call_1": "function_call"},
+        quarantine_generation=None,
+        expected_session_id="durable-dispatch-owner",
+        expected_owner_epoch=7,
+    )
+
+    assert advanced is False
+    service._durable_bridge.claim_live_session.assert_not_awaited()
+    service._durable_bridge.rebind_session_account.assert_not_awaited()
+    service._durable_bridge.renew_live_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_advance_http_bridge_quarantine_clear_key_rejects_generation_reused_after_prune(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

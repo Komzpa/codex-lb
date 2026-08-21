@@ -990,6 +990,8 @@ class _WebSocketRequestState:
     session_id: str | None = None
     quarantine_clear_key: _HTTPBridgeSessionKey | None = None
     quarantine_clear_generation: int | None = None
+    quarantine_clear_session_id: str | None = None
+    quarantine_clear_owner_epoch: int | None = None
     # Session headers provide locality, but only a previous response or
     # explicit turn-state header guarantees continuity for stale recovery.
     hard_continuity_anchor: bool = False

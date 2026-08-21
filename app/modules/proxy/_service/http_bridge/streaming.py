@@ -1360,6 +1360,8 @@ class _HTTPBridgeStreamingMixin:
         fresh_reattach_anchor_suppressed_quarantined = False
         fresh_reattach_quarantine_clear_key: _HTTPBridgeSessionKey | None = None
         fresh_reattach_quarantine_clear_generation: int | None = None
+        fresh_reattach_quarantine_clear_session_id: str | None = None
+        fresh_reattach_quarantine_clear_owner_epoch: int | None = None
 
         def classify_durable_full_resend(
             lookup: DurableBridgeLookup,
@@ -1671,6 +1673,8 @@ class _HTTPBridgeStreamingMixin:
                     untrimmed_effective_payload = durable_full_resend_fresh_payload
                     fresh_reattach_quarantine_clear_key = bridge_session_key
                     fresh_reattach_quarantine_clear_generation = quarantine_generation
+                    fresh_reattach_quarantine_clear_session_id = durable_lookup.session_id
+                    fresh_reattach_quarantine_clear_owner_epoch = durable_lookup.owner_epoch
                     # Name the recovery key after the body this dispatch
                     # actually sends, not after the recovery-attempt fence
                     # fingerprint: the two hash different bodies and must
@@ -1798,6 +1802,8 @@ class _HTTPBridgeStreamingMixin:
         request_state.affinity_policy = affinity
         request_state.quarantine_clear_key = fresh_reattach_quarantine_clear_key
         request_state.quarantine_clear_generation = fresh_reattach_quarantine_clear_generation
+        request_state.quarantine_clear_session_id = fresh_reattach_quarantine_clear_session_id
+        request_state.quarantine_clear_owner_epoch = fresh_reattach_quarantine_clear_owner_epoch
         _apply_http_bridge_downstream_turn_state(
             request_state,
             downstream_turn_state=downstream_turn_state,
