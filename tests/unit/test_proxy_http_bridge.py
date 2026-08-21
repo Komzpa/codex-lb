@@ -20933,6 +20933,7 @@ async def test_previous_response_not_found_does_not_retry_when_replay_is_unsafe(
     event_queue = request_state.event_queue
     assert event_queue is not None
     event_block = await asyncio.wait_for(event_queue.get(), timeout=0.2)
+    assert event_block is not None
     assert await asyncio.wait_for(event_queue.get(), timeout=0.2) is None
     payload = proxy_service.parse_sse_data_json(event_block)
     assert isinstance(payload, dict)
@@ -20960,6 +20961,7 @@ async def test_previous_response_not_found_does_not_loop_after_fresh_retry(
     event_queue = request_state.event_queue
     assert event_queue is not None
     event_block = await asyncio.wait_for(event_queue.get(), timeout=0.2)
+    assert event_block is not None
     assert await asyncio.wait_for(event_queue.get(), timeout=0.2) is None
     payload = proxy_service.parse_sse_data_json(event_block)
     assert isinstance(payload, dict)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from datetime import timedelta
+from typing import Any, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -24,7 +25,9 @@ async def async_session_factory() -> AsyncIterator[Callable[[], AsyncSession]]:
     """Create in-memory SQLite database for testing."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: BridgeRingMember.__table__.create(sync_conn, checkfirst=True))
+        await conn.run_sync(
+            lambda sync_conn: cast(Any, BridgeRingMember.__table__).create(sync_conn, checkfirst=True)
+        )
 
     async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
