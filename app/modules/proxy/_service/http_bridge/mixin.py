@@ -1374,6 +1374,11 @@ class _HTTPBridgeMixin(
                         pending_count=_http_bridge_session_generation_count(self),
                         inflight_count=len(self._http_bridge_inflight_sessions),
                     )
+                    # The exact owner still owns this marker until its
+                    # finalizer runs. Do not start a successor over it; retry
+                    # admission only after that owner has yielded ownership.
+                    if await _wait_for_http_bridge_aborted_owner(capacity_wait_future, timeout=wait_timeout_seconds):
+                        continue
                     raise timeout_error from exc
                 except ProxyResponseError:
                     # A stale capacity owner has already been signalled and
@@ -1415,6 +1420,11 @@ class _HTTPBridgeMixin(
                         pending_count=_http_bridge_session_generation_count(self),
                         inflight_count=len(self._http_bridge_inflight_sessions),
                     )
+                    # The exact owner still owns this marker until its
+                    # finalizer runs. Do not start a successor over it; retry
+                    # admission only after that owner has yielded ownership.
+                    if await _wait_for_http_bridge_aborted_owner(inflight_future, timeout=wait_timeout_seconds):
+                        continue
                     raise timeout_error from exc
                 except Exception:
                     raise

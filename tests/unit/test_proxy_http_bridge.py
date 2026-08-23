@@ -19647,6 +19647,203 @@ async def test_get_or_create_http_bridge_session_full_stale_capacity_cancels_own
 
 
 @pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_capacity_timeout_waits_for_aborted_owner_before_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    owner_key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-capacity-timeout-owner", None)
+    waiter_key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-capacity-timeout-waiter", None)
+    owner_create_started = asyncio.Event()
+    replacement = _make_bridge_session(key=waiter_key, key_value=waiter_key.affinity_key)
+    create_keys: list[proxy_service._HTTPBridgeSessionKey] = []
+    owner_task: asyncio.Task[Any] | None = None
+
+    async def create_session(
+        key: proxy_service._HTTPBridgeSessionKey,
+        **_: object,
+    ) -> proxy_service._HTTPBridgeSession:
+        create_keys.append(key)
+        if key == owner_key:
+            owner_create_started.set()
+            await asyncio.Event().wait()
+        assert owner_task is not None and owner_task.done()
+        return replacement
+
+    settings = _make_app_settings(proxy_admission_wait_timeout_seconds=0.01)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_create_http_bridge_session", create_session)
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(service, "_close_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-a"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ("instance-a",))),
+    )
+
+    async def get_session(
+        key: proxy_service._HTTPBridgeSessionKey,
+    ) -> proxy_service._HTTPBridgeSession | proxy_service._HTTPBridgeOwnerForward:
+        return await service._get_or_create_http_bridge_session(
+            key,
+            headers={"x-codex-session-id": key.affinity_key},
+            affinity=proxy_service._AffinityPolicy(
+                key=key.affinity_key,
+                kind=proxy_service.StickySessionKind.CODEX_SESSION,
+            ),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=1,
+        )
+
+    owner_task = asyncio.create_task(get_session(owner_key))
+    await asyncio.wait_for(owner_create_started.wait(), timeout=1.0)
+    resolved = await asyncio.wait_for(get_session(waiter_key), timeout=1.0)
+
+    owner_result = await asyncio.gather(owner_task, return_exceptions=True)
+    assert isinstance(owner_result[0], asyncio.CancelledError)
+    assert resolved is replacement
+    assert create_keys == [owner_key, waiter_key]
+    assert service._http_bridge_sessions[waiter_key] is replacement
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_capacity_timeout_keeps_cancellation_resistant_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    owner_key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-capacity-resistant-owner", None)
+    waiter_key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-capacity-resistant-waiter", None)
+    owner_create_started = asyncio.Event()
+    owner_cancelled = asyncio.Event()
+    release_owner = asyncio.Event()
+    created = _make_bridge_session(key=owner_key, key_value=owner_key.affinity_key)
+    create_calls = 0
+
+    async def create_session(
+        key: proxy_service._HTTPBridgeSessionKey,
+        **_: object,
+    ) -> proxy_service._HTTPBridgeSession:
+        nonlocal create_calls
+        create_calls += 1
+        assert key is owner_key
+        owner_create_started.set()
+        try:
+            await release_owner.wait()
+        except asyncio.CancelledError:
+            owner_cancelled.set()
+            await release_owner.wait()
+        return created
+
+    settings = _make_app_settings(proxy_admission_wait_timeout_seconds=0.01)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_create_http_bridge_session", create_session)
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(service, "_close_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-a"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ("instance-a",))),
+    )
+
+    async def get_session(
+        key: proxy_service._HTTPBridgeSessionKey,
+    ) -> proxy_service._HTTPBridgeSession | proxy_service._HTTPBridgeOwnerForward:
+        return await service._get_or_create_http_bridge_session(
+            key,
+            headers={"x-codex-session-id": key.affinity_key},
+            affinity=proxy_service._AffinityPolicy(
+                key=key.affinity_key,
+                kind=proxy_service.StickySessionKind.CODEX_SESSION,
+            ),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=1,
+        )
+
+    owner_task = asyncio.create_task(get_session(owner_key))
+    await asyncio.wait_for(owner_create_started.wait(), timeout=1.0)
+    try:
+        with pytest.raises(ProxyResponseError) as exc_info:
+            await asyncio.wait_for(get_session(waiter_key), timeout=1.0)
+
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
+        await asyncio.wait_for(owner_cancelled.wait(), timeout=1.0)
+        assert service._http_bridge_inflight_sessions[owner_key] is not None
+        assert create_calls == 1
+    finally:
+        release_owner.set()
+        await asyncio.gather(owner_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_inflight_timeout_waits_for_aborted_owner_before_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("turn_state_header", "sid-inflight-timeout-owner", None)
+    owner_create_started = asyncio.Event()
+    replacement = _make_bridge_session(key=key, key_value=key.affinity_key)
+    create_calls = 0
+    owner_task: asyncio.Task[Any] | None = None
+
+    async def create_session(*_: object, **__: object) -> proxy_service._HTTPBridgeSession:
+        nonlocal create_calls
+        create_calls += 1
+        if create_calls == 1:
+            owner_create_started.set()
+            await asyncio.Event().wait()
+        assert owner_task is not None and owner_task.done()
+        return replacement
+
+    settings = _make_app_settings(proxy_admission_wait_timeout_seconds=0.01)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_create_http_bridge_session", create_session)
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(service, "_close_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-a"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ("instance-a",))),
+    )
+
+    async def get_session() -> proxy_service._HTTPBridgeSession | proxy_service._HTTPBridgeOwnerForward:
+        return await service._get_or_create_http_bridge_session(
+            key,
+            headers={"x-codex-turn-state": key.affinity_key},
+            affinity=proxy_service._AffinityPolicy(
+                key=key.affinity_key,
+                kind=proxy_service.StickySessionKind.CODEX_SESSION,
+            ),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=8,
+        )
+
+    owner_task = asyncio.create_task(get_session())
+    await asyncio.wait_for(owner_create_started.wait(), timeout=1.0)
+    resolved = await asyncio.wait_for(get_session(), timeout=1.0)
+
+    owner_result = await asyncio.gather(owner_task, return_exceptions=True)
+    assert isinstance(owner_result[0], asyncio.CancelledError)
+    assert resolved is replacement
+    assert create_calls == 2
+    assert service._http_bridge_sessions[key] is replacement
+
+
+@pytest.mark.asyncio
 async def test_get_or_create_http_bridge_session_immediate_capacity_exhaustion_is_local_overload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -20125,7 +20322,7 @@ async def test_get_or_create_http_bridge_session_cancel_during_stale_close_clean
 
 
 @pytest.mark.asyncio
-async def test_get_or_create_http_bridge_session_late_owner_after_inflight_evict_closes_unregistered_session(
+async def test_get_or_create_http_bridge_session_same_key_timeout_keeps_cancellation_resistant_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
