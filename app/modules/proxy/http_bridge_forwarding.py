@@ -119,6 +119,54 @@ def _bridge_header_has_line_break(name: str, value: str) -> bool:
     return "\r" in name or "\n" in name or "\r" in value or "\n" in value
 
 
+def _without_bridge_header_line_break(value: str | None, *, name: str) -> str | None:
+    if value is None or _bridge_header_has_line_break(name, value):
+        return None
+    return value
+
+
+def _sanitize_bridge_forward_context(context: HTTPBridgeForwardContext) -> HTTPBridgeForwardContext:
+    affinity_kind = _without_bridge_header_line_break(
+        context.original_affinity_kind,
+        name=HTTP_BRIDGE_AFFINITY_KIND_HEADER,
+    )
+    affinity_key = _without_bridge_header_line_break(
+        context.original_affinity_key,
+        name=HTTP_BRIDGE_AFFINITY_KEY_HEADER,
+    )
+    if affinity_kind is None or affinity_key is None:
+        affinity_kind = None
+        affinity_key = None
+    reservation = context.reservation
+    if reservation is not None and any(
+        _bridge_header_has_line_break(name, value)
+        for name, value in (
+            (HTTP_BRIDGE_RESERVATION_ID_HEADER, reservation.reservation_id),
+            (HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER, reservation.key_id),
+            (HTTP_BRIDGE_RESERVATION_MODEL_HEADER, reservation.model),
+        )
+    ):
+        reservation = None
+    return replace(
+        context,
+        downstream_turn_state=_without_bridge_header_line_break(
+            context.downstream_turn_state,
+            name="x-codex-turn-state",
+        ),
+        original_affinity_kind=affinity_kind,
+        original_affinity_key=affinity_key,
+        file_owner_account_id=_without_bridge_header_line_break(
+            context.file_owner_account_id,
+            name=HTTP_BRIDGE_FILE_OWNER_HEADER,
+        ),
+        client_ip=_without_bridge_header_line_break(
+            context.client_ip,
+            name=HTTP_BRIDGE_CLIENT_IP_HEADER,
+        ),
+        reservation=reservation,
+    )
+
+
 class HTTPBridgeOwnerClient:
     async def stream_responses(
         self,
@@ -223,14 +271,9 @@ def build_owner_forward_headers(
     context: HTTPBridgeForwardContext,
 ) -> dict[str, str]:
     # WebSocket client metadata is reconstructed as a header mapping without
-    # passing through an HTTP parser. In particular, duplicate historical turn
-    # state can contain a line break. Omit that optional hint from both the
-    # signed context and the serialized headers so the owner sees exactly the
-    # context that was signed.
-    if context.downstream_turn_state is not None and _bridge_header_has_line_break(
-        "x-codex-turn-state", context.downstream_turn_state
-    ):
-        context = replace(context, downstream_turn_state=None)
+    # passing through an HTTP parser. Normalize every optional context field
+    # before signing so the owner sees exactly the safe context that was signed.
+    context = _sanitize_bridge_forward_context(context)
     filtered = filter_inbound_headers(headers)
     # Per the hop-by-hop contract, also drop any header named by the inbound
     # Connection header in addition to the fixed unsafe set.
@@ -315,7 +358,9 @@ def build_owner_forward_headers(
         context=context,
         signature_version=signature_version,
     )
-    return forwarded
+    # Defense in depth: aiohttp must never be the first component to discover
+    # that reconstructed WebSocket metadata is not legal as an HTTP header.
+    return {key: value for key, value in forwarded.items() if not _bridge_header_has_line_break(key, value)}
 
 
 def parse_forwarded_request(

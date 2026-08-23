@@ -1616,3 +1616,35 @@ def test_build_owner_forward_headers_drops_unsafe_turn_state_from_signed_context
     assert forwarded is not None
     assert forwarded.context.downstream_turn_state is None
     assert forwarded.context.original_affinity_key == "thread-123"
+
+
+def test_build_owner_forward_headers_drops_all_unsafe_optional_context_headers() -> None:
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=True,
+        downstream_turn_state="turn-123",
+        original_affinity_kind="thread_header",
+        original_affinity_key="thread-safe\nthread-duplicate",
+        file_owner_account_id="account-safe\raccount-duplicate",
+        client_ip="127.0.0.1\nforwarded-client",
+        reservation=ApiKeyUsageReservationData(
+            reservation_id="reservation-safe\nreservation-duplicate",
+            key_id="key-123",
+            model="gpt-5.4",
+        ),
+    )
+
+    headers = build_owner_forward_headers(headers={}, payload=payload, context=context)
+    forwarded, error = parse_forwarded_request(headers, payload=payload, current_instance="instance-b")
+
+    assert all("\r" not in key + value and "\n" not in key + value for key, value in headers.items())
+    assert error is None
+    assert forwarded is not None
+    assert forwarded.context.downstream_turn_state == "turn-123"
+    assert forwarded.context.original_affinity_kind is None
+    assert forwarded.context.original_affinity_key is None
+    assert forwarded.context.file_owner_account_id is None
+    assert forwarded.context.client_ip is None
+    assert forwarded.context.reservation is None
