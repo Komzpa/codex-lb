@@ -3232,7 +3232,7 @@ async def test_http_bridge_activity_snapshot_does_not_expire_live_inflight_sessi
 
 
 @pytest.mark.asyncio
-async def test_http_bridge_activity_snapshot_expires_stale_live_inflight_session(
+async def test_http_bridge_activity_snapshot_retains_stale_inflight_without_owner_provenance(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -3247,19 +3247,76 @@ async def test_http_bridge_activity_snapshot_expires_stale_live_inflight_session
     with caplog.at_level(logging.WARNING, logger="app.modules.proxy.service"):
         snapshot = service.http_bridge_activity_snapshot_nowait()
 
-    assert key not in service._http_bridge_inflight_sessions
+    # A marker without proven owner provenance cannot safely release capacity:
+    # there may still be a hidden create_session coroutine able to publish.
+    assert service._http_bridge_inflight_sessions[key] is inflight_future
     assert inflight_future.done()
     assert not inflight_future.cancelled()
     exc = inflight_future.exception()
     assert isinstance(exc, ProxyResponseError)
     assert exc.status_code == 429
     assert exc.payload["error"]["code"] == "capacity_exhausted_active_sessions"
-    assert snapshot["http_bridge_inflight_session_creates"] == 0
+    assert snapshot["http_bridge_inflight_session_creates"] == 1
     assert snapshot["http_bridge_stale_inflight_session_creates"] == 1
-    assert snapshot["http_bridge_cleaned_inflight_session_creates"] == 1
-    assert snapshot["http_bridge_active"] is False
-    assert snapshot["http_bridge_restart_blocking"] is False
-    assert "http_bridge_inflight_session_create_cleanup reason=stale" in caplog.text
+    assert snapshot["http_bridge_cleaned_inflight_session_creates"] == 0
+    assert snapshot["http_bridge_active"] is True
+    assert snapshot["http_bridge_restart_blocking"] is True
+
+    repeated_snapshot = service.http_bridge_activity_snapshot_nowait()
+    assert service._http_bridge_inflight_sessions[key] is inflight_future
+    assert repeated_snapshot["http_bridge_cleaned_inflight_session_creates"] == 0
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_activity_snapshot_cancels_exact_stale_owner_and_retains_marker_until_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, SimpleNamespace()))
+    key = proxy_service._HTTPBridgeSessionKey("session_header", "owned-stale-inflight", None)
+    owner_cancelled = asyncio.Event()
+    release_owner = asyncio.Event()
+
+    async def delayed_owner_shutdown() -> None:
+        try:
+            await release_owner.wait()
+        except asyncio.CancelledError:
+            owner_cancelled.set()
+            await release_owner.wait()
+
+    owner_task = asyncio.create_task(delayed_owner_shutdown())
+    await asyncio.sleep(0)
+    inflight_future: asyncio.Future[proxy_service._HTTPBridgeSession] = asyncio.get_running_loop().create_future()
+    setattr(inflight_future, "_codex_lb_started_at", -1000.0)
+    setattr(inflight_future, "_codex_lb_owner_task", owner_task)
+    service._http_bridge_inflight_sessions[key] = inflight_future
+    monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda settings=None: 0.001)
+
+    snapshot = service.http_bridge_activity_snapshot_nowait()
+    await asyncio.wait_for(owner_cancelled.wait(), timeout=1.0)
+
+    assert service._http_bridge_inflight_sessions[key] is inflight_future
+    assert not owner_task.done()
+    with pytest.raises(ProxyResponseError) as waiter_exc_info:
+        await inflight_future
+    assert waiter_exc_info.value.status_code == 429
+    assert waiter_exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
+    assert snapshot["http_bridge_inflight_session_creates"] == 1
+    assert snapshot["http_bridge_cleaned_inflight_session_creates"] == 0
+    assert snapshot["http_bridge_restart_blocking"] is True
+
+    cancel_requests = owner_task.cancelling()
+    repeated_snapshot = service.http_bridge_activity_snapshot_nowait()
+    await asyncio.sleep(0)
+    assert owner_task.cancelling() == cancel_requests
+    assert repeated_snapshot["http_bridge_cleaned_inflight_session_creates"] == 0
+
+    release_owner.set()
+    await asyncio.wait_for(owner_task, timeout=1.0)
+    settled_snapshot = service.http_bridge_activity_snapshot_nowait()
+
+    assert key not in service._http_bridge_inflight_sessions
+    assert settled_snapshot["http_bridge_cleaned_inflight_session_creates"] == 1
+    assert settled_snapshot["http_bridge_restart_blocking"] is False
 
 
 @pytest.mark.asyncio
@@ -3279,11 +3336,11 @@ async def test_http_bridge_activity_snapshot_skips_inflight_cleanup_when_registr
 
     assert key in service._http_bridge_inflight_sessions
     assert not inflight_future.done()
-    assert snapshot["http_bridge_inflight_session_creates"] == 0
+    assert snapshot["http_bridge_inflight_session_creates"] == 1
     assert snapshot["http_bridge_stale_inflight_session_creates"] == 1
     assert snapshot["http_bridge_cleaned_inflight_session_creates"] == 0
-    assert snapshot["http_bridge_active"] is False
-    assert snapshot["http_bridge_restart_blocking"] is False
+    assert snapshot["http_bridge_active"] is True
+    assert snapshot["http_bridge_restart_blocking"] is True
 
 
 @pytest.mark.asyncio
@@ -3306,12 +3363,12 @@ async def test_http_bridge_activity_snapshot_preserves_stale_handoff_inflight_se
     assert snapshot["http_bridge_inflight_session_creates"] == 0
     assert snapshot["http_bridge_stale_inflight_session_creates"] == 1
     assert snapshot["http_bridge_cleaned_inflight_session_creates"] == 0
-    assert snapshot["http_bridge_active"] is False
-    assert snapshot["http_bridge_restart_blocking"] is False
+    assert snapshot["http_bridge_active"] is True
+    assert snapshot["http_bridge_restart_blocking"] is True
 
 
 @pytest.mark.asyncio
-async def test_http_bridge_inflight_creation_count_ignores_done_stale_and_handoff(
+async def test_http_bridge_inflight_creation_count_preserves_owned_markers_but_ignores_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, SimpleNamespace()))
@@ -3341,7 +3398,7 @@ async def test_http_bridge_inflight_creation_count_ignores_done_stale_and_handof
 
     monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda settings=None: 0.001)
 
-    assert http_bridge_helpers_module._http_bridge_inflight_creation_count(service) == 1
+    assert http_bridge_helpers_module._http_bridge_inflight_creation_count(service) == 3
 
 
 async def _wait_for_close_await(close_session: AsyncMock, session: proxy_service._HTTPBridgeSession) -> None:
@@ -19233,7 +19290,9 @@ async def test_get_or_create_http_bridge_session_inflight_wait_times_out(
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
-    assert key not in service._http_bridge_inflight_sessions
+    # Missing owner provenance is fail-closed: releasing this marker could
+    # allow an unknown creator to publish after a replacement starts.
+    assert service._http_bridge_inflight_sessions[key] is inflight_future
     with pytest.raises(ProxyResponseError) as future_exc_info:
         await inflight_future
     assert future_exc_info.value.status_code == 429
@@ -19428,7 +19487,11 @@ async def test_close_all_http_bridge_sessions_fails_capacity_waiters_instead_of_
             max_sessions=1,
         )
     )
-    await asyncio.sleep(0)
+    for _ in range(100):
+        if getattr(inflight_future, "_callbacks", None):
+            break
+        await asyncio.sleep(0)
+    assert getattr(inflight_future, "_callbacks", None)
 
     await service.close_all_http_bridge_sessions()
 
@@ -19507,12 +19570,80 @@ async def test_get_or_create_http_bridge_session_capacity_wait_times_out(
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
-    assert inflight_key not in service._http_bridge_inflight_sessions
+    # With no exact owner task, eviction would permit an unsafe duplicate.
+    assert service._http_bridge_inflight_sessions[inflight_key] is inflight_future
     with pytest.raises(ProxyResponseError) as future_exc_info:
         await inflight_future
     assert future_exc_info.value.status_code == 429
     assert future_exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
     create_http_bridge_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_full_stale_capacity_cancels_owner_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    stale_key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-stale-capacity-owner", None)
+    next_key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-after-stale-capacity", None)
+    stale_create_started = asyncio.Event()
+    replacement = _make_bridge_session(key=next_key, key_value=next_key.affinity_key)
+    create_keys: list[proxy_service._HTTPBridgeSessionKey] = []
+
+    async def create_session(
+        key: proxy_service._HTTPBridgeSessionKey,
+        **_: object,
+    ) -> proxy_service._HTTPBridgeSession:
+        create_keys.append(key)
+        if key == stale_key:
+            stale_create_started.set()
+            await asyncio.Event().wait()
+        return replacement
+
+    settings = _make_app_settings()
+    settings.proxy_admission_wait_timeout_seconds = 0.1
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_create_http_bridge_session", create_session)
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(service, "_close_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-a"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ("instance-a",))),
+    )
+
+    async def get_session(
+        key: proxy_service._HTTPBridgeSessionKey,
+    ) -> proxy_service._HTTPBridgeSession | proxy_service._HTTPBridgeOwnerForward:
+        return await service._get_or_create_http_bridge_session(
+            key,
+            headers={"x-codex-session-id": key.affinity_key},
+            affinity=proxy_service._AffinityPolicy(
+                key=key.affinity_key,
+                kind=proxy_service.StickySessionKind.CODEX_SESSION,
+            ),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=1,
+        )
+
+    stale_owner = asyncio.create_task(get_session(stale_key))
+    await asyncio.wait_for(stale_create_started.wait(), timeout=1.0)
+    stale_marker = service._http_bridge_inflight_sessions[stale_key]
+    setattr(stale_marker, "_codex_lb_started_at", -1000.0)
+
+    resolved = await asyncio.wait_for(get_session(next_key), timeout=1.0)
+    stale_result = await asyncio.gather(stale_owner, return_exceptions=True)
+
+    assert isinstance(stale_result[0], asyncio.CancelledError)
+    assert resolved is replacement
+    assert create_keys == [stale_key, next_key]
+    assert stale_key not in service._http_bridge_inflight_sessions
+    assert service._http_bridge_sessions[next_key] is replacement
 
 
 @pytest.mark.asyncio
@@ -20004,11 +20135,22 @@ async def test_get_or_create_http_bridge_session_late_owner_after_inflight_evict
     created = _make_bridge_session(key_value="sid-late-owner")
     created.key = key
     create_started = asyncio.Event()
+    owner_cancelled = asyncio.Event()
     finish_create = asyncio.Event()
+    create_calls = 0
 
     async def create_session(*_: object, **__: object) -> proxy_service._HTTPBridgeSession:
+        nonlocal create_calls
+        create_calls += 1
         create_started.set()
-        await finish_create.wait()
+        try:
+            await finish_create.wait()
+        except asyncio.CancelledError:
+            # Model an upstream library that delays/swallows cancellation and
+            # still hands back a socket. The registry must remain owned until
+            # this coroutine reaches the common creator finalizer.
+            owner_cancelled.set()
+            await finish_create.wait()
         return created
 
     monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
@@ -20048,7 +20190,12 @@ async def test_get_or_create_http_bridge_session_late_owner_after_inflight_evict
 
     assert waiter_exc_info.value.status_code == 429
     assert waiter_exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
-    assert key not in service._http_bridge_inflight_sessions
+    await asyncio.wait_for(owner_cancelled.wait(), timeout=1.0)
+    assert service._http_bridge_inflight_sessions[key] is not None
+
+    with pytest.raises(ProxyResponseError):
+        await asyncio.wait_for(get_session(), timeout=1.0)
+    assert create_calls == 1
 
     finish_create.set()
     with pytest.raises(ProxyResponseError) as owner_exc_info:
@@ -31204,7 +31351,10 @@ async def test_rejected_creator_does_not_release_the_registered_winners_durable_
 
     async def create_session(*_: object, **__: object) -> proxy_service._HTTPBridgeSession:
         create_started.set()
-        await finish_create.wait()
+        try:
+            await finish_create.wait()
+        except asyncio.CancelledError:
+            await finish_create.wait()
         return stale_creator_session
 
     monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
@@ -31610,4 +31760,4 @@ async def test_admission_waiters_do_not_accumulate_callbacks_on_shared_inflight_
     # future for the rest with the local-overload contract error.
     remaining = await asyncio.gather(*waiters[25:], return_exceptions=True)
     assert all(isinstance(result, ProxyResponseError) and result.status_code == 429 for result in remaining)
-    assert key not in service._http_bridge_inflight_sessions
+    assert service._http_bridge_inflight_sessions[key] is inflight

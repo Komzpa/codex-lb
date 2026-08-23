@@ -208,6 +208,8 @@ _HTTP_BRIDGE_MISSING_RESPONSE_CREATED_TIMEOUT_DETAIL = "missing_response_created
 T = TypeVar("T")
 
 _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR = "_codex_lb_started_at"
+_HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR = "_codex_lb_owner_task"
+_HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR = "_codex_lb_abort_error"
 _HTTP_BRIDGE_STALE_INFLIGHT_MIN_SECONDS = 120.0
 _HTTP_BRIDGE_STALE_INFLIGHT_TIMEOUT_MULTIPLIER = 6.0
 
@@ -298,6 +300,79 @@ def _http_bridge_inflight_future_is_stale(
     return isinstance(started_at, (int, float)) and now - started_at >= stale_after_seconds
 
 
+def _mark_http_bridge_inflight_creation_owner(future: Any, *, started_at: float) -> None:
+    owner_task = asyncio.current_task()
+    assert owner_task is not None
+    setattr(future, _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR, started_at)
+    setattr(future, _HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, owner_task)
+
+
+def _abort_http_bridge_inflight_creation_locked(
+    service: Any,
+    key: "_HTTPBridgeSessionKey",
+    future: Any,
+    exc: BaseException,
+) -> bool:
+    if service._http_bridge_inflight_sessions.get(key) is not future:
+        return False
+    if getattr(future, "_http_bridge_handoff", False):
+        return False
+    owner_task = getattr(future, _HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, None)
+    caller_is_owner = isinstance(owner_task, asyncio.Task) and owner_task is asyncio.current_task()
+    abort_was_signalled = hasattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR)
+    if not future.done():
+        setattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR, exc)
+        if isinstance(exc, asyncio.CancelledError):
+            future.cancel()
+        else:
+            future.set_exception(exc)
+            future.exception()
+    if caller_is_owner:
+        service._http_bridge_inflight_sessions.pop(key, None)
+    elif not abort_was_signalled and isinstance(owner_task, asyncio.Task) and not owner_task.done():
+        owner_task.cancel()
+    return True
+
+
+def _abort_http_bridge_inflight_creation_by_future_locked(
+    service: Any,
+    future: Any,
+    exc: BaseException,
+) -> "_HTTPBridgeSessionKey | None":
+    key = next(
+        (key for key, candidate in service._http_bridge_inflight_sessions.items() if candidate is future),
+        None,
+    )
+    if key is None:
+        return None
+    aborted = _abort_http_bridge_inflight_creation_locked(
+        service,
+        key,
+        future,
+        exc,
+    )
+    return key if aborted else None
+
+
+async def _wait_for_http_bridge_aborted_owner(
+    future: Any,
+    *,
+    timeout: float,
+) -> bool:
+    abort_error = getattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR, None)
+    owner_task = getattr(future, _HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, None)
+    if abort_error is None or not isinstance(owner_task, asyncio.Task):
+        return False
+    if owner_task.done():
+        return True
+    done, _ = await asyncio.wait({owner_task}, timeout=timeout)
+    return bool(done)
+
+
+def _http_bridge_inflight_creation_can_register(future: Any) -> bool:
+    return not hasattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR)
+
+
 def _normalize_responses_request_payload_for_bridge(payload: ResponsesRequest) -> ResponsesRequest:
     return cast(
         Callable[[ResponsesRequest], ResponsesRequest],
@@ -369,7 +444,11 @@ def _http_bridge_pending_count_nowait(
         session.pending_lock.release()
 
 
-def _cleanup_http_bridge_inflight_sessions_nowait(service: Any) -> dict[str, int]:
+def _cleanup_http_bridge_inflight_sessions_nowait(
+    service: Any,
+    *,
+    cleanup_done: bool = True,
+) -> dict[str, int]:
     now = _service_time().monotonic()
     stale_after_seconds = _http_bridge_stale_inflight_seconds()
     cleaned = 0
@@ -404,20 +483,46 @@ def _cleanup_http_bridge_inflight_sessions_nowait(service: Any) -> dict[str, int
             )
             if is_stale:
                 stale += 1
-            expired = is_stale and not getattr(future, "_http_bridge_handoff", False)
-            if not future.done() and not expired:
-                continue
-            service._http_bridge_inflight_sessions.pop(key, None)
-            cleaned += 1
-            reason = "stale" if expired and not future.done() else "done"
-            if expired and not future.done():
-                future.set_exception(
-                    _http_bridge_startup_wait_timeout_error(
-                        "http_bridge_session_create",
-                        code="capacity_exhausted_active_sessions",
-                    )
+            is_handoff = getattr(future, "_http_bridge_handoff", False)
+            if is_handoff:
+                if not future.done() or not cleanup_done:
+                    continue
+                service._http_bridge_inflight_sessions.pop(key, None)
+                cleaned += 1
+                reason = "done"
+            else:
+                owner_task = getattr(future, _HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, None)
+                owner_running = isinstance(owner_task, asyncio.Task) and not owner_task.done()
+                if is_stale:
+                    abort_was_signalled = hasattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR)
+                    if not future.done():
+                        abort_error = _http_bridge_startup_wait_timeout_error(
+                            "http_bridge_session_create",
+                            code="capacity_exhausted_active_sessions",
+                        )
+                        setattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR, abort_error)
+                        future.set_exception(abort_error)
+                        # The registry future is the waiter signal, not the
+                        # upstream work owner. Retrieving the exception only
+                        # suppresses an unobserved-future warning; awaiters
+                        # still receive the structured overload response.
+                        future.exception()
+                    if owner_running and not abort_was_signalled:
+                        owner_task.cancel()
+                elif not cleanup_done:
+                    continue
+                # A completed waiter signal does not release capacity while
+                # its exact create_session task can still publish a socket.
+                owner_unknown_after_abort = owner_task is None and hasattr(
+                    future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR
                 )
-                future.exception()
+                if owner_running or owner_unknown_after_abort:
+                    continue
+                if not future.done():
+                    continue
+                service._http_bridge_inflight_sessions.pop(key, None)
+                cleaned += 1
+                reason = "stale" if is_stale else "done"
             if future.done() and not future.cancelled():
                 try:
                     future.exception()
@@ -444,19 +549,20 @@ def _cleanup_http_bridge_inflight_sessions_nowait(service: Any) -> dict[str, int
 
 
 def _http_bridge_inflight_creation_count(service: Any) -> int:
-    now = _service_time().monotonic()
-    stale_after_seconds = _http_bridge_stale_inflight_seconds()
+    # Registry ownership, not waiter-future settlement, determines capacity.
+    # A stale owner remains counted until its task reaches the common creator
+    # finalizer and removes its own marker.
+    return sum(
+        1
+        for future in service._http_bridge_inflight_sessions.values()
+        if not getattr(future, "_http_bridge_handoff", False)
+    )
 
-    def _counts_as_live_creation(future: Any) -> bool:
-        if getattr(future, "_http_bridge_handoff", False):
-            return False
-        return not future.done() and not _http_bridge_inflight_future_is_stale(
-            future,
-            now=now,
-            stale_after_seconds=stale_after_seconds,
-        )
 
-    return sum(1 for future in service._http_bridge_inflight_sessions.values() if _counts_as_live_creation(future))
+def _http_bridge_inflight_activity_count(service: Any) -> int:
+    # Handoffs do not consume creator capacity, but they are live bridge work
+    # and must keep drain/restart accounting conservative.
+    return len(service._http_bridge_inflight_sessions)
 
 
 def _http_bridge_session_generation_count(service: Any) -> int:
@@ -538,6 +644,7 @@ def http_bridge_activity_snapshot_nowait(service: Any) -> dict[str, int | bool]:
             pending_or_queued_requests += max(0, pending_count)
 
     inflight_session_creates = _http_bridge_inflight_creation_count(service)
+    inflight_activity = _http_bridge_inflight_activity_count(service)
     active_cleanup_tasks = sum(
         1
         for task in service._background_cleanup_tasks
@@ -548,12 +655,9 @@ def http_bridge_activity_snapshot_nowait(service: Any) -> dict[str, int | bool]:
         )
     )
     bridge_active = (
-        live_sessions > 0
-        or pending_or_queued_requests > 0
-        or pending_unknown_sessions > 0
-        or inflight_session_creates > 0
+        live_sessions > 0 or pending_or_queued_requests > 0 or pending_unknown_sessions > 0 or inflight_activity > 0
     )
-    restart_blocking = pending_or_queued_requests > 0 or pending_unknown_sessions > 0 or inflight_session_creates > 0
+    restart_blocking = pending_or_queued_requests > 0 or pending_unknown_sessions > 0 or inflight_activity > 0
     return {
         "http_bridge_live_sessions": live_sessions,
         "http_bridge_pending_or_queued_requests": pending_or_queued_requests,
@@ -921,6 +1025,9 @@ async def _raise_if_http_bridge_creation_superseded(
     """
     async with service._http_bridge_lock:
         superseded = service._http_bridge_inflight_sessions.get(key) is not inflight_future
+        abort_error = getattr(inflight_future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR, None)
+    if isinstance(abort_error, BaseException):
+        raise abort_error
     if superseded:
         raise _http_bridge_startup_wait_timeout_error(
             "http_bridge_session_registration",
