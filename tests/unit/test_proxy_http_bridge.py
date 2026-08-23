@@ -26358,6 +26358,10 @@ async def test_http_bridge_reconnect_failure_keeps_reader_handoff_session_closed
 
     async def select_no_account(*_args: object, **_kwargs: object) -> object:
         assert session.closed is True
+        handoff_future = service._http_bridge_inflight_sessions[session.key]
+        assert getattr(handoff_future, "_http_bridge_handoff") is True
+        assert getattr(handoff_future, "_codex_lb_owner_task") is asyncio.current_task()
+        assert getattr(handoff_future, "_codex_lb_started_at") <= time.monotonic()
         return SimpleNamespace(
             account=None,
             error_code="no_accounts",
@@ -26380,23 +26384,27 @@ async def test_http_bridge_reconnect_failure_keeps_reader_handoff_session_closed
 
 
 @pytest.mark.asyncio
-async def test_http_bridge_handoff_future_survives_same_key_and_capacity_timeouts(
+async def test_http_bridge_handoff_waits_past_admission_timeout_for_exact_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-timeout-handoff", None)
-    session = _make_bridge_session(key=key, key_value="sid-timeout-handoff", queued_request_count=1)
+    key = proxy_service._HTTPBridgeSessionKey("prompt_cache_key", "sid-timeout-handoff", None)
+    session = _make_bridge_session(key=key, key_value=key.affinity_key)
+    session.request_model = "gpt-5.4"
     handoff_future: asyncio.Future[proxy_service._HTTPBridgeSession] = asyncio.get_running_loop().create_future()
     session.closed = True
     session.handoff_in_progress = True
     session.handoff_future = handoff_future
     setattr(handoff_future, "_http_bridge_handoff", True)
+    http_bridge_helpers_module._mark_http_bridge_inflight_creation_owner(
+        handoff_future,
+        started_at=time.monotonic(),
+    )
     service._http_bridge_sessions[key] = session
     service._http_bridge_inflight_sessions[key] = handoff_future
     settings = _make_app_settings(proxy_admission_wait_timeout_seconds=0.01)
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
     monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
-    monkeypatch.setattr(service, "_http_bridge_pending_count", AsyncMock(return_value=1))
     monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
     monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-a"))
     monkeypatch.setattr(
@@ -26405,38 +26413,121 @@ async def test_http_bridge_handoff_future_survives_same_key_and_capacity_timeout
         AsyncMock(return_value=("instance-a", ("instance-a",))),
     )
 
-    with pytest.raises(ProxyResponseError):
+    waiter = asyncio.create_task(
+        service._get_or_create_http_bridge_session(
+            key,
+            headers={},
+            affinity=proxy_service._AffinityPolicy(key=key.affinity_key),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=8,
+            request_deadline=time.monotonic() + 1.0,
+        )
+    )
+    await asyncio.sleep(0.03)
+
+    assert not waiter.done()
+    snapshot = service.http_bridge_activity_snapshot_nowait()
+    assert snapshot["http_bridge_inflight_session_creates"] == 0
+    assert snapshot["http_bridge_restart_blocking"] is True
+
+    session.closed = False
+    proxy_support_module._complete_http_bridge_handoff(session, service._http_bridge_inflight_sessions)
+    assert await asyncio.wait_for(waiter, timeout=1.0) is session
+    assert handoff_future.result() is session
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_handoff_request_deadline_does_not_cancel_fresh_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("prompt_cache_key", "deadline-handoff", None)
+    session = _make_bridge_session(key=key, key_value=key.affinity_key)
+    session.request_model = "gpt-5.4"
+    session.closed = True
+    session.handoff_in_progress = True
+    handoff_future: asyncio.Future[proxy_service._HTTPBridgeSession] = asyncio.get_running_loop().create_future()
+    setattr(handoff_future, "_http_bridge_handoff", True)
+    http_bridge_helpers_module._mark_http_bridge_inflight_creation_owner(
+        handoff_future,
+        started_at=time.monotonic(),
+    )
+    session.handoff_future = handoff_future
+    service._http_bridge_sessions[key] = session
+    service._http_bridge_inflight_sessions[key] = handoff_future
+    settings = _make_app_settings(proxy_admission_wait_timeout_seconds=0.01)
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-a"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ("instance-a",))),
+    )
+
+    with pytest.raises(ProxyResponseError) as exc_info:
         await service._get_or_create_http_bridge_session(
             key,
-            headers={"x-codex-session-id": "sid-timeout-handoff"},
-            affinity=proxy_service._AffinityPolicy(
-                key="sid-timeout-handoff",
-                kind=proxy_service.StickySessionKind.CODEX_SESSION,
-            ),
+            headers={},
+            affinity=proxy_service._AffinityPolicy(key=key.affinity_key),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=8,
+            request_deadline=time.monotonic() + 0.03,
+        )
+
+    assert exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
+    assert service._http_bridge_inflight_sessions[key] is handoff_future
+    assert not handoff_future.done()
+    proxy_support_module._complete_http_bridge_handoff(session, service._http_bridge_inflight_sessions)
+    assert handoff_future.result() is session
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_ownerless_handoff_remains_fail_closed_at_admission_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("prompt_cache_key", "ownerless-handoff", None)
+    session = _make_bridge_session(key=key, key_value=key.affinity_key)
+    session.request_model = "gpt-5.4"
+    session.closed = True
+    session.handoff_in_progress = True
+    handoff_future: asyncio.Future[proxy_service._HTTPBridgeSession] = asyncio.get_running_loop().create_future()
+    setattr(handoff_future, "_http_bridge_handoff", True)
+    session.handoff_future = handoff_future
+    service._http_bridge_sessions[key] = session
+    service._http_bridge_inflight_sessions[key] = handoff_future
+    settings = _make_app_settings(proxy_admission_wait_timeout_seconds=0.01)
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-a"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ("instance-a",))),
+    )
+
+    with pytest.raises(ProxyResponseError) as exc_info:
+        await service._get_or_create_http_bridge_session(
+            key,
+            headers={},
+            affinity=proxy_service._AffinityPolicy(key=key.affinity_key),
             api_key=None,
             request_model="gpt-5.4",
             idle_ttl_seconds=120.0,
             max_sessions=8,
         )
-    assert service._http_bridge_inflight_sessions[key] is handoff_future
 
-    with pytest.raises(ProxyResponseError):
-        await service._get_or_create_http_bridge_session(
-            proxy_service._HTTPBridgeSessionKey("session_header", "sid-capacity-waiter", None),
-            headers={"x-codex-session-id": "sid-capacity-waiter"},
-            affinity=proxy_service._AffinityPolicy(
-                key="sid-capacity-waiter",
-                kind=proxy_service.StickySessionKind.CODEX_SESSION,
-            ),
-            api_key=None,
-            request_model="gpt-5.4",
-            idle_ttl_seconds=120.0,
-            max_sessions=1,
-        )
+    assert exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
     assert service._http_bridge_inflight_sessions[key] is handoff_future
-
+    assert not handoff_future.done()
     proxy_support_module._complete_http_bridge_handoff(session, service._http_bridge_inflight_sessions)
-    assert handoff_future.result() is session
 
 
 @pytest.mark.asyncio

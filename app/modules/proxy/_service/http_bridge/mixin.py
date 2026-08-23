@@ -2064,8 +2064,14 @@ class _HTTPBridgeMixin(
         old_reader = session.upstream_reader if restart_reader else None
         session.handoff_in_progress = True
         inflight_sessions = self._http_bridge_inflight_sessions
-        handoff_future = inflight_sessions.get(session.key) or asyncio.get_running_loop().create_future()
-        inflight_sessions.setdefault(session.key, handoff_future)
+        handoff_future = inflight_sessions.get(session.key)
+        if handoff_future is None:
+            handoff_future = asyncio.get_running_loop().create_future()
+            _mark_http_bridge_inflight_creation_owner(
+                handoff_future,
+                started_at=_service_time().monotonic(),
+            )
+            inflight_sessions[session.key] = handoff_future
         setattr(handoff_future, "_http_bridge_handoff", True)
         session.handoff_future = handoff_future
         session.closed = True
