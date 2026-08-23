@@ -67,9 +67,9 @@ from app.modules.proxy._service.compact import (
 from app.modules.proxy._service.http_bridge.account_sessions import _HTTPBridgeAccountSessionsMixin
 from app.modules.proxy._service.http_bridge.activity import _HTTPBridgeActivityMixin
 from app.modules.proxy._service.http_bridge.helpers import (
-    _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
-    _abort_http_bridge_inflight_creation_by_future_locked,
-    _abort_http_bridge_inflight_creation_locked,
+    _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR as _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR,
+)
+from app.modules.proxy._service.http_bridge.helpers import (
     _active_http_bridge_instance_ring,
     _alias_fallback_key,
     _cleanup_http_bridge_inflight_sessions_nowait,
@@ -136,9 +136,6 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _wait_for_http_bridge_aborted_owner,
 )
 from app.modules.proxy._service.http_bridge.helpers import (
-    _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR as _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR,
-)
-from app.modules.proxy._service.http_bridge.helpers import (
     _close_http_bridge_session as _helpers_close_http_bridge_session,
 )
 from app.modules.proxy._service.http_bridge.owner_forwarding import _HTTPBridgeOwnerForwardingMixin
@@ -169,7 +166,6 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
 from app.modules.proxy._service.http_bridge.session_registry import _HTTPBridgeSessionRegistryMixin
 from app.modules.proxy._service.http_bridge.streaming import _HTTPBridgeStreamingMixin
 from app.modules.proxy._service.http_bridge.upstream_events import _HTTPBridgeUpstreamEventsMixin
-from app.modules.proxy._service.observability import _hash_identifier
 from app.modules.proxy._service.support import (
     _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE,
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
@@ -237,7 +233,6 @@ logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
 _REQUEST_TRANSPORT_HTTP = "http"
 _UPSTREAM_CLOSE_CODES_SKIP_SAME_ACCOUNT_RETRY = frozenset({1011})
-_HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
 
 
 class _HTTPBridgeMixin(
@@ -250,71 +245,6 @@ class _HTTPBridgeMixin(
     _HTTPBridgeUpstreamEventsMixin,
     _HTTPBridgeServiceProtocol,
 ):
-    def _schedule_http_bridge_session_closes(
-        self,
-        sessions: list["_HTTPBridgeSession"],
-        *,
-        reason: str,
-    ) -> None:
-        for session in sessions:
-            if len(self._background_cleanup_tasks) >= _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD:
-                logger.warning(
-                    "http_bridge_background_cleanup_backlog action=session_close count=%d threshold=%d reason=%s",
-                    len(self._background_cleanup_tasks),
-                    _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD,
-                    reason,
-                )
-            self._schedule_cancel_safe_cleanup(
-                self._close_http_bridge_session_bounded(session, reason=reason),
-                action="http_bridge_session_close",
-                request_id=_hash_identifier(session.key.affinity_key),
-            )
-
-    async def _drain_http_bridge_background_cleanup_tasks(self, *, reason: str) -> None:
-        tasks = [
-            task
-            for task in self._background_cleanup_tasks
-            if not task.done()
-            and (
-                task.get_name().startswith("proxy-http_bridge_session_close-")
-                or task.get_name().startswith("http-bridge-close-")
-                or task.get_name().startswith("cancelled-task-cleanup-")
-            )
-        ]
-        if not tasks:
-            return
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*(asyncio.shield(task) for task in tasks), return_exceptions=True),
-                timeout=_HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            logger.warning(
-                "http_bridge_background_cleanup_drain_timeout reason=%s count=%d timeout_seconds=%.1f",
-                reason,
-                len(tasks),
-                _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
-            )
-
-    async def _fail_http_bridge_inflight_session_creation(
-        self,
-        key: "_HTTPBridgeSessionKey",
-        inflight_future: asyncio.Future["_HTTPBridgeSession"] | None,
-        exc: BaseException,
-    ) -> bool:
-        if inflight_future is None:
-            return False
-        async with self._http_bridge_lock:
-            return _abort_http_bridge_inflight_creation_locked(self, key, inflight_future, exc)
-
-    async def _evict_http_bridge_inflight_waiter(
-        self,
-        inflight_future: asyncio.Future["_HTTPBridgeSession"],
-        exc: BaseException,
-    ) -> "_HTTPBridgeSessionKey | None":
-        async with self._http_bridge_lock:
-            return _abort_http_bridge_inflight_creation_by_future_locked(self, inflight_future, exc)
-
     @overload
     async def _get_or_create_http_bridge_session(
         self,

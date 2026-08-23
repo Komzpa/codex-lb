@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from app.core.clients.proxy import ProxyResponseError
 from app.core.resilience.overload import local_overload_error
 from app.modules.proxy._service.http_bridge.helpers import (
+    _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
+    _abort_http_bridge_inflight_creation_by_future_locked,
+    _abort_http_bridge_inflight_creation_locked,
     _close_http_bridge_session_bounded,
     _http_bridge_capacity_generation_count,
     _http_bridge_pending_count_nowait,
@@ -17,12 +21,16 @@ from app.modules.proxy._service.http_bridge.helpers import (
     http_bridge_activity_snapshot_nowait,
 )
 from app.modules.proxy._service.http_bridge.protocol import _HTTPBridgeServiceProtocol
+from app.modules.proxy._service.observability import _hash_identifier
 from app.modules.proxy._service.support import (
     _http_bridge_session_supports_service_tier,
     _HTTPBridgeSession,
     _HTTPBridgeSessionKey,
 )
 from app.modules.proxy.affinity import _extract_model_class
+
+logger = logging.getLogger("app.modules.proxy.service")
+_HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
 
 
 class _HTTPBridgeActivityMixin:
@@ -84,6 +92,71 @@ class _HTTPBridgeActivityMixin:
         reason: str,
     ) -> None:
         await _close_http_bridge_session_bounded(self, session, reason=reason)
+
+    def _schedule_http_bridge_session_closes(
+        self,
+        sessions: list[_HTTPBridgeSession],
+        *,
+        reason: str,
+    ) -> None:
+        for session in sessions:
+            if len(self._background_cleanup_tasks) >= _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD:
+                logger.warning(
+                    "http_bridge_background_cleanup_backlog action=session_close count=%d threshold=%d reason=%s",
+                    len(self._background_cleanup_tasks),
+                    _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD,
+                    reason,
+                )
+            self._schedule_cancel_safe_cleanup(
+                self._close_http_bridge_session_bounded(session, reason=reason),
+                action="http_bridge_session_close",
+                request_id=_hash_identifier(session.key.affinity_key),
+            )
+
+    async def _drain_http_bridge_background_cleanup_tasks(self, *, reason: str) -> None:
+        tasks = [
+            task
+            for task in self._background_cleanup_tasks
+            if not task.done()
+            and (
+                task.get_name().startswith("proxy-http_bridge_session_close-")
+                or task.get_name().startswith("http-bridge-close-")
+                or task.get_name().startswith("cancelled-task-cleanup-")
+            )
+        ]
+        if not tasks:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(asyncio.shield(task) for task in tasks), return_exceptions=True),
+                timeout=_HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "http_bridge_background_cleanup_drain_timeout reason=%s count=%d timeout_seconds=%.1f",
+                reason,
+                len(tasks),
+                _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
+            )
+
+    async def _fail_http_bridge_inflight_session_creation(
+        self,
+        key: _HTTPBridgeSessionKey,
+        inflight_future: asyncio.Future[_HTTPBridgeSession] | None,
+        exc: BaseException,
+    ) -> bool:
+        if inflight_future is None:
+            return False
+        async with self._http_bridge_lock:
+            return _abort_http_bridge_inflight_creation_locked(self, key, inflight_future, exc)
+
+    async def _evict_http_bridge_inflight_waiter(
+        self,
+        inflight_future: asyncio.Future[_HTTPBridgeSession],
+        exc: BaseException,
+    ) -> _HTTPBridgeSessionKey | None:
+        async with self._http_bridge_lock:
+            return _abort_http_bridge_inflight_creation_by_future_locked(self, inflight_future, exc)
 
     def _http_bridge_active_capacity_error(
         self: _HTTPBridgeServiceProtocol,
