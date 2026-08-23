@@ -6,7 +6,7 @@ import hmac
 import json
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 import aiohttp
@@ -222,6 +222,15 @@ def build_owner_forward_headers(
     payload: ResponsesRequest,
     context: HTTPBridgeForwardContext,
 ) -> dict[str, str]:
+    # WebSocket client metadata is reconstructed as a header mapping without
+    # passing through an HTTP parser. In particular, duplicate historical turn
+    # state can contain a line break. Omit that optional hint from both the
+    # signed context and the serialized headers so the owner sees exactly the
+    # context that was signed.
+    if context.downstream_turn_state is not None and _bridge_header_has_line_break(
+        "x-codex-turn-state", context.downstream_turn_state
+    ):
+        context = replace(context, downstream_turn_state=None)
     filtered = filter_inbound_headers(headers)
     # Per the hop-by-hop contract, also drop any header named by the inbound
     # Connection header in addition to the fixed unsafe set.

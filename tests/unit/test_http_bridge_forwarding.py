@@ -1595,3 +1595,24 @@ def test_build_owner_forward_headers_drops_values_with_line_breaks() -> None:
     assert "x-codex-turn-metadata" not in headers
     assert "authorization" not in headers
     assert headers.get("x-openai-client-version") == "1.2.3"
+
+
+def test_build_owner_forward_headers_drops_unsafe_turn_state_from_signed_context() -> None:
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=True,
+        downstream_turn_state="turn-safe\nturn-duplicate",
+        original_affinity_kind="thread_header",
+        original_affinity_key="thread-123",
+    )
+
+    headers = build_owner_forward_headers(headers={}, payload=payload, context=context)
+    forwarded, error = parse_forwarded_request(headers, payload=payload, current_instance="instance-b")
+
+    assert "x-codex-turn-state" not in headers
+    assert error is None
+    assert forwarded is not None
+    assert forwarded.context.downstream_turn_state is None
+    assert forwarded.context.original_affinity_key == "thread-123"
