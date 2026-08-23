@@ -94,7 +94,7 @@ class _HTTPBridgeActivityMixin:
         await _close_http_bridge_session_bounded(self, session, reason=reason)
 
     def _schedule_http_bridge_session_closes(
-        self,
+        self: _HTTPBridgeServiceProtocol,
         sessions: list[_HTTPBridgeSession],
         *,
         reason: str,
@@ -113,7 +113,11 @@ class _HTTPBridgeActivityMixin:
                 request_id=_hash_identifier(session.key.affinity_key),
             )
 
-    async def _drain_http_bridge_background_cleanup_tasks(self, *, reason: str) -> None:
+    async def _drain_http_bridge_background_cleanup_tasks(
+        self: _HTTPBridgeServiceProtocol,
+        *,
+        reason: str,
+    ) -> None:
         tasks = [
             task
             for task in self._background_cleanup_tasks
@@ -140,7 +144,7 @@ class _HTTPBridgeActivityMixin:
             )
 
     async def _fail_http_bridge_inflight_session_creation(
-        self,
+        self: _HTTPBridgeServiceProtocol,
         key: _HTTPBridgeSessionKey,
         inflight_future: asyncio.Future[_HTTPBridgeSession] | None,
         exc: BaseException,
@@ -151,7 +155,7 @@ class _HTTPBridgeActivityMixin:
             return _abort_http_bridge_inflight_creation_locked(self, key, inflight_future, exc)
 
     async def _evict_http_bridge_inflight_waiter(
-        self,
+        self: _HTTPBridgeServiceProtocol,
         inflight_future: asyncio.Future[_HTTPBridgeSession],
         exc: BaseException,
     ) -> _HTTPBridgeSessionKey | None:
