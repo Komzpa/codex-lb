@@ -3232,8 +3232,9 @@ async def test_http_bridge_activity_snapshot_does_not_expire_live_inflight_sessi
 
 
 @pytest.mark.asyncio
-async def test_http_bridge_activity_snapshot_keeps_stale_live_inflight_session(
+async def test_http_bridge_activity_snapshot_expires_stale_live_inflight_session(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, SimpleNamespace()))
     key = proxy_service._HTTPBridgeSessionKey("session_header", "pending-stale-inflight-drain-status", None)
@@ -3243,15 +3244,22 @@ async def test_http_bridge_activity_snapshot_keeps_stale_live_inflight_session(
 
     monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda settings=None: 0.001)
 
-    snapshot = service.http_bridge_activity_snapshot_nowait()
+    with caplog.at_level(logging.WARNING, logger="app.modules.proxy.service"):
+        snapshot = service.http_bridge_activity_snapshot_nowait()
 
-    assert key in service._http_bridge_inflight_sessions
-    assert not inflight_future.done()
-    assert snapshot["http_bridge_inflight_session_creates"] == 1
+    assert key not in service._http_bridge_inflight_sessions
+    assert inflight_future.done()
+    assert not inflight_future.cancelled()
+    exc = inflight_future.exception()
+    assert isinstance(exc, ProxyResponseError)
+    assert exc.status_code == 429
+    assert exc.payload["error"]["code"] == "capacity_exhausted_active_sessions"
+    assert snapshot["http_bridge_inflight_session_creates"] == 0
     assert snapshot["http_bridge_stale_inflight_session_creates"] == 1
-    assert snapshot["http_bridge_cleaned_inflight_session_creates"] == 0
-    assert snapshot["http_bridge_active"] is True
-    assert snapshot["http_bridge_restart_blocking"] is True
+    assert snapshot["http_bridge_cleaned_inflight_session_creates"] == 1
+    assert snapshot["http_bridge_active"] is False
+    assert snapshot["http_bridge_restart_blocking"] is False
+    assert "http_bridge_inflight_session_create_cleanup reason=stale" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -3271,15 +3279,39 @@ async def test_http_bridge_activity_snapshot_skips_inflight_cleanup_when_registr
 
     assert key in service._http_bridge_inflight_sessions
     assert not inflight_future.done()
-    assert snapshot["http_bridge_inflight_session_creates"] == 1
+    assert snapshot["http_bridge_inflight_session_creates"] == 0
     assert snapshot["http_bridge_stale_inflight_session_creates"] == 1
     assert snapshot["http_bridge_cleaned_inflight_session_creates"] == 0
-    assert snapshot["http_bridge_active"] is True
-    assert snapshot["http_bridge_restart_blocking"] is True
+    assert snapshot["http_bridge_active"] is False
+    assert snapshot["http_bridge_restart_blocking"] is False
 
 
 @pytest.mark.asyncio
-async def test_http_bridge_inflight_creation_count_ignores_done_and_handoff_but_counts_stale_live(
+async def test_http_bridge_activity_snapshot_preserves_stale_handoff_inflight_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, SimpleNamespace()))
+    key = proxy_service._HTTPBridgeSessionKey("session_header", "handoff-stale-inflight-drain-status", None)
+    inflight_future: asyncio.Future[proxy_service._HTTPBridgeSession] = asyncio.get_running_loop().create_future()
+    setattr(inflight_future, "_codex_lb_started_at", -1000.0)
+    setattr(inflight_future, "_http_bridge_handoff", True)
+    service._http_bridge_inflight_sessions[key] = inflight_future
+
+    monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda settings=None: 0.001)
+
+    snapshot = service.http_bridge_activity_snapshot_nowait()
+
+    assert service._http_bridge_inflight_sessions[key] is inflight_future
+    assert not inflight_future.done()
+    assert snapshot["http_bridge_inflight_session_creates"] == 0
+    assert snapshot["http_bridge_stale_inflight_session_creates"] == 1
+    assert snapshot["http_bridge_cleaned_inflight_session_creates"] == 0
+    assert snapshot["http_bridge_active"] is False
+    assert snapshot["http_bridge_restart_blocking"] is False
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_inflight_creation_count_ignores_done_stale_and_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, SimpleNamespace()))
@@ -3309,7 +3341,7 @@ async def test_http_bridge_inflight_creation_count_ignores_done_and_handoff_but_
 
     monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda settings=None: 0.001)
 
-    assert http_bridge_helpers_module._http_bridge_inflight_creation_count(service) == 2
+    assert http_bridge_helpers_module._http_bridge_inflight_creation_count(service) == 1
 
 
 async def _wait_for_close_await(close_session: AsyncMock, session: proxy_service._HTTPBridgeSession) -> None:

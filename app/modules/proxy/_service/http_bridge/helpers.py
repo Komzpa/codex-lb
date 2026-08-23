@@ -283,6 +283,21 @@ def _http_bridge_stale_inflight_seconds() -> float:
     )
 
 
+def _http_bridge_inflight_age_seconds(future: Any, now: float) -> float:
+    started_at = getattr(future, _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR, None)
+    return max(0.0, now - started_at) if isinstance(started_at, (int, float)) else 0.0
+
+
+def _http_bridge_inflight_future_is_stale(
+    future: Any,
+    *,
+    now: float,
+    stale_after_seconds: float,
+) -> bool:
+    started_at = getattr(future, _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR, None)
+    return isinstance(started_at, (int, float)) and now - started_at >= stale_after_seconds
+
+
 def _normalize_responses_request_payload_for_bridge(payload: ResponsesRequest) -> ResponsesRequest:
     return cast(
         Callable[[ResponsesRequest], ResponsesRequest],
@@ -366,10 +381,9 @@ def _cleanup_http_bridge_inflight_sessions_nowait(service: Any) -> dict[str, int
         if type(exc).__name__ not in {"WouldBlock", "RuntimeError"}:
             raise
         for future in service._http_bridge_inflight_sessions.values():
-            started_at = getattr(future, _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR, None)
-            age_seconds = max(0.0, now - started_at) if isinstance(started_at, (int, float)) else 0.0
+            age_seconds = _http_bridge_inflight_age_seconds(future, now)
             oldest_age_seconds = max(oldest_age_seconds, int(age_seconds))
-            if isinstance(started_at, (int, float)) and age_seconds >= stale_after_seconds:
+            if _http_bridge_inflight_future_is_stale(future, now=now, stale_after_seconds=stale_after_seconds):
                 stale += 1
         return {
             "cleaned": 0,
@@ -381,16 +395,29 @@ def _cleanup_http_bridge_inflight_sessions_nowait(service: Any) -> dict[str, int
             current_future = service._http_bridge_inflight_sessions.get(key)
             if current_future is not future:
                 continue
-            started_at = getattr(future, _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR, None)
-            age_seconds = max(0.0, now - started_at) if isinstance(started_at, (int, float)) else 0.0
+            age_seconds = _http_bridge_inflight_age_seconds(future, now)
             oldest_age_seconds = max(oldest_age_seconds, int(age_seconds))
-            is_stale = isinstance(started_at, (int, float)) and age_seconds >= stale_after_seconds
+            is_stale = _http_bridge_inflight_future_is_stale(
+                future,
+                now=now,
+                stale_after_seconds=stale_after_seconds,
+            )
             if is_stale:
                 stale += 1
-            if not future.done():
+            expired = is_stale and not getattr(future, "_http_bridge_handoff", False)
+            if not future.done() and not expired:
                 continue
             service._http_bridge_inflight_sessions.pop(key, None)
             cleaned += 1
+            reason = "stale" if expired and not future.done() else "done"
+            if expired and not future.done():
+                future.set_exception(
+                    _http_bridge_startup_wait_timeout_error(
+                        "http_bridge_session_create",
+                        code="capacity_exhausted_active_sessions",
+                    )
+                )
+                future.exception()
             if future.done() and not future.cancelled():
                 try:
                     future.exception()
@@ -399,7 +426,7 @@ def _cleanup_http_bridge_inflight_sessions_nowait(service: Any) -> dict[str, int
             logger.warning(
                 "http_bridge_inflight_session_create_cleanup reason=%s bridge_kind=%s bridge_key=%s"
                 " age_seconds=%d stale_after_seconds=%d done=%s cancelled=%s",
-                "done",
+                reason,
                 key.affinity_kind,
                 _hash_identifier(key.affinity_key),
                 int(age_seconds),
@@ -417,10 +444,17 @@ def _cleanup_http_bridge_inflight_sessions_nowait(service: Any) -> dict[str, int
 
 
 def _http_bridge_inflight_creation_count(service: Any) -> int:
+    now = _service_time().monotonic()
+    stale_after_seconds = _http_bridge_stale_inflight_seconds()
+
     def _counts_as_live_creation(future: Any) -> bool:
         if getattr(future, "_http_bridge_handoff", False):
             return False
-        return not future.done()
+        return not future.done() and not _http_bridge_inflight_future_is_stale(
+            future,
+            now=now,
+            stale_after_seconds=stale_after_seconds,
+        )
 
     return sum(1 for future in service._http_bridge_inflight_sessions.values() if _counts_as_live_creation(future))
 
