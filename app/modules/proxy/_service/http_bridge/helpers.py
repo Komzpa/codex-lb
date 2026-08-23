@@ -300,6 +300,27 @@ def _http_bridge_inflight_future_is_stale(
     return isinstance(started_at, (int, float)) and now - started_at >= stale_after_seconds
 
 
+def _http_bridge_owned_inflight_wait_timeout_seconds(
+    future: Any,
+    *,
+    request_deadline: float | None,
+) -> float | None:
+    """Return the safe wait window for a proven live creator.
+
+    The short admission timeout bounds ownerless waits.  It must not abort a
+    creator whose exact task is still inside the longer stale-owner window.
+    """
+    owner_task = getattr(future, _HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, None)
+    started_at = getattr(future, _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR, None)
+    if not isinstance(owner_task, asyncio.Task) or owner_task.done() or not isinstance(started_at, (int, float)):
+        return None
+    now = _service_time().monotonic()
+    remaining = max(0.0, _http_bridge_stale_inflight_seconds() - max(0.0, now - started_at))
+    if request_deadline is not None:
+        remaining = min(remaining, max(0.0, request_deadline - now))
+    return remaining
+
+
 def _mark_http_bridge_inflight_creation_owner(future: Any, *, started_at: float) -> None:
     owner_task = asyncio.current_task()
     assert owner_task is not None

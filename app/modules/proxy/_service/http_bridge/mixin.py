@@ -94,6 +94,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_key_strength,
     _http_bridge_locally_owned_fork_key,
     _http_bridge_models_compatible,
+    _http_bridge_owned_inflight_wait_timeout_seconds,
     _http_bridge_owner_check_required,
     _http_bridge_owner_instance,
     _http_bridge_owner_lookup_unavailable_error_envelope,
@@ -1347,7 +1348,15 @@ class _HTTPBridgeMixin(
             if continuity_error is not None:
                 raise continuity_error
             if capacity_wait_future is not None:
-                wait_timeout_seconds = _proxy_admission_wait_timeout_seconds(settings)
+                owned_wait_timeout_seconds = _http_bridge_owned_inflight_wait_timeout_seconds(
+                    capacity_wait_future,
+                    request_deadline=request_deadline,
+                )
+                wait_timeout_seconds = (
+                    owned_wait_timeout_seconds
+                    if owned_wait_timeout_seconds is not None
+                    else _proxy_admission_wait_timeout_seconds(settings)
+                )
                 try:
                     # Not wait_for(shield(...)): shield attaches per-waiter
                     # callbacks to the shared registry future, which livelocks
@@ -1365,6 +1374,26 @@ class _HTTPBridgeMixin(
                         "http_bridge_capacity",
                         code="capacity_exhausted_active_sessions",
                     )
+                    _cleanup_http_bridge_inflight_sessions_nowait(self, cleanup_done=False)
+                    fresh_owner_wait_seconds = _http_bridge_owned_inflight_wait_timeout_seconds(
+                        capacity_wait_future,
+                        request_deadline=None,
+                    )
+                    owner_still_fresh = (
+                        owned_wait_timeout_seconds is not None
+                        and fresh_owner_wait_seconds is not None
+                        and fresh_owner_wait_seconds > 0.0
+                    )
+                    if owner_still_fresh:
+                        _log_http_bridge_startup_wait_timeout(
+                            stage="capacity",
+                            timeout_seconds=wait_timeout_seconds,
+                            key=key,
+                            request_model=request_model,
+                            pending_count=_http_bridge_session_generation_count(self),
+                            inflight_count=len(self._http_bridge_inflight_sessions),
+                        )
+                        raise timeout_error from exc
                     stale_key = await self._evict_http_bridge_inflight_waiter(capacity_wait_future, timeout_error)
                     _log_http_bridge_startup_wait_timeout(
                         stage="capacity",
@@ -1393,7 +1422,15 @@ class _HTTPBridgeMixin(
                     pass
                 continue
             if inflight_future is not None and not owns_creation:
-                wait_timeout_seconds = _proxy_admission_wait_timeout_seconds(settings)
+                owned_wait_timeout_seconds = _http_bridge_owned_inflight_wait_timeout_seconds(
+                    inflight_future,
+                    request_deadline=request_deadline,
+                )
+                wait_timeout_seconds = (
+                    owned_wait_timeout_seconds
+                    if owned_wait_timeout_seconds is not None
+                    else _proxy_admission_wait_timeout_seconds(settings)
+                )
                 try:
                     # Not wait_for(shield(...)): shield attaches per-waiter
                     # callbacks to the shared registry future, which livelocks
@@ -1411,6 +1448,29 @@ class _HTTPBridgeMixin(
                         "http_bridge_inflight_session",
                         code="capacity_exhausted_active_sessions",
                     )
+                    # Crossing the stale threshold is what authorizes aborting
+                    # an exact creator.  A shorter request budget may stop this
+                    # waiter, but it must not kill healthy shared startup work.
+                    _cleanup_http_bridge_inflight_sessions_nowait(self, cleanup_done=False)
+                    fresh_owner_wait_seconds = _http_bridge_owned_inflight_wait_timeout_seconds(
+                        inflight_future,
+                        request_deadline=None,
+                    )
+                    owner_still_fresh = (
+                        owned_wait_timeout_seconds is not None
+                        and fresh_owner_wait_seconds is not None
+                        and fresh_owner_wait_seconds > 0.0
+                    )
+                    if owner_still_fresh:
+                        _log_http_bridge_startup_wait_timeout(
+                            stage="inflight_session",
+                            timeout_seconds=wait_timeout_seconds,
+                            key=key,
+                            request_model=request_model,
+                            pending_count=_http_bridge_session_generation_count(self),
+                            inflight_count=len(self._http_bridge_inflight_sessions),
+                        )
+                        raise timeout_error from exc
                     await self._fail_http_bridge_inflight_session_creation(key, inflight_future, timeout_error)
                     _log_http_bridge_startup_wait_timeout(
                         stage="inflight_session",
