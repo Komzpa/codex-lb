@@ -114,6 +114,11 @@ class OwnerForwardRelayFailure(Exception):
     event_block: str
 
 
+def _bridge_header_has_line_break(name: str, value: str) -> bool:
+    """Return whether an inbound header is unsafe to serialize again."""
+    return "\r" in name or "\n" in name or "\r" in value or "\n" in value
+
+
 class HTTPBridgeOwnerClient:
     async def stream_responses(
         self,
@@ -235,7 +240,9 @@ def build_owner_forward_headers(
     forwarded = {
         key: value
         for key, value in filtered.items()
-        if key.lower() not in drop and not key.lower().startswith("x-codex-bridge-")
+        if key.lower() not in drop
+        and not key.lower().startswith("x-codex-bridge-")
+        and not _bridge_header_has_line_break(key, value)
     }
     # filter_inbound_headers strips Authorization, but the owner instance
     # re-validates the client API key from this header (see
@@ -246,7 +253,7 @@ def build_owner_forward_headers(
         (value for key, value in headers.items() if key.lower() == "authorization"),
         None,
     )
-    if authorization is not None:
+    if authorization is not None and not _bridge_header_has_line_break("authorization", authorization):
         forwarded["authorization"] = authorization
     forwarded[HTTP_BRIDGE_FORWARDED_HEADER] = "1"
     forwarded[HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER] = context.origin_instance

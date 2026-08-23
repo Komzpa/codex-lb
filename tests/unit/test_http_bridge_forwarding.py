@@ -1574,3 +1574,24 @@ def test_build_owner_forward_headers_drops_connection_named_headers() -> None:
     assert "Connection" not in headers
     assert "connection" not in headers
     assert headers.get("x-request-id") == "req-123"
+
+
+def test_build_owner_forward_headers_drops_values_with_line_breaks() -> None:
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=False,
+        downstream_turn_state=None,
+    )
+    inbound = {
+        "x-codex-turn-metadata": "safe-prefix\nInjected: value",
+        "Authorization": "Bearer downstream-key\r\nInjected: value",
+        "x-openai-client-version": "1.2.3",
+    }
+
+    headers = build_owner_forward_headers(headers=inbound, payload=payload, context=context)
+
+    assert "x-codex-turn-metadata" not in headers
+    assert "authorization" not in headers
+    assert headers.get("x-openai-client-version") == "1.2.3"
