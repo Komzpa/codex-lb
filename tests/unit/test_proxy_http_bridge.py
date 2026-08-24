@@ -45,6 +45,7 @@ from app.modules.proxy import service as proxy_service
 from app.modules.proxy._service import support as proxy_support_module
 from app.modules.proxy._service.http_bridge import helpers as http_bridge_helpers_module
 from app.modules.proxy._service.http_bridge import mixin as http_bridge_mixin_module
+from app.modules.proxy._service.http_bridge import owner_forwarding as http_bridge_owner_forwarding_module
 from app.modules.proxy._service.http_bridge import quarantine as http_bridge_quarantine_module
 from app.modules.proxy._service.http_bridge import request_submit as http_bridge_request_submit_module
 from app.modules.proxy._service.http_bridge import retry_circuit as http_bridge_retry_circuit_module
@@ -15814,6 +15815,11 @@ async def _run_owner_forward_recovery_with_session(
     capacity_error_on_first_submit: bool = False,
     submit_attempts: list[str] | None = None,
     owner_error_code: str = "previous_response_not_found",
+    previous_response_id: str | None = "resp_prev_1",
+    request_headers: dict[str, str] | None = None,
+    owner_key: "proxy_service._HTTPBridgeSessionKey | None" = None,
+    owner_outcome: "http_bridge_owner_forwarding_module._OwnerForwardOutcome | None" = None,
+    durable_lookup: DurableBridgeLookup | None = None,
 ) -> list[Any]:
     """Drive owner-forward failure -> local recovery; return prepared inputs.
 
@@ -15823,14 +15829,15 @@ async def _run_owner_forward_recovery_with_session(
     """
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
     started_at = time.monotonic()
-    payload = proxy_service.ResponsesRequest.model_validate(
-        {
-            "model": "gpt-5.4",
-            "instructions": "hi",
-            "input": input_items,
-            "previous_response_id": "resp_prev_1",
-        }
-    )
+    payload_data: dict[str, Any] = {
+        "model": "gpt-5.4",
+        "instructions": "hi",
+        "input": input_items,
+    }
+    if previous_response_id is not None:
+        payload_data["previous_response_id"] = previous_response_id
+    payload = proxy_service.ResponsesRequest.model_validate(payload_data)
+    request_headers = request_headers or {"x-codex-session-id": "sid-recover"}
 
     prepared_inputs: list[Any] = []
 
@@ -15844,7 +15851,7 @@ async def _run_owner_forward_recovery_with_session(
         client_ip: str | None = None,
     ) -> tuple[proxy_service._WebSocketRequestState, str]:
         del api_key, api_key_reservation, request_id, client_ip
-        assert prepared_payload.previous_response_id == "resp_prev_1"
+        assert prepared_payload.previous_response_id == previous_response_id
         prepared_inputs.append(prepared_payload.input)
         state = proxy_service._WebSocketRequestState(
             request_id=f"req-{len(prepared_inputs)}",
@@ -15855,20 +15862,29 @@ async def _run_owner_forward_recovery_with_session(
             started_at=started_at,
             event_queue=asyncio.Queue(),
             transport="http",
-            previous_response_id="resp_prev_1",
+            previous_response_id=previous_response_id,
         )
         return state, '{"type":"response.create"}'
 
     owner_forward = proxy_service._HTTPBridgeOwnerForward(
         owner_instance="instance-b",
         owner_endpoint="http://instance-b",
-        key=proxy_service._HTTPBridgeSessionKey("session_header", "sid-recover", None),
+        key=owner_key or proxy_service._HTTPBridgeSessionKey("session_header", "sid-recover", None),
     )
 
     async def fake_forward_http_bridge_request_to_owner(**kwargs: object):
         del kwargs
         status_code = 503 if owner_error_code == "bridge_drain_active" else 400
-        raise ProxyResponseError(status_code, proxy_service.openai_error(owner_error_code, "owner rejected"))
+        source = ProxyResponseError(
+            status_code,
+            proxy_service.openai_error(owner_error_code, "owner rejected"),
+        )
+        if owner_outcome is not None:
+            raise http_bridge_owner_forwarding_module._OwnerForwardRequestError(
+                source,
+                outcome=owner_outcome,
+            )
+        raise source
         yield ""
 
     async def fake_submit_http_bridge_request(
@@ -15915,7 +15931,11 @@ async def _run_owner_forward_recovery_with_session(
     )
     monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
     monkeypatch.setattr(http_bridge_streaming_module, "_http_bridge_account_capacity_wait_seconds", lambda _exc: 0.001)
-    monkeypatch.setattr(service._durable_bridge, "lookup_request_targets", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        service._durable_bridge,
+        "lookup_request_targets",
+        AsyncMock(return_value=durable_lookup),
+    )
     monkeypatch.setattr(service, "_resolve_websocket_previous_response_owner", AsyncMock(return_value="acc-1"))
     monkeypatch.setattr(service, "_prepare_http_bridge_request", fake_prepare)
     monkeypatch.setattr(service, "_get_or_create_http_bridge_session", get_or_create)
@@ -15927,7 +15947,7 @@ async def _run_owner_forward_recovery_with_session(
         chunk
         async for chunk in service._stream_via_http_bridge(
             payload,
-            headers={"x-codex-session-id": "sid-recover"},
+            headers=request_headers,
             codex_session_affinity=True,
             propagate_http_errors=False,
             openai_cache_affinity=False,
@@ -15999,6 +16019,47 @@ async def test_stream_via_http_bridge_recovers_locally_when_blue_green_owner_is_
         recovery_session=_make_owner_forward_recovery_session(),
         input_items=[{"role": "user", "content": "continue"}],
         owner_error_code="bridge_drain_active",
+    )
+
+    assert prepared_inputs == [
+        [{"role": "user", "content": "continue"}],
+        [{"role": "user", "content": "continue"}],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_via_http_bridge_rebinds_turn_state_after_draining_owner_rejects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recovery_session = _make_owner_forward_recovery_session()
+    recovery_session.key = proxy_service._HTTPBridgeSessionKey("thread_header", "thread-recover", None)
+    durable_lookup = DurableBridgeLookup(
+        session_id="durable-thread-recover",
+        canonical_kind="thread_header",
+        canonical_key="thread-recover",
+        api_key_scope="anonymous",
+        account_id="acc-1",
+        owner_instance_id="instance-b",
+        owner_epoch=1,
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        state=HttpBridgeSessionState.DRAINING,
+        latest_turn_state="http_turn_recover",
+        latest_response_id=None,
+        model="gpt-5.4",
+    )
+    prepared_inputs = await _run_owner_forward_recovery_with_session(
+        monkeypatch,
+        recovery_session=recovery_session,
+        input_items=[{"role": "user", "content": "continue"}],
+        owner_error_code="bridge_drain_active",
+        previous_response_id=None,
+        request_headers={
+            "thread-id": "thread-recover",
+            "x-codex-turn-state": "http_turn_recover",
+        },
+        owner_key=proxy_service._HTTPBridgeSessionKey("thread_header", "thread-recover", None),
+        owner_outcome=http_bridge_owner_forwarding_module._OwnerForwardOutcome.RECEIVER_REJECTED,
+        durable_lookup=durable_lookup,
     )
 
     assert prepared_inputs == [
@@ -18605,6 +18666,65 @@ async def test_should_attempt_local_bootstrap_rebind_for_session_header_without_
             key=proxy_service._HTTPBridgeSessionKey("session_header", "sid-123", None),
             headers={"x-codex-session-id": "sid-123", "x-codex-turn-state": "http_turn_123"},
             previous_response_id=None,
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    ("owner_outcome", "error_code", "expected"),
+    [
+        ("receiver_rejected", "bridge_drain_active", True),
+        ("not_dispatched", "bridge_drain_active", False),
+        ("dispatch_ambiguous", "bridge_drain_active", False),
+        ("receiver_acknowledged", "bridge_drain_active", False),
+        ("receiver_rejected", "bridge_owner_unreachable", False),
+        ("receiver_rejected", "bridge_instance_mismatch", False),
+    ],
+)
+def test_turn_state_bootstrap_rebind_requires_explicit_draining_owner_rejection(
+    owner_outcome: str,
+    error_code: str,
+    expected: bool,
+) -> None:
+    source = ProxyResponseError(
+        503,
+        {"error": {"code": error_code, "message": "owner failed", "type": "server_error"}},
+    )
+    outcome = http_bridge_owner_forwarding_module._OwnerForwardOutcome(owner_outcome)
+    exc = http_bridge_owner_forwarding_module._OwnerForwardRequestError(source, outcome=outcome)
+
+    assert (
+        proxy_service._http_bridge_should_attempt_local_bootstrap_rebind(
+            exc,
+            key=proxy_service._HTTPBridgeSessionKey("thread_header", "thread-123", None),
+            headers={"thread-id": "thread-123", "x-codex-turn-state": "http_turn_123"},
+            previous_response_id=None,
+            owner_receiver_rejected=(
+                http_bridge_owner_forwarding_module._owner_forward_failure_was_receiver_rejected(exc)
+            ),
+        )
+        is expected
+    )
+
+
+def test_turn_state_draining_owner_rejection_does_not_rebind_previous_response() -> None:
+    source = ProxyResponseError(
+        503,
+        {"error": {"code": "bridge_drain_active", "message": "owner draining", "type": "server_error"}},
+    )
+    exc = http_bridge_owner_forwarding_module._OwnerForwardRequestError(
+        source,
+        outcome=http_bridge_owner_forwarding_module._OwnerForwardOutcome.RECEIVER_REJECTED,
+    )
+
+    assert (
+        proxy_service._http_bridge_should_attempt_local_bootstrap_rebind(
+            exc,
+            key=proxy_service._HTTPBridgeSessionKey("thread_header", "thread-123", None),
+            headers={"thread-id": "thread-123", "x-codex-turn-state": "http_turn_123"},
+            previous_response_id="resp-123",
+            owner_receiver_rejected=True,
         )
         is False
     )

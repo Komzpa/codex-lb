@@ -198,6 +198,12 @@ def _owner_forward_failure_allows_local_recovery(exc: ProxyResponseError) -> boo
     }
 
 
+def _owner_forward_failure_was_receiver_rejected(exc: ProxyResponseError) -> bool:
+    """Return whether the owner explicitly rejected before response dispatch."""
+
+    return isinstance(exc, _OwnerForwardRequestError) and exc.outcome is _OwnerForwardOutcome.RECEIVER_REJECTED
+
+
 def _durable_recovery_supersedes_local_session(
     durable_lookup: DurableBridgeLookup | None,
     session: _HTTPBridgeSession,

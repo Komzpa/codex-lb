@@ -3056,12 +3056,11 @@ def _http_bridge_should_attempt_local_bootstrap_rebind(
     key: _HTTPBridgeSessionKey,
     headers: Mapping[str, str],
     previous_response_id: str | None,
+    owner_receiver_rejected: bool = False,
 ) -> bool:
     if key.affinity_kind not in {"session_header", "thread_header"}:
         return False
     if previous_response_id is not None:
-        return False
-    if _sticky_key_from_turn_state_header(headers) is not None:
         return False
     payload = exc.payload
     if not isinstance(payload, dict):
@@ -3070,6 +3069,14 @@ def _http_bridge_should_attempt_local_bootstrap_rebind(
     if not isinstance(error, dict):
         return False
     code = error.get("code")
+    if _sticky_key_from_turn_state_header(headers) is not None and not (
+        code == "bridge_drain_active" and owner_receiver_rejected
+    ):
+        # A hard turn-state anchor normally needs the durable takeover path.
+        # The only safe bootstrap exception is an explicit draining-owner HTTP
+        # rejection: the receiver rejected before dispatch, so this exact
+        # request was not accepted upstream and can be rebound locally.
+        return False
     return code in {
         "bridge_drain_active",
         "bridge_owner_unreachable",
