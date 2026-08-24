@@ -15813,6 +15813,7 @@ async def _run_owner_forward_recovery_with_session(
     input_items: list[dict[str, Any]],
     capacity_error_on_first_submit: bool = False,
     submit_attempts: list[str] | None = None,
+    owner_error_code: str = "previous_response_not_found",
 ) -> list[Any]:
     """Drive owner-forward failure -> local recovery; return prepared inputs.
 
@@ -15866,7 +15867,8 @@ async def _run_owner_forward_recovery_with_session(
 
     async def fake_forward_http_bridge_request_to_owner(**kwargs: object):
         del kwargs
-        raise ProxyResponseError(400, proxy_service.openai_error("previous_response_not_found", "missing"))
+        status_code = 503 if owner_error_code == "bridge_drain_active" else 400
+        raise ProxyResponseError(status_code, proxy_service.openai_error(owner_error_code, "owner rejected"))
         yield ""
 
     async def fake_submit_http_bridge_request(
@@ -15986,6 +15988,23 @@ async def test_stream_via_http_bridge_owner_forward_recovery_waits_for_local_sub
     )
 
     assert submit_attempts == ["req-2", "req-2"]
+
+
+@pytest.mark.asyncio
+async def test_stream_via_http_bridge_recovers_locally_when_blue_green_owner_is_draining(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared_inputs = await _run_owner_forward_recovery_with_session(
+        monkeypatch,
+        recovery_session=_make_owner_forward_recovery_session(),
+        input_items=[{"role": "user", "content": "continue"}],
+        owner_error_code="bridge_drain_active",
+    )
+
+    assert prepared_inputs == [
+        [{"role": "user", "content": "continue"}],
+        [{"role": "user", "content": "continue"}],
+    ]
 
 
 @pytest.mark.asyncio

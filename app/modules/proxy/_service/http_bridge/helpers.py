@@ -2954,6 +2954,7 @@ def _http_bridge_should_attempt_local_previous_response_recovery(exc: ProxyRespo
     # misclassify them into the ambiguous transport class below (issue #1830).
     code = _normalize_error_code(raw_code, error_type)
     if code in {
+        "bridge_drain_active",
         "bridge_owner_unreachable",
         "bridge_previous_response_not_found",
         "previous_response_not_found",
@@ -3070,6 +3071,7 @@ def _http_bridge_should_attempt_local_bootstrap_rebind(
         return False
     code = error.get("code")
     return code in {
+        "bridge_drain_active",
         "bridge_owner_unreachable",
         "bridge_instance_mismatch",
     }
