@@ -107,7 +107,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
 )
 from app.modules.proxy._service.http_bridge.owner_forwarding import (
     _owner_forward_failure_allows_local_recovery,
-    _owner_forward_failure_was_receiver_rejected,
+    _owner_forward_failure_was_pre_dispatch,
 )
 from app.modules.proxy._service.http_bridge.quarantine import (
     _http_bridge_session_key_quarantined,
@@ -2224,7 +2224,7 @@ class _HTTPBridgeStreamingMixin:
                         key=bridge_session_key,
                         headers=headers,
                         previous_response_id=effective_payload.previous_response_id,
-                        owner_receiver_rejected=_owner_forward_failure_was_receiver_rejected(exc),
+                        owner_pre_dispatch=_owner_forward_failure_was_pre_dispatch(exc),
                     )
                 )
                 should_attempt_turn_state_takeover = False

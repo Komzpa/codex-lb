@@ -394,6 +394,10 @@ def _http_bridge_inflight_creation_can_register(future: Any) -> bool:
     return not hasattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR)
 
 
+def _http_bridge_inflight_future_is_registered(service: Any, future: Any) -> bool:
+    return any(candidate is future for candidate in service._http_bridge_inflight_sessions.values())
+
+
 def _normalize_responses_request_payload_for_bridge(payload: ResponsesRequest) -> ResponsesRequest:
     return cast(
         Callable[[ResponsesRequest], ResponsesRequest],
@@ -3056,7 +3060,7 @@ def _http_bridge_should_attempt_local_bootstrap_rebind(
     key: _HTTPBridgeSessionKey,
     headers: Mapping[str, str],
     previous_response_id: str | None,
-    owner_receiver_rejected: bool = False,
+    owner_pre_dispatch: bool = False,
 ) -> bool:
     if key.affinity_kind not in {"session_header", "thread_header"}:
         return False
@@ -3070,12 +3074,12 @@ def _http_bridge_should_attempt_local_bootstrap_rebind(
         return False
     code = error.get("code")
     if _sticky_key_from_turn_state_header(headers) is not None and not (
-        code == "bridge_drain_active" and owner_receiver_rejected
+        code == "bridge_drain_active" and owner_pre_dispatch
     ):
         # A hard turn-state anchor normally needs the durable takeover path.
         # The only safe bootstrap exception is an explicit draining-owner HTTP
-        # rejection: the receiver rejected before dispatch, so this exact
-        # request was not accepted upstream and can be rebound locally.
+        # rejection before dispatch, so this exact request was not accepted
+        # upstream and can be rebound locally.
         return False
     return code in {
         "bridge_drain_active",

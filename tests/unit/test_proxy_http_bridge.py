@@ -18675,7 +18675,7 @@ async def test_should_attempt_local_bootstrap_rebind_for_session_header_without_
     ("owner_outcome", "error_code", "expected"),
     [
         ("receiver_rejected", "bridge_drain_active", True),
-        ("not_dispatched", "bridge_drain_active", False),
+        ("not_dispatched", "bridge_drain_active", True),
         ("dispatch_ambiguous", "bridge_drain_active", False),
         ("receiver_acknowledged", "bridge_drain_active", False),
         ("receiver_rejected", "bridge_owner_unreachable", False),
@@ -18700,9 +18700,7 @@ def test_turn_state_bootstrap_rebind_requires_explicit_draining_owner_rejection(
             key=proxy_service._HTTPBridgeSessionKey("thread_header", "thread-123", None),
             headers={"thread-id": "thread-123", "x-codex-turn-state": "http_turn_123"},
             previous_response_id=None,
-            owner_receiver_rejected=(
-                http_bridge_owner_forwarding_module._owner_forward_failure_was_receiver_rejected(exc)
-            ),
+            owner_pre_dispatch=http_bridge_owner_forwarding_module._owner_forward_failure_was_pre_dispatch(exc),
         )
         is expected
     )
@@ -18724,7 +18722,7 @@ def test_turn_state_draining_owner_rejection_does_not_rebind_previous_response()
             key=proxy_service._HTTPBridgeSessionKey("thread_header", "thread-123", None),
             headers={"thread-id": "thread-123", "x-codex-turn-state": "http_turn_123"},
             previous_response_id="resp-123",
-            owner_receiver_rejected=True,
+            owner_pre_dispatch=True,
         )
         is False
     )
@@ -19811,6 +19809,59 @@ async def test_get_or_create_http_bridge_session_full_stale_capacity_cancels_own
     assert create_keys == [stale_key, next_key]
     assert stale_key not in service._http_bridge_inflight_sessions
     assert service._http_bridge_sessions[next_key] is replacement
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_retries_when_stale_inflight_owner_already_finished(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-stale-owner-done", None)
+    replacement = _make_bridge_session(key=key, key_value=key.affinity_key)
+    inflight_future: asyncio.Future[proxy_service._HTTPBridgeSession] = asyncio.get_running_loop().create_future()
+
+    async def finished_owner() -> None:
+        return None
+
+    owner_task = asyncio.create_task(finished_owner())
+    await asyncio.wait_for(owner_task, timeout=1.0)
+    setattr(inflight_future, http_bridge_helpers_module._HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, owner_task)
+    setattr(inflight_future, http_bridge_helpers_module._HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR, -1000.0)
+    service._http_bridge_inflight_sessions[key] = inflight_future
+    settings = _make_app_settings()
+    settings.proxy_admission_wait_timeout_seconds = 0.01
+
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_create_http_bridge_session", AsyncMock(return_value=replacement))
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock())
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(proxy_service, "_http_bridge_should_wait_for_registration", AsyncMock(return_value=False))
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-a"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ("instance-a",))),
+    )
+
+    resolved = await asyncio.wait_for(
+        service._get_or_create_http_bridge_session(
+            key,
+            headers={"x-codex-session-id": key.affinity_key},
+            affinity=proxy_service._AffinityPolicy(
+                key=key.affinity_key,
+                kind=proxy_service.StickySessionKind.CODEX_SESSION,
+            ),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=8,
+        ),
+        timeout=1.0,
+    )
+
+    assert resolved is replacement
+    assert service._http_bridge_sessions[key] is replacement
+    assert service._http_bridge_inflight_sessions == {}
 
 
 @pytest.mark.asyncio

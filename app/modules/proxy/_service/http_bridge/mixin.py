@@ -91,6 +91,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_incompatible_model_fork_key,
     _http_bridge_inflight_creation_can_register,
     _http_bridge_inflight_creation_count,
+    _http_bridge_inflight_future_is_registered,
     _http_bridge_key_strength,
     _http_bridge_locally_owned_fork_key,
     _http_bridge_models_compatible,
@@ -1338,6 +1339,9 @@ class _HTTPBridgeMixin(
                     # admission only after that owner has yielded ownership.
                     if await _wait_for_http_bridge_aborted_owner(capacity_wait_future, timeout=wait_timeout_seconds):
                         continue
+                    _cleanup_http_bridge_inflight_sessions_nowait(self, cleanup_done=True)
+                    if not _http_bridge_inflight_future_is_registered(self, capacity_wait_future):
+                        continue
                     raise timeout_error from exc
                 except ProxyResponseError:
                     # A stale capacity owner has already been signalled and
@@ -1414,6 +1418,9 @@ class _HTTPBridgeMixin(
                     # finalizer runs. Do not start a successor over it; retry
                     # admission only after that owner has yielded ownership.
                     if await _wait_for_http_bridge_aborted_owner(inflight_future, timeout=wait_timeout_seconds):
+                        continue
+                    _cleanup_http_bridge_inflight_sessions_nowait(self, cleanup_done=True)
+                    if not _http_bridge_inflight_future_is_registered(self, inflight_future):
                         continue
                     raise timeout_error from exc
                 except Exception:
