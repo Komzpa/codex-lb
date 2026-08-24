@@ -315,7 +315,7 @@ def _http_bridge_owned_inflight_wait_timeout_seconds(
     if not isinstance(owner_task, asyncio.Task) or owner_task.done() or not isinstance(started_at, (int, float)):
         return None
     now = _service_time().monotonic()
-    remaining = max(0.0, _http_bridge_stale_inflight_seconds() - max(0.0, now - started_at))
+    remaining = _proxy_admission_wait_timeout_seconds()
     if request_deadline is not None:
         remaining = min(remaining, max(0.0, request_deadline - now))
     return remaining
@@ -488,7 +488,9 @@ def _cleanup_http_bridge_inflight_sessions_nowait(
         for future in service._http_bridge_inflight_sessions.values():
             age_seconds = _http_bridge_inflight_age_seconds(future, now)
             oldest_age_seconds = max(oldest_age_seconds, int(age_seconds))
-            if _http_bridge_inflight_future_is_stale(future, now=now, stale_after_seconds=stale_after_seconds):
+            if _http_bridge_inflight_future_is_stale(
+                future, now=now, stale_after_seconds=stale_after_seconds
+            ) and not getattr(future, "_http_bridge_handoff", False):
                 stale += 1
         return {
             "cleaned": 0,
@@ -507,9 +509,9 @@ def _cleanup_http_bridge_inflight_sessions_nowait(
                 now=now,
                 stale_after_seconds=stale_after_seconds,
             )
-            if is_stale:
-                stale += 1
             is_handoff = getattr(future, "_http_bridge_handoff", False)
+            if is_stale and not is_handoff:
+                stale += 1
             if is_handoff:
                 if not future.done() or not cleanup_done:
                     continue
@@ -534,6 +536,8 @@ def _cleanup_http_bridge_inflight_sessions_nowait(
                     reason = "owner_done"
                 else:
                     if is_stale:
+                        if not cleanup_done and not future.done():
+                            continue
                         abort_was_signalled = hasattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR)
                         if not future.done():
                             abort_error = _http_bridge_startup_wait_timeout_error(
@@ -661,7 +665,7 @@ def _plan_http_bridge_lru_capacity_closes(
 
 
 def http_bridge_activity_snapshot_nowait(service: Any) -> dict[str, int | bool]:
-    inflight_cleanup = _cleanup_http_bridge_inflight_sessions_nowait(service)
+    inflight_cleanup = _cleanup_http_bridge_inflight_sessions_nowait(service, cleanup_done=False)
     live_sessions = 0
     pending_or_queued_requests = 0
     pending_unknown_sessions = 0

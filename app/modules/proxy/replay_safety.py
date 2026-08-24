@@ -21,6 +21,10 @@ _ACCOUNT_NEUTRAL_REPLAY_OMITTED_ITEM_TYPES = frozenset(
     {"reasoning", "tool_search_call", "tool_search_output", "web_search_call"}
 )
 _INTERNAL_CHAT_MESSAGE_METADATA_FIELD = "internal_chat_message_metadata_passthrough"
+_TOOL_CALL_OUTPUT_FIELDS = {
+    item_type: frozenset({"type", "call_id", "output", _INTERNAL_CHAT_MESSAGE_METADATA_FIELD})
+    for item_type in _TOOL_CALL_TYPE_BY_OUTPUT_TYPE
+}
 _ACCOUNT_NEUTRAL_INTERNAL_CHAT_MESSAGE_METADATA_FIELDS = frozenset({"turn_id"})
 _ACCOUNT_NEUTRAL_TOOL_TYPES = frozenset({"custom", "function", "web_search", "web_search_preview"})
 _ACCOUNT_NEUTRAL_TOOL_DECLARATION_FIELDS = {
@@ -443,10 +447,19 @@ def responses_input_suffix_matches_pending_tool_calls(
     suffix_outputs: dict[str, str] = {}
     for item in cast(list[dict[str, JsonValue]], suffix):
         item_type = cast(str, item["type"])
-        call_id = cast(str, item["call_id"])
+        call_id = item.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            return False
         if item_type in _TOOL_CALL_TYPES:
+            if call_id in suffix_calls:
+                return False
             suffix_calls[call_id] = item_type
         else:
+            if call_id in suffix_outputs:
+                return False
+            allowed_fields = _TOOL_CALL_OUTPUT_FIELDS[item_type]
+            if set(item) - allowed_fields:
+                return False
             suffix_outputs[call_id] = _TOOL_CALL_TYPE_BY_OUTPUT_TYPE[item_type]
     if prefix_pending:
         return not suffix_calls and suffix_outputs == expected

@@ -10,6 +10,7 @@ import aiohttp
 import pytest
 from aiohttp.client_reqrep import ConnectionKey
 
+from app.core.clients.proxy import ProxyResponseError
 from app.core.config.settings import get_settings
 from app.core.openai.requests import ResponsesRequest
 from app.modules.api_keys.service import ApiKeyUsageReservationData
@@ -1629,11 +1630,6 @@ def test_build_owner_forward_headers_drops_all_unsafe_optional_context_headers()
         original_affinity_key="thread-safe\nthread-duplicate",
         file_owner_account_id="account-safe\raccount-duplicate",
         client_ip="127.0.0.1\nforwarded-client",
-        reservation=ApiKeyUsageReservationData(
-            reservation_id="reservation-safe\nreservation-duplicate",
-            key_id="key-123",
-            model="gpt-5.4",
-        ),
     )
 
     headers = build_owner_forward_headers(headers={}, payload=payload, context=context)
@@ -1648,3 +1644,41 @@ def test_build_owner_forward_headers_drops_all_unsafe_optional_context_headers()
     assert forwarded.context.file_owner_account_id is None
     assert forwarded.context.client_ip is None
     assert forwarded.context.reservation is None
+
+
+def test_build_owner_forward_headers_drops_headers_with_any_control_character() -> None:
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=False,
+        downstream_turn_state=None,
+    )
+
+    headers = build_owner_forward_headers(
+        headers={"x-openai-client-version": "1.2.3\x00hidden"},
+        payload=payload,
+        context=context,
+    )
+
+    assert "x-openai-client-version" not in headers
+
+
+def test_build_owner_forward_headers_rejects_unsafe_reservation_metadata() -> None:
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=True,
+        downstream_turn_state="turn-123",
+        reservation=ApiKeyUsageReservationData(
+            reservation_id="reservation-safe",
+            key_id="key-123",
+            model="gpt-5.4\x00gpt-5.6-sol",
+        ),
+    )
+
+    with pytest.raises(ProxyResponseError) as exc_info:
+        build_owner_forward_headers(headers={}, payload=payload, context=context)
+
+    assert exc_info.value.payload["error"]["code"] == "bridge_forward_invalid"

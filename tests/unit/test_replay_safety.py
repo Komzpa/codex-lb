@@ -755,6 +755,54 @@ def test_full_resend_suffix_rejects_outputs_without_matching_pending_prefix_call
     )
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        pytest.param(
+            [
+                {"type": "function_call_output", "call_id": "call_current", "output": "wrong"},
+                {"type": "function_call_output", "call_id": "call_current", "output": "right"},
+            ],
+            id="duplicate-output-overwrite",
+        ),
+        pytest.param(
+            [
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_current",
+                    "output": "result",
+                    "id": "response-owned-output-id",
+                },
+            ],
+            id="response-owned-output-field",
+        ),
+        pytest.param(
+            [{"type": "function_call_output", "output": "result"}],
+            id="missing-call-id",
+        ),
+    ],
+)
+def test_full_resend_suffix_validates_prefix_settling_outputs(suffix: list[JsonValue]) -> None:
+    stored_input: list[JsonValue] = [
+        {"role": "user", "content": "first question"},
+        {
+            "type": "function_call",
+            "call_id": "call_current",
+            "name": "lookup",
+            "arguments": "{}",
+        },
+    ]
+
+    assert (
+        responses_input_suffix_matches_pending_tool_calls(
+            [*stored_input, *suffix],
+            stored_count=len(stored_input),
+            pending_tool_calls={"call_current": "function_call"},
+        )
+        is False
+    )
+
+
 def test_full_resend_tool_loop_manifest_tolerates_fresh_developer_interleave_after_historical_one() -> None:
     stored_input: list[JsonValue] = [
         {"role": "user", "content": "first question"},

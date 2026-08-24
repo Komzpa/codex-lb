@@ -114,13 +114,14 @@ class OwnerForwardRelayFailure(Exception):
     event_block: str
 
 
-def _bridge_header_has_line_break(name: str, value: str) -> bool:
-    """Return whether an inbound header is unsafe to serialize again."""
-    return "\r" in name or "\n" in name or "\r" in value or "\n" in value
+def _bridge_header_has_illegal_control_char(name: str, value: str) -> bool:
+    """Return whether reconstructed metadata is unsafe as an HTTP header."""
+
+    return any(ord(char) < 32 or ord(char) == 127 for char in f"{name}{value}")
 
 
 def _without_bridge_header_line_break(value: str | None, *, name: str) -> str | None:
-    if value is None or _bridge_header_has_line_break(name, value):
+    if value is None or _bridge_header_has_illegal_control_char(name, value):
         return None
     return value
 
@@ -139,14 +140,21 @@ def _sanitize_bridge_forward_context(context: HTTPBridgeForwardContext) -> HTTPB
         affinity_key = None
     reservation = context.reservation
     if reservation is not None and any(
-        _bridge_header_has_line_break(name, value)
+        _bridge_header_has_illegal_control_char(name, value)
         for name, value in (
             (HTTP_BRIDGE_RESERVATION_ID_HEADER, reservation.reservation_id),
             (HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER, reservation.key_id),
             (HTTP_BRIDGE_RESERVATION_MODEL_HEADER, reservation.model),
         )
     ):
-        reservation = None
+        raise ProxyResponseError(
+            400,
+            openai_error(
+                "bridge_forward_invalid",
+                "Internal bridge reservation metadata is not safe to forward",
+                error_type="invalid_request_error",
+            ),
+        )
     return replace(
         context,
         downstream_turn_state=_without_bridge_header_line_break(
@@ -294,7 +302,7 @@ def build_owner_forward_headers(
         for key, value in filtered.items()
         if key.lower() not in drop
         and not key.lower().startswith("x-codex-bridge-")
-        and not _bridge_header_has_line_break(key, value)
+        and not _bridge_header_has_illegal_control_char(key, value)
     }
     # filter_inbound_headers strips Authorization, but the owner instance
     # re-validates the client API key from this header (see
@@ -305,7 +313,7 @@ def build_owner_forward_headers(
         (value for key, value in headers.items() if key.lower() == "authorization"),
         None,
     )
-    if authorization is not None and not _bridge_header_has_line_break("authorization", authorization):
+    if authorization is not None and not _bridge_header_has_illegal_control_char("authorization", authorization):
         forwarded["authorization"] = authorization
     forwarded[HTTP_BRIDGE_FORWARDED_HEADER] = "1"
     forwarded[HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER] = context.origin_instance
@@ -360,7 +368,7 @@ def build_owner_forward_headers(
     )
     # Defense in depth: aiohttp must never be the first component to discover
     # that reconstructed WebSocket metadata is not legal as an HTTP header.
-    return {key: value for key, value in forwarded.items() if not _bridge_header_has_line_break(key, value)}
+    return {key: value for key, value in forwarded.items() if not _bridge_header_has_illegal_control_char(key, value)}
 
 
 def parse_forwarded_request(
