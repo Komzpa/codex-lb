@@ -24704,7 +24704,6 @@ async def test_stream_via_http_bridge_fails_closed_before_file_affinity_when_pre
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = proxy_service.ProxyService(cast(Any, nullcontext()))
-    await service._pin_file_account("file_from_other_account", "acc-file")
     payload = proxy_service.ResponsesRequest.model_validate(
         {
             "model": "gpt-5.4",
@@ -24744,6 +24743,7 @@ async def test_stream_via_http_bridge_fails_closed_before_file_affinity_when_pre
     monkeypatch.setattr(service._durable_bridge, "lookup_request_targets", AsyncMock(return_value=None))
     monkeypatch.setattr(service, "_http_bridge_local_owner_account_id", AsyncMock(return_value=None))
     monkeypatch.setattr(service, "_resolve_websocket_previous_response_owner", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_resolve_file_account_for_responses", AsyncMock(return_value="acc-file"))
     monkeypatch.setattr(service, "_get_or_create_http_bridge_session", get_or_create)
 
     with pytest.raises(ProxyResponseError) as exc_info:
@@ -24782,6 +24782,7 @@ async def test_stream_via_http_bridge_fails_closed_before_file_affinity_when_pre
         ("response_owned_developer", False, None),
         ("response_owned_stored_developer", False, None),
         ("missing_owner", False, None),
+        ("matched_pending_output", False, None),
     ],
 )
 async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_when_owner_is_unavailable(
@@ -24905,9 +24906,13 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
         "input": [
             *historical_input,
             retained_boundary_output,
-            *completed_search_bookkeeping,
-            *([] if unsafe_replay_input == "missing_prior_output" else [retained_prior_output]),
-            new_input,
+            *([] if unsafe_replay_input == "matched_pending_output" else completed_search_bookkeeping),
+            *(
+                []
+                if unsafe_replay_input in {"missing_prior_output", "matched_pending_output"}
+                else [retained_prior_output]
+            ),
+            *([] if unsafe_replay_input == "matched_pending_output" else [new_input]),
             *(
                 [
                     {
@@ -24940,6 +24945,9 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
         latest_response_id="resp_completed_anchor",
         latest_input_item_count=len(historical_input),
         latest_input_full_fingerprint=proxy_service._fingerprint_input_items(historical_input),
+        latest_pending_tool_calls=(
+            {"call_old": "function_call"} if unsafe_replay_input == "matched_pending_output" else None
+        ),
         model=stored_model,
     )
     owner_unavailable = ProxyResponseError(
@@ -25059,7 +25067,7 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
         queue_limit=4,
         enforce_openai_sdk_contract=False,
     )
-    if unsafe_replay_input is not None:
+    if unsafe_replay_input is not None and unsafe_replay_input != "matched_pending_output":
         with pytest.raises(ProxyResponseError) as exc_info:
             async for _ in stream:
                 pass
@@ -25124,7 +25132,7 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
     assert captured_request_states[0].enforce_openai_sdk_contract is False
     replay_payload = json.loads(captured_text_data[0])
     assert "previous_response_id" not in replay_payload
-    assert replay_payload["input"] == [
+    expected_replay_input: list[proxy_service.JsonValue] = [
         {
             "role": "user",
             "content": [{"type": "input_text", "text": "old question"}],
@@ -25143,20 +25151,26 @@ async def test_stream_via_http_bridge_projects_plaintext_durable_full_resend_whe
             "output": "old output",
             "internal_chat_message_metadata_passthrough": owner_metadata,
         },
-        {
-            "type": "message",
-            "role": "assistant",
-            "status": "completed",
-            "phase": "final_answer",
-            "content": [{"type": "output_text", "text": "old answer"}],
-            "internal_chat_message_metadata_passthrough": owner_metadata,
-        },
-        {
-            "role": "user",
-            "content": [{"type": "input_text", "text": "next question"}],
-            "internal_chat_message_metadata_passthrough": {"turn_id": "turn-next"},
-        },
     ]
+    if unsafe_replay_input != "matched_pending_output":
+        expected_replay_input.extend(
+            [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "phase": "final_answer",
+                    "content": [{"type": "output_text", "text": "old answer"}],
+                    "internal_chat_message_metadata_passthrough": owner_metadata,
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "next question"}],
+                    "internal_chat_message_metadata_passthrough": {"turn_id": "turn-next"},
+                },
+            ]
+        )
+    assert replay_payload["input"] == expected_replay_input
     assert "encrypted_content" not in captured_text_data[0]
     assert all("id" not in item for item in replay_payload["input"])
     account_neutral_classifier.assert_called_once()

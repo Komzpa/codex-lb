@@ -412,7 +412,15 @@ def responses_input_suffix_matches_pending_tool_calls(
         allow_historical_developer_interleave=True,
         canonical_lite_developer_index=canonical_lite_developer_index,
     )
-    if prefix_state is None or prefix_state[0] or prefix_state[1] & pending_tool_calls.keys():
+    if prefix_state is None:
+        return False
+    prefix_pending_calls, prefix_seen_call_ids = prefix_state
+    expected = dict(pending_tool_calls)
+    prefix_pending = {call_id: call_type for call_type, call_id in prefix_pending_calls}
+    if prefix_pending:
+        if prefix_pending != expected:
+            return False
+    elif prefix_seen_call_ids & pending_tool_calls.keys():
         return False
     suffix = input_items[stored_count:]
     if (
@@ -429,7 +437,7 @@ def responses_input_suffix_matches_pending_tool_calls(
         for item in suffix
     ):
         return False
-    if not responses_input_items_are_self_contained_fresh_replay(suffix):
+    if not prefix_pending and not responses_input_items_are_self_contained_fresh_replay(suffix):
         return False
     suffix_calls: dict[str, str] = {}
     suffix_outputs: dict[str, str] = {}
@@ -440,7 +448,8 @@ def responses_input_suffix_matches_pending_tool_calls(
             suffix_calls[call_id] = item_type
         else:
             suffix_outputs[call_id] = _TOOL_CALL_TYPE_BY_OUTPUT_TYPE[item_type]
-    expected = dict(pending_tool_calls)
+    if prefix_pending:
+        return not suffix_calls and suffix_outputs == expected
     return suffix_calls == expected and suffix_outputs == expected
 
 

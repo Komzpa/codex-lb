@@ -715,6 +715,46 @@ def test_full_resend_suffix_accepts_only_self_contained_tool_loops(
     )
 
 
+def test_full_resend_suffix_accepts_outputs_for_pending_calls_in_stored_prefix() -> None:
+    stored_input: list[JsonValue] = [
+        {"role": "user", "content": "first question"},
+        {
+            "type": "function_call",
+            "call_id": "call_current",
+            "name": "lookup",
+            "arguments": "{}",
+        },
+    ]
+    suffix: list[JsonValue] = [
+        {"type": "function_call_output", "call_id": "call_current", "output": "result"},
+    ]
+
+    assert (
+        responses_input_suffix_matches_pending_tool_calls(
+            [*stored_input, *suffix],
+            stored_count=len(stored_input),
+            pending_tool_calls={"call_current": "function_call"},
+        )
+        is True
+    )
+
+
+def test_full_resend_suffix_rejects_outputs_without_matching_pending_prefix_call() -> None:
+    stored_input: list[JsonValue] = [{"role": "user", "content": "first question"}]
+    suffix: list[JsonValue] = [
+        {"type": "function_call_output", "call_id": "call_current", "output": "orphan"},
+    ]
+
+    assert (
+        responses_input_suffix_matches_pending_tool_calls(
+            [*stored_input, *suffix],
+            stored_count=len(stored_input),
+            pending_tool_calls={"call_current": "function_call"},
+        )
+        is False
+    )
+
+
 def test_full_resend_tool_loop_manifest_tolerates_fresh_developer_interleave_after_historical_one() -> None:
     stored_input: list[JsonValue] = [
         {"role": "user", "content": "first question"},
