@@ -18706,6 +18706,32 @@ def test_turn_state_bootstrap_rebind_requires_explicit_draining_owner_rejection(
     )
 
 
+def test_owner_forward_proxy_error_classifies_explicit_drain_as_receiver_rejected() -> None:
+    drain_error = ProxyResponseError(
+        503,
+        {"error": {"code": "bridge_drain_active", "message": "owner draining", "type": "server_error"}},
+    )
+    ambiguous_error = ProxyResponseError(
+        503,
+        {"error": {"code": "bridge_owner_unreachable", "message": "owner failed", "type": "server_error"}},
+    )
+
+    assert (
+        http_bridge_owner_forwarding_module._owner_forward_outcome_for_proxy_error(
+            drain_error,
+            default=http_bridge_owner_forwarding_module._OwnerForwardOutcome.DISPATCH_AMBIGUOUS,
+        )
+        is http_bridge_owner_forwarding_module._OwnerForwardOutcome.RECEIVER_REJECTED
+    )
+    assert (
+        http_bridge_owner_forwarding_module._owner_forward_outcome_for_proxy_error(
+            ambiguous_error,
+            default=http_bridge_owner_forwarding_module._OwnerForwardOutcome.DISPATCH_AMBIGUOUS,
+        )
+        is http_bridge_owner_forwarding_module._OwnerForwardOutcome.DISPATCH_AMBIGUOUS
+    )
+
+
 def test_turn_state_draining_owner_rejection_does_not_rebind_previous_response() -> None:
     source = ProxyResponseError(
         503,
