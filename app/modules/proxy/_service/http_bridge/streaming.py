@@ -1336,6 +1336,7 @@ class _HTTPBridgeStreamingMixin:
         durable_full_resend_fresh_payload: ResponsesRequest | None = None
         durable_full_resend_is_account_neutral: bool | None = None
         durable_full_resend_has_safe_fresh_context = False
+        durable_full_resend_retains_prior_output = False
         durable_recovery_attempt_fingerprint: str | None = None
         durable_recovery_attempt_available = False
         durable_recovery_attempt_claimed = False
@@ -1410,6 +1411,11 @@ class _HTTPBridgeStreamingMixin:
                 stored_count=durable_full_resend_anchor_count,
             )
             if replay_projection is not None:
+                durable_full_resend_retains_prior_output = responses_input_suffix_retains_prior_output(
+                    replay_projection.input_items,
+                    stored_count=replay_projection.stored_prefix_count,
+                    canonical_lite_developer_index=replay_projection.canonical_lite_developer_index,
+                )
                 durable_full_resend_fresh_payload = _http_bridge_payload_without_previous_response_id(
                     payload
                 ).model_copy(update={"input": replay_projection.input_items})
@@ -1851,18 +1857,43 @@ class _HTTPBridgeStreamingMixin:
 
         def durable_full_resend_allows_account_neutral_replay() -> bool:
             nonlocal durable_full_resend_fresh_payload
+            nonlocal durable_full_resend_has_safe_fresh_context
             nonlocal durable_full_resend_is_account_neutral
+            nonlocal durable_full_resend_retains_prior_output
 
             if (
                 forwarded_request
                 or rewritten_file_account_id is not None
                 or durable_full_resend_anchor_count is None
                 or durable_full_resend_anchor_fingerprint is None
-                or not durable_full_resend_has_safe_fresh_context
             ):
                 return False
             if durable_full_resend_fresh_payload is None:
                 if not isinstance(payload.input, list):
+                    return False
+                eligibility_projection = project_responses_input_for_account_neutral_fresh_replay(
+                    cast(list[JsonValue], payload.input),
+                    stored_count=durable_full_resend_anchor_count,
+                    preserve_developer_message_ids=True,
+                )
+                if eligibility_projection is None:
+                    return False
+                durable_full_resend_retains_prior_output = responses_input_suffix_retains_prior_output(
+                    eligibility_projection.input_items,
+                    stored_count=eligibility_projection.stored_prefix_count,
+                    canonical_lite_developer_index=eligibility_projection.canonical_lite_developer_index,
+                )
+                durable_full_resend_has_safe_fresh_context = durable_full_resend_retains_prior_output or (
+                    durable_lookup is not None
+                    and durable_lookup.latest_pending_tool_calls is not None
+                    and responses_input_suffix_matches_pending_tool_calls(
+                        eligibility_projection.input_items,
+                        stored_count=eligibility_projection.stored_prefix_count,
+                        pending_tool_calls=durable_lookup.latest_pending_tool_calls,
+                        canonical_lite_developer_index=eligibility_projection.canonical_lite_developer_index,
+                    )
+                )
+                if not durable_full_resend_has_safe_fresh_context:
                     return False
                 replay_projection = project_responses_input_for_account_neutral_fresh_replay(
                     cast(list[JsonValue], payload.input),
@@ -1873,6 +1904,8 @@ class _HTTPBridgeStreamingMixin:
                 durable_full_resend_fresh_payload = _http_bridge_payload_without_previous_response_id(
                     payload
                 ).model_copy(update={"input": replay_projection.input_items})
+            if not durable_full_resend_has_safe_fresh_context:
+                return False
             if durable_full_resend_is_account_neutral is None:
                 durable_full_resend_is_account_neutral = _http_bridge_payload_is_account_neutral_fresh_replay(
                     durable_full_resend_fresh_payload
