@@ -3320,6 +3320,34 @@ async def test_http_bridge_activity_snapshot_cancels_exact_stale_owner_and_retai
 
 
 @pytest.mark.asyncio
+async def test_http_bridge_admission_cleanup_removes_unfinished_marker_after_exact_owner_exits() -> None:
+    service = proxy_service.ProxyService(cast(Any, SimpleNamespace()))
+    key = proxy_service._HTTPBridgeSessionKey("session_header", "finished-owner-inflight", None)
+
+    async def finished_owner() -> None:
+        return
+
+    owner_task = asyncio.create_task(finished_owner())
+    await owner_task
+    inflight_future: asyncio.Future[proxy_service._HTTPBridgeSession] = asyncio.get_running_loop().create_future()
+    setattr(inflight_future, "_codex_lb_started_at", time.monotonic())
+    setattr(inflight_future, "_codex_lb_owner_task", owner_task)
+    service._http_bridge_inflight_sessions[key] = inflight_future
+
+    cleanup = http_bridge_helpers_module._cleanup_http_bridge_inflight_sessions_nowait(
+        service,
+        cleanup_done=False,
+    )
+
+    assert key not in service._http_bridge_inflight_sessions
+    assert cleanup["cleaned"] == 1
+    with pytest.raises(ProxyResponseError) as waiter_exc_info:
+        await inflight_future
+    assert waiter_exc_info.value.status_code == 429
+    assert waiter_exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
+
+
+@pytest.mark.asyncio
 async def test_http_bridge_activity_snapshot_skips_inflight_cleanup_when_registry_locked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

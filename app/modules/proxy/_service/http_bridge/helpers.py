@@ -514,36 +514,50 @@ def _cleanup_http_bridge_inflight_sessions_nowait(
             else:
                 owner_task = getattr(future, _HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, None)
                 owner_running = isinstance(owner_task, asyncio.Task) and not owner_task.done()
-                if is_stale:
-                    abort_was_signalled = hasattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR)
+                owner_finished = isinstance(owner_task, asyncio.Task) and owner_task.done()
+                if owner_finished:
                     if not future.done():
-                        abort_error = _http_bridge_startup_wait_timeout_error(
+                        owner_done_error = _http_bridge_startup_wait_timeout_error(
                             "http_bridge_session_create",
                             code="capacity_exhausted_active_sessions",
                         )
-                        setattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR, abort_error)
-                        future.set_exception(abort_error)
-                        # The registry future is the waiter signal, not the
-                        # upstream work owner. Retrieving the exception only
-                        # suppresses an unobserved-future warning; awaiters
-                        # still receive the structured overload response.
+                        setattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR, owner_done_error)
+                        future.set_exception(owner_done_error)
                         future.exception()
-                    if owner_running and not abort_was_signalled:
-                        owner_task.cancel()
-                elif not cleanup_done:
-                    continue
-                # A completed waiter signal does not release capacity while
-                # its exact create_session task can still publish a socket.
-                owner_unknown_after_abort = owner_task is None and hasattr(
-                    future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR
-                )
-                if owner_running or owner_unknown_after_abort:
-                    continue
-                if not future.done():
-                    continue
-                service._http_bridge_inflight_sessions.pop(key, None)
-                cleaned += 1
-                reason = "stale" if is_stale else "done"
+                    service._http_bridge_inflight_sessions.pop(key, None)
+                    cleaned += 1
+                    reason = "owner_done"
+                else:
+                    if is_stale:
+                        abort_was_signalled = hasattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR)
+                        if not future.done():
+                            abort_error = _http_bridge_startup_wait_timeout_error(
+                                "http_bridge_session_create",
+                                code="capacity_exhausted_active_sessions",
+                            )
+                            setattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR, abort_error)
+                            future.set_exception(abort_error)
+                            # The registry future is the waiter signal, not the
+                            # upstream work owner. Retrieving the exception only
+                            # suppresses an unobserved-future warning; awaiters
+                            # still receive the structured overload response.
+                            future.exception()
+                        if owner_running and not abort_was_signalled:
+                            owner_task.cancel()
+                    elif not cleanup_done:
+                        continue
+                    # A completed waiter signal does not release capacity while
+                    # its exact create_session task can still publish a socket.
+                    owner_unknown_after_abort = owner_task is None and hasattr(
+                        future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR
+                    )
+                    if owner_running or owner_unknown_after_abort:
+                        continue
+                    if not future.done():
+                        continue
+                    service._http_bridge_inflight_sessions.pop(key, None)
+                    cleaned += 1
+                    reason = "stale" if is_stale else "done"
             if future.done() and not future.cancelled():
                 try:
                     future.exception()
