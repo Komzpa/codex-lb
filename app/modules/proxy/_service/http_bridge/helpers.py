@@ -340,6 +340,7 @@ def _abort_http_bridge_inflight_creation_locked(
         return False
     owner_task = getattr(future, _HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, None)
     caller_is_owner = isinstance(owner_task, asyncio.Task) and owner_task is asyncio.current_task()
+    owner_finished = isinstance(owner_task, asyncio.Task) and owner_task.done()
     abort_was_signalled = hasattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR)
     if not future.done():
         setattr(future, _HTTP_BRIDGE_INFLIGHT_ABORT_ERROR_ATTR, exc)
@@ -348,7 +349,7 @@ def _abort_http_bridge_inflight_creation_locked(
         else:
             future.set_exception(exc)
             future.exception()
-    if caller_is_owner:
+    if caller_is_owner or owner_finished:
         service._http_bridge_inflight_sessions.pop(key, None)
     elif not abort_was_signalled and isinstance(owner_task, asyncio.Task) and not owner_task.done():
         owner_task.cancel()
