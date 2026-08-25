@@ -3436,7 +3436,7 @@ async def test_http_bridge_inflight_creation_count_preserves_owned_markers_but_i
 
 
 @pytest.mark.asyncio
-async def test_owned_inflight_wait_uses_admission_timeout_not_stale_window(
+async def test_owned_inflight_wait_uses_stale_window_clamped_by_request_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     future: asyncio.Future[proxy_service._HTTPBridgeSession] = asyncio.get_running_loop().create_future()
@@ -3445,13 +3445,14 @@ async def test_owned_inflight_wait_uses_admission_timeout_not_stale_window(
         setattr(future, "_codex_lb_started_at", time.monotonic())
         setattr(future, "_codex_lb_owner_task", owner_task)
         monkeypatch.setattr(proxy_service, "_proxy_admission_wait_timeout_seconds", lambda settings=None: 0.25)
+        monkeypatch.setattr(http_bridge_helpers_module, "_http_bridge_stale_inflight_seconds", lambda: 45.0)
 
         wait_seconds = http_bridge_helpers_module._http_bridge_owned_inflight_wait_timeout_seconds(
             future,
             request_deadline=time.monotonic() + 30.0,
         )
 
-        assert wait_seconds == 0.25
+        assert wait_seconds == pytest.approx(30.0, abs=0.1)
     finally:
         owner_task.cancel()
         await asyncio.gather(owner_task, return_exceptions=True)

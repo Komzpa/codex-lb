@@ -315,7 +315,7 @@ def _http_bridge_owned_inflight_wait_timeout_seconds(
     if not isinstance(owner_task, asyncio.Task) or owner_task.done() or not isinstance(started_at, (int, float)):
         return None
     now = _service_time().monotonic()
-    remaining = _proxy_admission_wait_timeout_seconds()
+    remaining = max(0.0, _http_bridge_stale_inflight_seconds() - max(0.0, now - started_at))
     if request_deadline is not None:
         remaining = min(remaining, max(0.0, request_deadline - now))
     return remaining
