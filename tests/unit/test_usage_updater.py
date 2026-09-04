@@ -3113,6 +3113,7 @@ class StubAccountsRepository:
         expected_reset_at: int | None = None,
         expected_blocked_at: int | None = None,
         expected_refresh_token_encrypted: bytes | None = None,
+        expected_plan_type: str | None | object = None,
     ) -> bool:
         account = self.accounts_by_id.get(account_id)
         if (
