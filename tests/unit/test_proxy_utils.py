@@ -47642,6 +47642,120 @@ async def test_http_bridge_duplicate_tool_call_replay_emits_dedicated_terminal_f
     assert request_logs.calls[-1]["error_code"] == "duplicate_tool_call_replay_suppressed"
 
 
+@pytest.mark.asyncio
+async def test_websocket_duplicate_tool_call_replay_completion_reaches_client_with_dedicated_terminal(
+    monkeypatch,
+) -> None:
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    account = _make_account("acc_ws_duplicate_terminal_path")
+    handle_stream_error = AsyncMock()
+    monkeypatch.setattr(service, "_handle_stream_error", handle_stream_error)
+    monkeypatch.setattr(service, "_settle_stream_api_key_usage", AsyncMock(return_value=True))
+
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="ws_req_duplicate_terminal_path",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        response_create_gate_acquired=True,
+        archive_request_id="archive_ws_duplicate_terminal_path",
+    )
+    pending_requests = deque([request_state])
+    pending_lock = anyio.Lock()
+    client_send_lock = anyio.Lock()
+    upstream_control = proxy_service._WebSocketUpstreamControl()
+    downstream_activity = proxy_service._DownstreamWebSocketActivity()
+    downstream = _ScriptedDownstreamWebSocket()
+    archived: list[tuple[object, str | None]] = []
+
+    class _ArchivingUpstream:
+        def archive_received(self, message: object) -> None:
+            archived.append((message, get_request_id()))
+
+        async def close(self) -> None:
+            return None
+
+    upstream = _ArchivingUpstream()
+
+    first_created_payload: dict[str, JsonValue] = {
+        "type": "response.created",
+        "response": {"id": "resp_ws_duplicate_terminal_path", "status": "in_progress"},
+    }
+    first_tool_payload: dict[str, JsonValue] = {
+        "type": "response.output_item.done",
+        "response_id": "resp_ws_duplicate_terminal_path",
+        "item": {
+            "type": "function_call",
+            "name": "write_stdin",
+            "arguments": json.dumps({"session_id": 75180, "chars": ""}),
+            "call_id": "call_first",
+        },
+    }
+    replay_created_payload: dict[str, JsonValue] = {
+        "type": "response.created",
+        "response": {"id": "resp_ws_duplicate_terminal_path_replay", "status": "in_progress"},
+    }
+    replay_tool_payload: dict[str, JsonValue] = {
+        **first_tool_payload,
+        "response_id": "resp_ws_duplicate_terminal_path_replay",
+        "item": {**cast(dict[str, JsonValue], first_tool_payload["item"]), "call_id": "call_replayed"},
+    }
+    completed_payload: dict[str, JsonValue] = {
+        "type": "response.completed",
+        "response": {"id": "resp_ws_duplicate_terminal_path_replay", "status": "completed", "output": []},
+    }
+
+    async def forward(payload: dict[str, JsonValue]) -> bool:
+        text = json.dumps(payload, separators=(",", ":"))
+        return await websocket_mixin_module._process_and_forward_upstream_websocket_text(
+            cast(Any, service),
+            cast(Any, downstream),
+            cast(Any, upstream),
+            message=SimpleNamespace(kind="text", text=text),
+            text=text,
+            account=account,
+            account_id_value=account.id,
+            pending_requests=pending_requests,
+            pending_lock=pending_lock,
+            client_send_lock=client_send_lock,
+            api_key=None,
+            upstream_control=upstream_control,
+            response_create_gate=asyncio.Semaphore(0),
+            downstream_activity=downstream_activity,
+            continuity_state=None,
+            codex_session_affinity=False,
+        )
+
+    assert await forward(first_created_payload) is False
+    assert await forward(first_tool_payload) is False
+    forwarded_count_before_replay_duplicate = len(downstream.sent_text)
+    request_state.awaiting_response_created = True
+    request_state.response_id = None
+    assert await forward(replay_created_payload) is False
+    assert await forward(replay_tool_payload) is False
+    assert len(downstream.sent_text) == forwarded_count_before_replay_duplicate + 1
+    assert await forward(completed_payload) is True
+
+    assert [request_id for _message, request_id in archived] == ["archive_ws_duplicate_terminal_path"] * 5
+    terminal_payload = json.loads(downstream.sent_text[-1])
+    assert terminal_payload["type"] == "response.failed"
+    terminal_response = terminal_payload["response"]
+    assert isinstance(terminal_response, dict)
+    terminal_error = terminal_response["error"]
+    assert isinstance(terminal_error, dict)
+    assert terminal_error["code"] == "duplicate_tool_call_replay_suppressed"
+    assert "stream_incomplete" not in downstream.sent_text[-1]
+    assert request_state.error_http_status_override == 502
+    assert upstream_control.reconnect_requested is True
+    handle_stream_error.assert_not_awaited()
+    assert await service.drain_persistence_tasks(timeout_seconds=1)
+    assert request_logs.calls[-1]["status"] == "error"
+    assert request_logs.calls[-1]["error_code"] == "duplicate_tool_call_replay_suppressed"
+
+
 def test_websocket_duplicate_tool_call_completion_uses_dedicated_terminal_code() -> None:
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_ws_duplicate_terminal",
