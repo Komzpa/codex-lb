@@ -29,7 +29,7 @@ from app.modules.proxy.replay_safety import responses_payload_is_account_neutral
 
 # This typed provenance is a routing capability: callers must never recover it
 # from key text, because a client-controlled turn state can mimic any prefix.
-_CodexSessionSource = Literal["session_header", "thread_header", "turn_state"]
+_CodexSessionSource = Literal["session_header", "thread_header", "turn_state", "body_session"]
 # Request headers are stripped and HTTP forbids CR/LF, while PostgreSQL/SQLite
 # text keys can safely retain LF. This sentinel makes the internal namespace
 # structurally unreachable by every legacy raw header, even if its digest is
@@ -86,7 +86,7 @@ class _AffinityPolicy:
 
     @property
     def selection_key(self) -> str | None:
-        if self.key is None or self.codex_session_source != "session_header":
+        if self.key is None or self.codex_session_source not in {"session_header", "body_session"}:
             return self.key
         # CODEX_SESSION historically mixed raw session and turn-state values.
         # Namespace only the newly soft source; raw legacy rows stay hard so a
@@ -100,7 +100,7 @@ class _AffinityPolicy:
         # hard turn-state ownership and therefore takes precedence.
         if self.legacy_codex_session_key is not None:
             return self.legacy_codex_session_key
-        return self.key if self.codex_session_source == "session_header" else None
+        return self.key if self.codex_session_source in {"session_header", "body_session"} else None
 
     def selection_kwargs(self) -> _AffinitySelectionKwargs:
         """Expand routing policy once at the account-selection boundary."""
@@ -150,7 +150,7 @@ class _AffinityPolicy:
         _CodexSessionSource | None,
         str | None,
     ]:
-        if sticky_source not in {"session_header", "thread_header"}:
+        if sticky_source not in {"session_header", "thread_header", "body_session"}:
             return (
                 sticky_key,
                 sticky_kind,
@@ -507,7 +507,18 @@ def _sticky_key_for_codex_control_request(
     headers: Mapping[str, str],
     *,
     codex_session_affinity: bool,
+    body_session_id: str | None = None,
 ) -> _AffinityPolicy:
+    if codex_session_affinity and isinstance(body_session_id, str) and (session_id := body_session_id.strip()):
+        # Native history/notes requests do not carry a session header. Their
+        # body context identifies the same upstream account-local session as a
+        # Codex Responses session, so retain the normal session namespace and
+        # legacy-owner lookup without modifying the forwarded request.
+        return _AffinityPolicy(
+            key=session_id,
+            kind=StickySessionKind.CODEX_SESSION,
+            codex_session_source="body_session",
+        )
     turn_state_key = _sticky_key_from_turn_state_header(headers)
     if turn_state_key:
         return _AffinityPolicy(

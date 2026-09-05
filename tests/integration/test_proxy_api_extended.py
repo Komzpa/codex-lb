@@ -758,6 +758,142 @@ async def test_codex_control_json_endpoints_forward_upstream(
     assert calls[0]["timeout_seconds"] > 0
 
 
+_NATIVE_HISTORY_NOTES_ROUTES = (
+    "alpha/history/v2/list_windows",
+    "alpha/history/v2/list_items",
+    "alpha/history/v2/read_item",
+    "alpha/history/v2/search_contents",
+    "alpha/notes/v2/thread_hint",
+    "alpha/notes/v2/list_files_by_prefix",
+    "alpha/notes/v2/read_file",
+    "alpha/notes/v2/search_contents",
+    "alpha/notes/v2/append_to_file",
+    "alpha/notes/v2/write_file",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream_path", _NATIVE_HISTORY_NOTES_ROUTES)
+async def test_native_history_notes_routes_preserve_body_and_native_headers(
+    async_client,
+    monkeypatch,
+    upstream_path: str,
+) -> None:
+    await _import_account(async_client, "acc_history_notes", "history-notes@example.com")
+    calls: list[dict[str, object]] = []
+
+    async def fake_codex_control_request(
+        path: str,
+        *,
+        payload: bytes | None,
+        headers,
+        account_id: str,
+        **_kwargs,
+    ) -> core_proxy.CodexControlResponse:
+        calls.append(
+            {
+                "path": path,
+                "payload": payload,
+                "encrypted_arguments": headers.get("x-openai-encrypted-tool-arguments"),
+                "truncation_policy": headers.get("x-openai-tool-output-truncation-policy"),
+                "session_id": headers.get("session_id"),
+                "account_id": account_id,
+            }
+        )
+        return core_proxy.CodexControlResponse(status_code=200, body=b'{"ok":true}', headers={})
+
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", fake_codex_control_request)
+    body = json.dumps(
+        {
+            "context": {"session_id": "native-history-notes-session", "current_agent_name": "/root"},
+            "query": {"ciphertext": "opaque-encrypted-arguments"},
+        },
+        separators=(",", ":"),
+    ).encode()
+
+    response = await async_client.post(
+        f"/backend-api/codex/{upstream_path}",
+        content=body,
+        headers={
+            "content-type": "application/json",
+            "x-openai-encrypted-tool-arguments": "true",
+            "x-openai-tool-output-truncation-policy": '{"type":"bytes","limit":4000}',
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls == [
+        {
+            "path": upstream_path,
+            "payload": body,
+            "encrypted_arguments": "true",
+            "truncation_policy": '{"type":"bytes","limit":4000}',
+            "session_id": None,
+            "account_id": "acc_history_notes",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_native_history_notes_body_session_reuses_codex_session_owner_and_never_fails_over(
+    async_client,
+    monkeypatch,
+) -> None:
+    from app.modules.proxy.affinity import _codex_session_selection_key
+    from app.modules.proxy.sticky_repository import StickySessionsRepository
+
+    owner_id = await _import_account(async_client, "acc_history_notes_owner", "history-notes-owner@example.com")
+    await _import_account(async_client, "acc_history_notes_other", "history-notes-other@example.com")
+    session_id = "history-notes-owner-session"
+    async with SessionLocal() as session:
+        await StickySessionsRepository(session).upsert(
+            _codex_session_selection_key(session_id),
+            owner_id,
+            kind=StickySessionKind.CODEX_SESSION,
+        )
+
+    upstream_accounts: list[str] = []
+
+    async def fail_on_owner_then_record(
+        _path: str,
+        *,
+        account_id: str,
+        **_kwargs,
+    ) -> core_proxy.CodexControlResponse:
+        upstream_accounts.append(account_id)
+        raise ProxyResponseError(502, {"error": {"code": "upstream_unavailable", "message": "owner failed"}})
+
+    async def unexpected_failover(*_args, **_kwargs):
+        pytest.fail("native history and notes must not select another account after upstream failure")
+
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", fail_on_owner_then_record)
+    monkeypatch.setattr(proxy_module.ProxyService, "_retry_previsible_unary_call_failover", unexpected_failover)
+
+    response = await async_client.post(
+        "/backend-api/codex/alpha/notes/v2/write_file",
+        json={"context": {"session_id": session_id, "current_agent_name": "/root"}, "path": "memory.md"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "upstream_unavailable"
+    assert upstream_accounts == ["acc_history_notes_owner"]
+
+
+@pytest.mark.asyncio
+async def test_native_history_notes_rejects_missing_body_session_and_unknown_route(async_client) -> None:
+    missing_session = await async_client.post(
+        "/backend-api/codex/alpha/notes/v2/thread_hint",
+        json={"context": {"current_agent_name": "/root"}},
+    )
+    unknown_route = await async_client.post(
+        "/backend-api/codex/alpha/notes/v2/delete_file",
+        json={"context": {"session_id": "known-session", "current_agent_name": "/root"}},
+    )
+
+    assert missing_session.status_code == 400
+    assert unknown_route.status_code == 405
+
+
 @pytest.mark.asyncio
 async def test_codex_alpha_search_forwards_request_and_response(async_client, monkeypatch):
     await _import_account(async_client, "acc_codex_search", "codex-search@example.com")
