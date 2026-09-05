@@ -13,3 +13,6 @@
       truncation headers, body identity affinity, and unsupported-route/auth
       negative controls.
 - [x] 2.2 Run focused route and control tests plus strict OpenSpec validation.
+
+- [x] 2.3 Verify shared hard ownership for notes, marked Responses, compact,
+      child threads, and unavailable-owner fail-closed behavior.

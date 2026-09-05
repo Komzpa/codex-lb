@@ -9,10 +9,10 @@ NOT retry or fail over it on a different account after account selection.
 
 #### Scenario: Native history context selects the existing session owner
 
-- **GIVEN** a Codex Responses request established session affinity for
+- **GIVEN** a native history-marked Codex Responses request established hard history affinity for
   `session_123` on account A
 - **AND** an authenticated native history request has
   `context.session_id = session_123` and no session header
 - **WHEN** the proxy selects an upstream account
-- **THEN** it uses the same Codex session-affinity identity
+- **THEN** it uses the same hard history-session identity
 - **AND** it does not select an unrelated eligible account B

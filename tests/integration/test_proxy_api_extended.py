@@ -839,7 +839,7 @@ async def test_native_history_notes_body_session_reuses_codex_session_owner_and_
     async_client,
     monkeypatch,
 ) -> None:
-    from app.modules.proxy.affinity import _codex_session_selection_key
+    from app.modules.proxy.affinity import _history_session_selection_key
     from app.modules.proxy.sticky_repository import StickySessionsRepository
 
     owner_id = await _import_account(async_client, "acc_history_notes_owner", "history-notes-owner@example.com")
@@ -847,7 +847,7 @@ async def test_native_history_notes_body_session_reuses_codex_session_owner_and_
     session_id = "history-notes-owner-session"
     async with SessionLocal() as session:
         await StickySessionsRepository(session).upsert(
-            _codex_session_selection_key(session_id),
+            _history_session_selection_key(session_id),
             owner_id,
             kind=StickySessionKind.CODEX_SESSION,
         )
@@ -877,6 +877,116 @@ async def test_native_history_notes_body_session_reuses_codex_session_owner_and_
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "upstream_unavailable"
     assert upstream_accounts == ["acc_history_notes_owner"]
+
+
+@pytest.mark.asyncio
+async def test_history_session_affinity_binds_notes_responses_and_child_threads_and_fails_closed(
+    async_client,
+    monkeypatch,
+) -> None:
+    from app.modules.proxy.affinity import _history_session_selection_key
+    from app.modules.proxy.sticky_repository import StickySessionsRepository
+
+    account_a_id = await _import_account(async_client, "acc_history_session_a", "history-session-a@example.com")
+    account_b_id = await _import_account(async_client, "acc_history_session_b", "history-session-b@example.com")
+    account_ids_by_upstream = {"acc_history_session_a": account_a_id, "acc_history_session_b": account_b_id}
+    session_id = "native-history-session-shared"
+    notes_accounts: list[str] = []
+    response_calls: list[tuple[str, str | None, object]] = []
+
+    async def fake_codex_control_request(
+        _path: str,
+        *,
+        account_id: str,
+        **_kwargs,
+    ) -> core_proxy.CodexControlResponse:
+        notes_accounts.append(account_id)
+        return core_proxy.CodexControlResponse(status_code=200, body=b'{"text":""}', headers={})
+
+    async def fake_stream(payload, headers, access_token, account_id, **_kwargs):
+        response_calls.append(
+            (
+                account_id,
+                headers.get("x-codex-turn-metadata"),
+                (payload.model_extra or {}).get("client_metadata"),
+            )
+        )
+        yield 'data: {"type":"response.completed","response":{"id":"resp_history_session"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_codex_control_request", fake_codex_control_request)
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    async def bounded_post(*args, **kwargs):
+        return await asyncio.wait_for(async_client.post(*args, **kwargs), timeout=10)
+
+    notes_response = await bounded_post(
+        "/backend-api/codex/alpha/notes/v2/thread_hint",
+        json={"context": {"session_id": session_id, "current_agent_name": "/root"}},
+    )
+    assert notes_response.status_code == 200
+    assert len(notes_accounts) == 1
+    owner_upstream_id = notes_accounts[0]
+    owner_id = account_ids_by_upstream[owner_upstream_id]
+
+    async with SessionLocal() as session:
+        history_owner = await StickySessionsRepository(session).get_account_id(
+            _history_session_selection_key(session_id),
+            kind=StickySessionKind.CODEX_SESSION,
+        )
+    assert history_owner == owner_id
+
+    response_payload = {"model": "gpt-5.1", "instructions": "hi", "input": [], "stream": True}
+    header_marker = '{"history_ingest_requested":true}'
+    root_response = await bounded_post(
+        "/backend-api/codex/responses",
+        json=response_payload,
+        headers={
+            "session_id": session_id,
+            "thread-id": "history-root-thread",
+            "x-codex-turn-metadata": header_marker,
+        },
+    )
+    child_metadata = {"x-codex-turn-metadata": header_marker}
+    child_response = await bounded_post(
+        "/backend-api/codex/responses",
+        json={**response_payload, "client_metadata": child_metadata},
+        headers={"session_id": session_id, "thread-id": "history-child-thread"},
+    )
+
+    assert root_response.status_code == 200
+    assert child_response.status_code == 200
+    assert response_calls == [
+        (owner_upstream_id, header_marker, None),
+        (owner_upstream_id, None, child_metadata),
+    ]
+
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "http_responses_stream_request_budget_seconds", 0.1)
+    monkeypatch.setattr(get_settings(), "proxy_request_budget_seconds", 0.1)
+    pause_response = await bounded_post(f"/api/accounts/{owner_id}/pause")
+    assert pause_response.status_code == 200
+    paused_response = await bounded_post(
+        "/backend-api/codex/responses",
+        json=response_payload,
+        headers={
+            "session_id": session_id,
+            "thread-id": "history-paused-thread",
+            "x-codex-turn-metadata": header_marker,
+        },
+    )
+
+    assert '"type":"response.failed"' in paused_response.text, paused_response.text
+    assert response_calls == [
+        (owner_upstream_id, header_marker, None),
+        (owner_upstream_id, None, child_metadata),
+    ]
+    async with SessionLocal() as session:
+        history_owner = await StickySessionsRepository(session).get_account_id(
+            _history_session_selection_key(session_id),
+            kind=StickySessionKind.CODEX_SESSION,
+        )
+    assert history_owner == owner_id
 
 
 @pytest.mark.asyncio

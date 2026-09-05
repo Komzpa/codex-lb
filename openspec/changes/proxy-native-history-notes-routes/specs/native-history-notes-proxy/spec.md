@@ -31,8 +31,10 @@ native headers unchanged to the selected upstream account. This includes
 ### Requirement: Native history and notes use the body session for account affinity
 
 For native history and notes v2 operations, the proxy MUST use nonblank
-`context.session_id` as the existing Codex session-affinity identity for
-account selection. It MUST preserve API-key account scope and MUST NOT alter
+`context.session_id` as a dedicated hard history-session identity for
+account selection, shared with Responses and compact requests that carry
+`history_ingest_requested: true` in their native turn metadata. Ordinary
+Responses process-session affinity MUST remain unchanged. It MUST preserve API-key account scope and MUST NOT alter
 the forwarded request body to synthesize a header.
 
 The proxy MUST NOT fail over or retry a native history-or-notes operation on a
@@ -47,3 +49,17 @@ upstream error instead.
 - **WHEN** the proxy handles the error
 - **THEN** the proxy returns account A's error
 - **AND** it does not send the write to account B
+
+#### Scenario: History owner is unavailable
+
+- **GIVEN** notes and marked Responses requests share account A for a process session
+- **AND** account A becomes unavailable while account B is eligible
+- **WHEN** another marked Responses request arrives for that session
+- **THEN** it fails without selecting account B or replacing the stored owner
+
+#### Scenario: Child threads retain process history ownership
+
+- **GIVEN** root and child threads have distinct thread and turn-state headers
+- **AND** both carry the same process session and native history-ingest marker
+- **WHEN** Responses, compact, and notes requests select accounts
+- **THEN** all use the same hard history-session owner
