@@ -58,9 +58,13 @@ from app.core.plan_types import account_plan_matches_allowed, normalize_account_
 from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers_open
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.core.resilience.degradation import set_degraded, set_normal
+<<<<<<< HEAD
 from app.core.resilience.toggles import resolve_resilience_toggles
 from app.core.usage.quota import apply_usage_quota
 from app.core.usage.refresh_policy import usage_freshness_horizon_seconds
+=======
+from app.core.usage.quota import apply_usage_quota, has_usable_credits
+>>>>>>> 07c4f7946 (fix(accounts): require spendable credits for quota override)
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
 from app.db.snapshot import clone_row
@@ -2508,6 +2512,20 @@ def _state_from_account(
         infer_status_from_usage=False,
         now=now,
     )
+    if (
+        status == AccountStatus.ACTIVE
+        and secondary_used is not None
+        and secondary_used >= 100.0
+        and (credits_has is not None or credits_unlimited is not None or credits_balance is not None)
+        and not has_usable_credits(
+            credits_has=credits_has,
+            credits_unlimited=credits_unlimited,
+            credits_balance=credits_balance,
+        )
+    ):
+        status = AccountStatus.QUOTA_EXCEEDED
+        used_percent = 100.0
+        reset_at = float(secondary_reset) if secondary_reset is not None else None
     if resetless_rate_limit_without_evidence and primary_used is None and status == AccountStatus.ACTIVE:
         status = AccountStatus.RATE_LIMITED
     if rejected_persisted_rate_limit_reset and not rejected_reset_recovery_evidence:
