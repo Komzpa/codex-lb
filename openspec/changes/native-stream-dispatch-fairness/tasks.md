@@ -1,0 +1,3 @@
+- [x] Reproduce a buffered response burst through the native client with an active consumer.
+- [x] Give consumers a scheduling opportunity between dispatched events.
+- [x] Verify burst delivery and stalled-consumer isolation, then validate the spec.
