@@ -778,4 +778,3 @@ bounded queue and fail independently without blocking sibling requests.
 - **WHEN** framed SSE events, raw JSON success chunks, or raw HTTP error chunks arrive in a buffered burst exceeding queue capacity
 - **THEN** an active consumer receives ordered SSE events, the complete JSON response, or the original HTTP error respectively
 - **AND** the response is not replaced by a consumer-backpressure error
-
