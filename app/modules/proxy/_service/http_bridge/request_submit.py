@@ -76,6 +76,10 @@ from app.modules.proxy._service.compact import (
 from app.modules.proxy._service.compact import (
     _sticky_key_from_compact_payload as _sticky_key_from_compact_payload,
 )
+from app.modules.proxy._service.http_bridge.accepted_replay import (
+    _claim_websocket_replay_create_gate,
+    _http_bridge_accepted_replay_may_exclude_account,
+)
 from app.modules.proxy._service.http_bridge.helpers import (
     _HTTP_BRIDGE_COOLDOWN_SUPPRESSION_ATTR,
     _HTTP_BRIDGE_PRE_SUBMIT_FAILURE_ATTR,
@@ -3997,6 +4001,23 @@ class _HTTPBridgeRequestSubmitMixin:
                 if len(retryable_requests) != 1:
                     return False
                 request_state = retryable_requests[0]
+                # An accepted lifecycle is replayed only when it is the sole
+                # request on the socket (the terminal path's other-pending
+                # guard, ``_websocket_accepted_replay_candidate``). Reconnecting
+                # it would strand every sibling still bound to the dead
+                # upstream, so both fail closed with ``stream_incomplete`` as
+                # they did before accepted replays existed.
+                if (
+                    request_state.response_id is not None
+                    and not request_state.awaiting_response_created
+                    and any(pending_request is not request_state for pending_request in session.pending_requests)
+                ):
+                    return False
+            # A request that already saw response.created released the session
+            # create gate. Its replay must hold the gate again before it can
+            # own the pre-created identity, and never waits for a contended one.
+            if not await _claim_websocket_replay_create_gate(request_state, session.response_create_gate):
+                return False
             if retry_send_baselines is not None:
                 # The send-attempt baseline: a retried request already carries
                 # prior attempts, so the release keys on advancement past
@@ -4105,7 +4126,15 @@ class _HTTPBridgeRequestSubmitMixin:
                         request_state.preferred_account_id = session.account.id
                     else:
                         request_state.preferred_account_id = None
-                        request_state.excluded_account_ids.add(session.account.id)
+                        # An accepted replay whose session affinity may resolve
+                        # a hard sticky owner reconnects unexcluded: the owner
+                        # is the only account selection can return, so the
+                        # exclusion would spin on ``hard_affinity_saturated``
+                        # until the bridge request budget ran out.
+                        if model_fallback_replay or _http_bridge_accepted_replay_may_exclude_account(
+                            request_state, session
+                        ):
+                            request_state.excluded_account_ids.add(session.account.id)
             if session.account.id in request_state.excluded_account_ids:
                 session.upstream_turn_state = None
                 session.downstream_turn_state = None
@@ -4129,6 +4158,7 @@ class _HTTPBridgeRequestSubmitMixin:
             session.key,
             account_id=session.account.id,
             model=session.request_model,
+            detail="accepted_lifecycle_replay" if request_state.replay_downstream_response_id is not None else None,
             pending_count=1,
             cache_key_family=session.key.affinity_kind,
             model_class=_extract_model_class(session.request_model) if session.request_model else None,
