@@ -4802,6 +4802,7 @@ class _CompactCommandTransport:
         )
         pre_request_started_at = time.monotonic()
         compact_timeout_seconds = _effective_compact_total_timeout(settings.compact_request_budget_seconds)
+        compact_idle_timeout_seconds = _effective_compact_total_timeout(None) or settings.stream_idle_timeout_seconds
         effective_connect_timeout = _effective_compact_connect_timeout(settings.upstream_connect_timeout_seconds)
         payload_dict = _responses_compact_payload_for_responses_endpoint(self.payload)
         payload_dict["store"] = False
@@ -4881,7 +4882,7 @@ class _CompactCommandTransport:
             headers=upstream_headers,
         )
         sse_options = NativeSseOptions(
-            settings.stream_idle_timeout_seconds,
+            compact_idle_timeout_seconds,
             MAX_SSE_EVENT_BYTES,
             content_type_aware=True,
             collect_compact=True,
@@ -5000,7 +5001,7 @@ class _CompactCommandTransport:
                 try:
                     data = await _compact_response_payload_from_success_response(
                         resp,
-                        idle_timeout_seconds=compact_timeout_seconds or settings.stream_idle_timeout_seconds,
+                        idle_timeout_seconds=compact_idle_timeout_seconds,
                         max_event_bytes=MAX_SSE_EVENT_BYTES,
                     )
                 except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
