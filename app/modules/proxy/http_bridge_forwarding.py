@@ -54,6 +54,8 @@ HTTP_BRIDGE_CODEX_AFFINITY_HEADER = "x-codex-bridge-codex-session-affinity"
 HTTP_BRIDGE_RESERVATION_ID_HEADER = "x-codex-bridge-reservation-id"
 HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER = "x-codex-bridge-reservation-key-id"
 HTTP_BRIDGE_RESERVATION_MODEL_HEADER = "x-codex-bridge-reservation-model"
+HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER = "x-codex-bridge-turn-state-synthesized"
+HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER = "x-codex-bridge-turn-state-provenance-signature-v1"
 HTTP_BRIDGE_AFFINITY_KIND_HEADER = "x-codex-bridge-affinity-kind"
 HTTP_BRIDGE_AFFINITY_KEY_HEADER = "x-codex-bridge-affinity-key"
 HTTP_BRIDGE_FILE_OWNER_HEADER = "x-codex-bridge-file-owner"
@@ -74,8 +76,6 @@ HTTP_BRIDGE_SIGNATURE_HEADER = "x-codex-bridge-signature"
 # ``parse_forwarded_request``.
 HTTP_BRIDGE_SIGNATURE_V2_HEADER = "x-codex-bridge-signature-v2"
 _HTTP_BRIDGE_SIGNATURE_VERSION_V2 = "2"
-HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER = "x-codex-bridge-turn-state-synthesized"
-HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER = "x-codex-bridge-turn-state-provenance-signature-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,15 +457,11 @@ def parse_forwarded_request(
                 signature_version=signature_version,
             ),
         )
-        if not provenance_valid:
+        if not provenance_valid or not tools_bound_valid:
             return None, _invalid_bridge_forward_signature_error()
     if tools_bound_valid:
         return HTTPBridgeForwardedRequest(context=context), None
-    if (
-        context.file_owner_account_id is not None
-        or extract_input_file_ids(payload.input)
-        or turn_state_synthesized_value == "1"
-    ):
+    if context.file_owner_account_id is not None or extract_input_file_ids(payload.input):
         # The rolling-upgrade primary signature does not bind the additive
         # file-owner proof. Never allow a stripped/forged proof to downgrade to
         # it, and never allow payloads with file references to fall back after a
