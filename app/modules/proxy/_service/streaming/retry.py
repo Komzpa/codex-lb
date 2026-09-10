@@ -929,7 +929,10 @@ class _StreamingRetryMixin:
                     request_id,
                     False,
                     request_started_at=start,
-                    allow_transient_retry=True,
+                    # Forced refresh has its own bounded same-account recovery
+                    # and ordered settlement path. The fresh-request sibling
+                    # replay buffer must not escape that lifecycle.
+                    allow_transient_retry=False,
                     api_key=api_key,
                     api_key_reservation=api_key_reservation,
                     settlement=settlement,
