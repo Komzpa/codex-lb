@@ -228,6 +228,61 @@ async def test_reset_transition_candidate_rejects_fractional_sqlite_false_transi
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("before_offset", "after_offset", "has_transition"),
+    (
+        pytest.param(-1, 1, True, id="before-one-microsecond"),
+        pytest.param(0, 1, True, id="before-exactly-at-reset"),
+        pytest.param(1, 2, False, id="before-one-microsecond-after-reset"),
+        pytest.param(-1, 7 * 24 * 60 * 60 * 1_000_000, False, id="after-exactly-at-new-reset"),
+    ),
+)
+async def test_reset_transition_candidate_preserves_sqlite_microsecond_reset_boundary(
+    db_setup,
+    before_offset: int,
+    after_offset: int,
+    has_transition: bool,
+) -> None:
+    """SQLite must compare reset boundaries with SQLAlchemy's six-digit precision."""
+    del db_setup
+    account = _make_account(f"acc_reset_boundary_{before_offset}_{after_offset}")
+    now = utcnow().replace(microsecond=0)
+    reset_at = naive_utc_to_epoch(now)
+    next_reset_at = reset_at + 7 * 24 * 60 * 60
+    async with SessionLocal() as session:
+        if _dialect_name(session) != "sqlite":
+            pytest.skip("SQLite timestamp representation regression")
+        await AccountsRepository(session).upsert(account)
+        repo = UsageRepository(session)
+        await repo.add_entry(
+            account.id,
+            100.0,
+            window="secondary",
+            recorded_at=now + timedelta(microseconds=before_offset),
+            reset_at=reset_at,
+            window_minutes=10_080,
+        )
+        await repo.add_entry(
+            account.id,
+            0.0,
+            window="secondary",
+            recorded_at=now + timedelta(microseconds=after_offset),
+            reset_at=next_reset_at,
+            window_minutes=10_080,
+        )
+        rows = await repo.reset_transition_candidate(
+            account.id,
+            "secondary",
+            now - timedelta(seconds=1),
+            expected_reset_at=reset_at,
+            reset_at_tolerance_seconds=0,
+            min_reset_jump_seconds=60,
+        )
+
+    assert len(rows) == (2 if has_transition else 1)
+
+
+@pytest.mark.asyncio
 async def test_reset_transition_candidate_ignores_fractional_false_pair_before_later_reset(db_setup) -> None:
     """A false fractional candidate cannot hide the later real adjacent reset."""
     del db_setup

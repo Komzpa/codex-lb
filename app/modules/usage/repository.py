@@ -327,13 +327,18 @@ def _window_clause(window: str | None, history_model=UsageHistory):
     return history_model.window == window
 
 
+def _sqlite_epoch_datetime_text(epoch):
+    """Render integer Unix epochs in SQLAlchemy SQLite's six-digit datetime format."""
+    return func.datetime(epoch, "unixepoch").op("||")(literal_column("'.000000'"))
+
+
 def _usage_reset_confirmed_clause(before, after, *, dialect_name: str, min_reset_jump_seconds: int):
     window_seconds = func.coalesce(after.window_minutes * 60, _FALLBACK_ROLLING_WINDOW_SECONDS)
     window_started_at = after.reset_at - window_seconds
     if dialect_name == "sqlite":
-        before_reset_at = func.datetime(before.reset_at, "unixepoch")
-        after_reset_at = func.datetime(after.reset_at, "unixepoch")
-        window_started_at = func.datetime(window_started_at, "unixepoch")
+        before_reset_at = _sqlite_epoch_datetime_text(before.reset_at)
+        after_reset_at = _sqlite_epoch_datetime_text(after.reset_at)
+        window_started_at = _sqlite_epoch_datetime_text(window_started_at)
         crossed_previous_reset = and_(
             before.recorded_at <= before_reset_at,
             before_reset_at <= after.recorded_at,
