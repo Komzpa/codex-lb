@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import json
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +14,7 @@ import pytest
 from aiohttp.client_reqrep import ConnectionKey
 
 from app.core.config.settings import get_settings
+from app.core.crypto import get_or_create_key
 from app.core.openai.requests import ResponsesRequest
 from app.modules.api_keys.service import ApiKeyUsageReservationData
 from app.modules.proxy.http_bridge_forwarding import (
@@ -30,6 +34,8 @@ from app.modules.proxy.http_bridge_forwarding import (
     HTTP_BRIDGE_SIGNATURE_V2_HEADER,
     HTTP_BRIDGE_SIGNATURE_VERSION_HEADER,
     HTTP_BRIDGE_TARGET_INSTANCE_HEADER,
+    HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER,
+    HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER,
     HTTPBridgeForwardContext,
     HTTPBridgeOwnerClient,
     _bridge_forward_signature,
@@ -86,6 +92,8 @@ def _use_legacy_forward_signature(
     # receiver must exercise the primary-signature fallback rather than the
     # tamper-proofing fast path.
     headers.pop(HTTP_BRIDGE_SIGNATURE_V2_HEADER, None)
+    headers.pop(HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER, None)
+    headers.pop(HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER, None)
     headers[HTTP_BRIDGE_SIGNATURE_HEADER] = _bridge_forward_signature(
         payload=payload,
         context=context,
@@ -99,6 +107,98 @@ def _use_legacy_forward_signature(
         )
 
 
+def _pre_provenance_tools_bound_signature(
+    *,
+    payload: ResponsesRequest,
+    context: HTTPBridgeForwardContext,
+    signature_version: str | None = None,
+) -> str:
+    """Frozen pre-provenance codec; intentionally independent of production helpers."""
+
+    body_json = json.dumps(
+        payload.model_dump_for_forwarding(),
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    body_digest = hashlib.sha256(body_json.encode("utf-8")).hexdigest()
+    signing_payload = json.dumps(
+        {
+            "body_digest": body_digest,
+            "client_ip": context.client_ip,
+            "client_ip_present": context.client_ip is not None,
+            "codex_session_affinity": context.codex_session_affinity,
+            "downstream_turn_state": context.downstream_turn_state,
+            "file_owner_account_id": context.file_owner_account_id,
+            "include_client_ip": True,
+            "origin_instance": context.origin_instance,
+            "original_affinity_key": context.original_affinity_key,
+            "original_affinity_kind": context.original_affinity_kind,
+            "original_request_unanchored": context.original_request_unanchored,
+            "protocol": "codex-lb-http-bridge-forward-tools-bound",
+            "reservation": (
+                {
+                    "id": context.reservation.reservation_id,
+                    "key_id": context.reservation.key_id,
+                    "model": context.reservation.model,
+                }
+                if context.reservation is not None
+                else None
+            ),
+            "signature_version": signature_version,
+            "target_instance": context.target_instance,
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    secret = get_or_create_key(get_settings().encryption_key_file)
+    return hmac.new(secret, signing_payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+@pytest.mark.parametrize("with_file", [False, True])
+def test_pre_provenance_codec_replays_both_directions(with_file: bool) -> None:
+    payload = _payload_with_file() if with_file else _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=True,
+        downstream_turn_state="http_turn_cross_version",
+        file_owner_account_id="acc-file-owner" if with_file else None,
+    )
+    old_signature = _pre_provenance_tools_bound_signature(payload=payload, context=context)
+
+    # New origin -> old owner: the deployed full-context signature bytes stay
+    # identical, including the file-owner proof that forbids legacy fallback.
+    new_headers = build_owner_forward_headers(headers={}, payload=payload, context=context)
+    assert new_headers[HTTP_BRIDGE_SIGNATURE_V2_HEADER] == old_signature
+    assert HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER not in new_headers
+    assert HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER not in new_headers
+
+    # Old origin -> new owner: replay the frozen old wire without calling the
+    # current encoder. The new decoder must accept its full-context signature.
+    old_headers = {
+        HTTP_BRIDGE_FORWARDED_HEADER: "1",
+        HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER: context.origin_instance,
+        HTTP_BRIDGE_TARGET_INSTANCE_HEADER: context.target_instance,
+        HTTP_BRIDGE_CODEX_AFFINITY_HEADER: "1",
+        HTTP_BRIDGE_SIGNATURE_V2_HEADER: old_signature,
+        "x-codex-turn-state": "http_turn_cross_version",
+    }
+    if context.file_owner_account_id is not None:
+        old_headers[HTTP_BRIDGE_FILE_OWNER_HEADER] = context.file_owner_account_id
+
+    forwarded, error = parse_forwarded_request(
+        old_headers,
+        payload=payload,
+        current_instance="instance-b",
+    )
+
+    assert error is None
+    assert forwarded is not None
+    assert forwarded.context == context
+
+
 def test_parse_forwarded_request_accepts_signed_internal_forward() -> None:
     payload = _payload()
     context = HTTPBridgeForwardContext(
@@ -106,6 +206,7 @@ def test_parse_forwarded_request_accepts_signed_internal_forward() -> None:
         target_instance="instance-b",
         codex_session_affinity=True,
         downstream_turn_state="http_turn_123",
+        downstream_turn_state_synthesized=True,
         reservation=ApiKeyUsageReservationData(
             reservation_id="res_123",
             key_id="key_123",
@@ -123,6 +224,12 @@ def test_parse_forwarded_request_accepts_signed_internal_forward() -> None:
     assert error is None
     assert forwarded is not None
     assert forwarded.context == context
+    assert headers[HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER] == "1"
+    assert HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER in headers
+    assert headers[HTTP_BRIDGE_SIGNATURE_V2_HEADER] == _pre_provenance_tools_bound_signature(
+        payload=payload,
+        context=context,
+    )
     assert forwarded.context.original_affinity_kind is None
     assert forwarded.context.original_affinity_key is None
 
@@ -323,6 +430,7 @@ def test_parse_forwarded_request_accepts_legacy_forward_with_spoofed_v2_header()
         downstream_turn_state=None,
     )
     headers = build_owner_forward_headers(headers={}, payload=old_origin_payload, context=context)
+    headers.pop(HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER, None)
     headers[HTTP_BRIDGE_SIGNATURE_V2_HEADER] = "spoofed-by-external-client"
 
     forwarded, error = parse_forwarded_request(
@@ -333,6 +441,7 @@ def test_parse_forwarded_request_accepts_legacy_forward_with_spoofed_v2_header()
     assert error is None
     assert forwarded is not None
     assert forwarded.context == context
+    assert forwarded.context.downstream_turn_state_synthesized is False
 
 
 def test_build_owner_forward_headers_drops_client_supplied_bridge_headers() -> None:
@@ -349,6 +458,7 @@ def test_build_owner_forward_headers_drops_client_supplied_bridge_headers() -> N
     inbound = {
         "x-codex-bridge-signature-v2": "client-spoofed",
         "x-codex-bridge-signature": "client-spoofed",
+        "x-codex-bridge-turn-state-synthesized": "1",
         "x-codex-bridge-future-unknown": "client-spoofed",
         "x-openai-client-version": "1.2.3",
     }
@@ -359,8 +469,55 @@ def test_build_owner_forward_headers_drops_client_supplied_bridge_headers() -> N
         context=context,
     )
     assert headers[HTTP_BRIDGE_SIGNATURE_HEADER] != "client-spoofed"
+    assert HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER not in headers
+    assert HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER not in headers
     assert "x-codex-bridge-future-unknown" not in headers
     assert headers["x-openai-client-version"] == "1.2.3"
+
+
+def test_parse_forwarded_request_rejects_upgraded_turn_state_provenance() -> None:
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=True,
+        downstream_turn_state="http_turn_generated",
+    )
+    headers = build_owner_forward_headers(headers={}, payload=payload, context=context)
+    headers[HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER] = "1"
+
+    forwarded, error = parse_forwarded_request(
+        headers,
+        payload=payload,
+        current_instance="instance-b",
+    )
+
+    assert forwarded is None
+    assert error is not None
+    assert error.payload["error"]["code"] == "bridge_forward_invalid"
+
+
+def test_parse_forwarded_request_missing_turn_state_provenance_stays_explicit() -> None:
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=True,
+        downstream_turn_state="http_turn_generated",
+        downstream_turn_state_synthesized=True,
+    )
+    headers = build_owner_forward_headers(headers={}, payload=payload, context=context)
+    headers.pop(HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER)
+
+    forwarded, error = parse_forwarded_request(
+        headers,
+        payload=payload,
+        current_instance="instance-b",
+    )
+
+    assert error is None
+    assert forwarded is not None
+    assert forwarded.context.downstream_turn_state_synthesized is False
 
 
 def test_owner_forward_primary_signature_verifiable_by_pre_1203_owner() -> None:
@@ -408,6 +565,7 @@ def test_parse_forwarded_request_falls_back_to_legacy_signature_without_v2() -> 
     )
     headers = build_owner_forward_headers(headers={}, payload=old_origin_payload, context=context)
     del headers[HTTP_BRIDGE_SIGNATURE_V2_HEADER]
+    headers.pop(HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER, None)
 
     forwarded, error = parse_forwarded_request(
         headers,

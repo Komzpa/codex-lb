@@ -17865,6 +17865,7 @@ async def test_forward_http_bridge_request_to_owner_preserves_session_header_key
             api_key_reservation=None,
             codex_session_affinity=True,
             downstream_turn_state="http_turn_generated",
+            downstream_turn_state_synthesized=True,
             request_started_at=10.0,
             proxy_api_authorization=None,
         )
@@ -17873,6 +17874,7 @@ async def test_forward_http_bridge_request_to_owner_preserves_session_header_key
     assert chunks == []
     context = cast(proxy_service.HTTPBridgeForwardContext, captured["context"])
     assert context.downstream_turn_state == expected_turn_state
+    assert context.downstream_turn_state_synthesized is expected_unanchored
     assert context.original_request_unanchored is expected_unanchored
     assert context.original_affinity_kind == "session_header"
     assert context.original_affinity_key == "sid-123"
@@ -18515,6 +18517,85 @@ async def test_stream_via_http_bridge_fails_closed_on_forward_loop_prevented(
             pass
 
     assert exc_info.value.payload["error"]["code"] == "bridge_forward_loop_prevented"
+    get_or_create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_via_http_bridge_preserves_anchored_draining_owner_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    payload = proxy_service.ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.4",
+            "instructions": "hi",
+            "input": "continue",
+            "previous_response_id": "resp-draining-owner",
+        }
+    )
+    owner_forward = proxy_service._HTTPBridgeOwnerForward(
+        owner_instance="instance-b",
+        owner_endpoint="http://instance-b",
+        key=proxy_service._HTTPBridgeSessionKey("session_header", "sid-123", None),
+    )
+    owner_envelope = proxy_service.openai_error(
+        "bridge_drain_active",
+        "HTTP bridge owner is draining",
+        error_type="server_error",
+    )
+
+    async def fake_forward(**kwargs: object):
+        del kwargs
+        raise http_bridge_owner_forwarding_module._OwnerForwardRequestError(
+            ProxyResponseError(503, owner_envelope),
+            outcome=http_bridge_owner_forwarding_module._OwnerForwardOutcome.RECEIVER_REJECTED,
+        )
+        yield ""
+
+    get_or_create = AsyncMock(return_value=owner_forward)
+    monkeypatch.setattr(
+        proxy_service,
+        "get_settings_cache",
+        lambda: cast(
+            Any,
+            SimpleNamespace(
+                get=AsyncMock(
+                    return_value=SimpleNamespace(
+                        sticky_threads_enabled=False,
+                        openai_cache_affinity_max_age_seconds=1800,
+                        http_responses_session_bridge_prompt_cache_idle_ttl_seconds=3600,
+                        http_responses_session_bridge_gateway_safe_mode=False,
+                    )
+                )
+            ),
+        ),
+    )
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
+    monkeypatch.setattr(service._durable_bridge, "lookup_request_targets", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_http_bridge_local_owner_account_id", AsyncMock(return_value="acc-owner"))
+    monkeypatch.setattr(service, "_resolve_websocket_previous_response_owner", AsyncMock(return_value="acc-owner"))
+    monkeypatch.setattr(service, "_get_or_create_http_bridge_session", get_or_create)
+    monkeypatch.setattr(service, "_forward_http_bridge_request_to_owner", fake_forward)
+
+    with pytest.raises(ProxyResponseError) as exc_info:
+        async for _ in service._stream_via_http_bridge(
+            payload,
+            {"x-codex-session-id": "sid-123"},
+            codex_session_affinity=True,
+            openai_cache_affinity=False,
+            api_key=None,
+            api_key_reservation=None,
+            propagate_http_errors=False,
+            suppress_text_done_events=False,
+            idle_ttl_seconds=120.0,
+            codex_idle_ttl_seconds=900.0,
+            max_sessions=8,
+            queue_limit=4,
+        ):
+            pass
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.payload == owner_envelope
     get_or_create.assert_awaited_once()
 
 
@@ -22346,6 +22427,7 @@ def test_turn_state_draining_owner_rejection_does_not_rebind_previous_response()
         )
         is False
     )
+    assert proxy_service._http_bridge_should_attempt_local_previous_response_recovery(exc) is False
 
 
 @pytest.mark.asyncio

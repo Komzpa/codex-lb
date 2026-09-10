@@ -8,8 +8,8 @@ stored prefix must contain the exact direct tool calls named by the durable
 pending-tool manifest. The proof MUST reject suffix tool calls in that
 prefix-settling mode. Each suffix output MUST have exactly one nonblank
 `call_id`, MUST use the output type matching the manifest call type, MUST NOT
-duplicate another suffix output call ID, and MUST NOT carry response-owned
-fields outside the account-neutral tool-output field set.
+duplicate another suffix output call ID, MUST NOT contain `id`, and MUST NOT
+carry response-owned fields outside the account-neutral tool-output field set.
 
 #### Scenario: Suffix settles pending calls from the stored prefix
 

@@ -2370,6 +2370,7 @@ class _HTTPBridgeStreamingMixin:
                     api_key_reservation=api_key_reservation,
                     codex_session_affinity=codex_session_affinity,
                     downstream_turn_state=downstream_turn_state,
+                    downstream_turn_state_synthesized=downstream_turn_state_synthesized,
                     file_owner_account_id=rewritten_file_account_id,
                     request_started_at=request_state.started_at,
                     proxy_api_authorization=proxy_api_authorization,

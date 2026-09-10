@@ -50,6 +50,8 @@ HTTP_BRIDGE_INTERNAL_FORWARD_PATH = "/internal/bridge/responses"
 HTTP_BRIDGE_FORWARDED_HEADER = "x-codex-bridge-forwarded"
 HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER = "x-codex-bridge-origin-instance"
 HTTP_BRIDGE_TARGET_INSTANCE_HEADER = "x-codex-bridge-target-instance"
+HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER = "x-codex-bridge-turn-state-synthesized"
+HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER = "x-codex-bridge-turn-state-provenance-signature-v1"
 HTTP_BRIDGE_CODEX_AFFINITY_HEADER = "x-codex-bridge-codex-session-affinity"
 HTTP_BRIDGE_RESERVATION_ID_HEADER = "x-codex-bridge-reservation-id"
 HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER = "x-codex-bridge-reservation-key-id"
@@ -82,6 +84,7 @@ class HTTPBridgeForwardContext:
     target_instance: str
     codex_session_affinity: bool
     downstream_turn_state: str | None
+    downstream_turn_state_synthesized: bool = False
     original_request_unanchored: bool = False
     original_affinity_kind: str | None = None
     original_affinity_key: str | None = None
@@ -358,6 +361,17 @@ def build_owner_forward_headers(
         context=context,
         signature_version=signature_version,
     )
+    if context.downstream_turn_state_synthesized:
+        # Add provenance without changing the deployed full-context signature
+        # bytes. Old owners ignore these headers and continue validating the
+        # existing signature; upgraded owners require this proof before they
+        # accept the generated-state privilege.
+        forwarded[HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER] = "1"
+        forwarded[HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER] = _bridge_forward_turn_state_provenance_signature(
+            payload=payload,
+            context=context,
+            signature_version=signature_version,
+        )
     return forwarded
 
 
@@ -389,6 +403,9 @@ def parse_forwarded_request(
     client_ip = _optional_header(headers.get(HTTP_BRIDGE_CLIENT_IP_HEADER))
     signature_version = _optional_header(headers.get(HTTP_BRIDGE_SIGNATURE_VERSION_HEADER))
     original_unanchored_value = _optional_header(headers.get(HTTP_BRIDGE_ORIGINAL_UNANCHORED_HEADER))
+    turn_state_synthesized_value = _optional_header(headers.get(HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER))
+    if turn_state_synthesized_value not in {None, "0", "1"}:
+        return None, _invalid_bridge_forward_signature_error()
     if signature_version == _HTTP_BRIDGE_SIGNATURE_VERSION_V2:
         if original_unanchored_value not in {"0", "1"}:
             return None, _invalid_bridge_forward_signature_error()
@@ -402,6 +419,7 @@ def parse_forwarded_request(
         target_instance=target_instance,
         codex_session_affinity=_bool_header(headers.get(HTTP_BRIDGE_CODEX_AFFINITY_HEADER)),
         downstream_turn_state=_optional_header(headers.get("x-codex-turn-state")),
+        downstream_turn_state_synthesized=turn_state_synthesized_value == "1",
         original_request_unanchored=original_request_unanchored,
         original_affinity_kind=_optional_header(headers.get(HTTP_BRIDGE_AFFINITY_KIND_HEADER)),
         original_affinity_key=_optional_header(headers.get(HTTP_BRIDGE_AFFINITY_KEY_HEADER)),
@@ -429,9 +447,25 @@ def parse_forwarded_request(
             signature_version=signature_version,
         ),
     )
+    if turn_state_synthesized_value == "1":
+        provenance_signature = _optional_header(headers.get(HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER))
+        provenance_valid = provenance_signature is not None and hmac.compare_digest(
+            provenance_signature,
+            _bridge_forward_turn_state_provenance_signature(
+                payload=payload,
+                context=context,
+                signature_version=signature_version,
+            ),
+        )
+        if not provenance_valid:
+            return None, _invalid_bridge_forward_signature_error()
     if tools_bound_valid:
         return HTTPBridgeForwardedRequest(context=context), None
-    if context.file_owner_account_id is not None or extract_input_file_ids(payload.input):
+    if (
+        context.file_owner_account_id is not None
+        or turn_state_synthesized_value == "1"
+        or extract_input_file_ids(payload.input)
+    ):
         # The rolling-upgrade primary signature does not bind the additive
         # file-owner proof. Never allow a stripped/forged proof to downgrade to
         # it, and never allow payloads with file references to fall back after a
@@ -628,6 +662,31 @@ def _bridge_forward_tools_bound_signature(
         include_client_ip=True,
         signature_version=signature_version,
         protocol="codex-lb-http-bridge-forward-tools-bound",
+    )
+    return _sign_bridge_payload(signing_payload)
+
+
+def _bridge_forward_turn_state_provenance_signature(
+    *,
+    payload: ResponsesRequest,
+    context: HTTPBridgeForwardContext,
+    signature_version: str | None = None,
+) -> str:
+    """Bind generated turn-state provenance without changing the old codec."""
+
+    signing_payload = json.dumps(
+        {
+            "downstream_turn_state_synthesized": context.downstream_turn_state_synthesized,
+            "protocol": "codex-lb-http-bridge-turn-state-provenance-v1",
+            "tools_bound_signature": _bridge_forward_tools_bound_signature(
+                payload=payload,
+                context=context,
+                signature_version=signature_version,
+            ),
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
     )
     return _sign_bridge_payload(signing_payload)
 

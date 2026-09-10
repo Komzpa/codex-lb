@@ -9,7 +9,11 @@ requests without `previous_response_id`, such pre-dispatch rejection MAY rebind
 a turn-state anchored request locally. The origin MUST NOT use this bootstrap
 rebind for previous-response continuations, for ambiguous dispatch failures, or
 for owner failures whose public error code does not prove a draining-owner
-rejection.
+rejection. An explicit previous-response continuation rejected with
+`bridge_drain_active` MUST preserve the owner's original error envelope and
+MUST NOT enter generic previous-response recovery. Before a locally recovered
+request is submitted, the origin MUST reuse or settle its original API-key
+reservation; it MUST NOT hold a second reservation for the same request.
 
 #### Scenario: Pre-dispatch drain rejection rebinds bootstrap request
 

@@ -1611,6 +1611,9 @@ async def internal_bridge_responses(
         forwarded_legacy_signature=forwarded_request_context.context.signature_version is None,
         forwarded_headers=forwarded_headers,
         forwarded_downstream_turn_state=forwarded_request_context.context.downstream_turn_state,
+        forwarded_downstream_turn_state_synthesized=(
+            forwarded_request_context.context.downstream_turn_state_synthesized
+        ),
         forwarded_affinity_kind=forwarded_request_context.context.original_affinity_kind,
         forwarded_affinity_key=forwarded_request_context.context.original_affinity_key,
         forwarded_file_owner_account_id=forwarded_request_context.context.file_owner_account_id,
@@ -6496,6 +6499,7 @@ async def _stream_responses(
     forwarded_legacy_signature: bool = False,
     forwarded_headers: Mapping[str, str] | None = None,
     forwarded_downstream_turn_state: str | None = None,
+    forwarded_downstream_turn_state_synthesized: bool = False,
     forwarded_affinity_kind: str | None = None,
     forwarded_affinity_key: str | None = None,
     forwarded_file_owner_account_id: str | None = None,
@@ -6623,7 +6627,9 @@ async def _stream_responses(
         else None
     )
     downstream_turn_state_synthesized = (
-        bridge_active and downstream_turn_state is not None and not forwarded_request and client_turn_state is None
+        bridge_active
+        and downstream_turn_state is not None
+        and (forwarded_downstream_turn_state_synthesized if forwarded_request else client_turn_state is None)
     )
     turn_state_headers = (
         proxy_affinity_module.build_downstream_turn_state_response_headers(downstream_turn_state)

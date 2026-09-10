@@ -37,7 +37,10 @@ owner-held marker registered until that owner finalizes. The proxy MUST NOT use
 this retry path to replace generated turn-state in-flight creation. The proxy
 MUST classify generated turn-state from recorded provenance rather than key
 text; client-supplied values matching generated prefixes MUST remain explicit
-turn-state. Generated turn-state creator timeouts keep the existing structured
+turn-state. Signed owner forwarding MUST preserve generated turn-state
+provenance across the origin-to-owner boundary. Missing legacy provenance and
+client-supplied headers MUST NOT upgrade explicit turn-state to generated.
+Generated turn-state creator timeouts keep the existing structured
 local-overload HTTP 429 behavior and the late owner MUST NOT return an
 unregistered bridge session to the caller.
 
