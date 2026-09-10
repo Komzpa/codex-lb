@@ -143,7 +143,11 @@ class StubAccountsRepository(AccountsRepository):
         expected_blocked_at: int | None | object = _UNSET,
         expected_refresh_token_encrypted: bytes | None = None,
         expected_plan_type: str | None | object = _UNSET,
+        expected_primary_usage_id: int | None | object = _UNSET,
+        expected_secondary_usage_id: int | None | object = _UNSET,
+        expected_monthly_usage_id: int | None | object = _UNSET,
     ) -> bool:
+        del expected_primary_usage_id, expected_secondary_usage_id, expected_monthly_usage_id
         account = self._find_account(account_id)
         if account is None:
             return False
