@@ -295,7 +295,7 @@ def _gpt56_raw(
 
 
 def _gpt6_astra_raw() -> dict[str, JsonValue]:
-    """Raw catalog fields captured from the upstream live proxy on 2026-09-05.
+    """Raw fields from OpenAI Codex rust-v0.153.4 models-manager/models.json.
 
     The large instruction payload is intentionally not bundled; live upstream
     registry refresh remains authoritative when available.
@@ -325,7 +325,7 @@ def _gpt6_astra_raw() -> dict[str, JsonValue]:
         "availability_nux": None,
         "upgrade": None,
         "supports_search_tool": True,
-        "default_service_tier": "priority",
+        "default_service_tier": None,
         "service_tiers": [
             {
                 "id": "priority",
@@ -356,7 +356,8 @@ _BOOTSTRAP_STATIC_MODELS: tuple[UpstreamModel, ...] = (
         minimal_client_version="0.153.0",
         reasoning_levels=_REASONING_LEVELS_ULTRA,
         context_window=272_000,
-        default_reasoning_level="medium",
+        default_reasoning_level="low",
+        shell_type="unified_exec",
         priority=1,
         available_in_plans=_BOOTSTRAP_GPT6_ASTRA_AVAILABLE_IN_PLANS,
         raw=_gpt6_astra_raw(),

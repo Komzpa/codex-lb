@@ -276,7 +276,7 @@ def test_bootstrap_models_include_representative_upstream_metadata():
     assert astra.raw["max_context_window"] == 872_000
     assert astra.priority == 1
     assert astra.prefer_websockets is True
-    assert astra.default_reasoning_level == "medium"
+    assert astra.default_reasoning_level == "low"
     assert [level.effort for level in astra.supported_reasoning_levels] == [
         "low",
         "medium",
@@ -305,11 +305,11 @@ def test_bootstrap_models_include_representative_upstream_metadata():
     assert astra.raw["auto_compact_token_limit"] is None
     assert astra.raw["comp_hash"] == "3000"
     assert astra.raw["default_reasoning_summary"] == "none"
-    assert astra.raw["shell_type"] == "shell_command"
+    assert astra.raw["shell_type"] == "unified_exec"
     assert astra.raw["availability_nux"] is None
     assert astra.raw["upgrade"] is None
     assert astra.raw["supports_search_tool"] is True
-    assert astra.raw["default_service_tier"] == "priority"
+    assert astra.raw["default_service_tier"] is None
     assert astra.raw["service_tiers"] == [
         {"id": "priority", "name": "Fast", "description": "2x speed, increased usage"}
     ]

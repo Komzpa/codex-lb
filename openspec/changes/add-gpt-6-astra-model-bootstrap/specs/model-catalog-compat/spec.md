@@ -42,25 +42,12 @@ backend still serves them.
 - **WHEN** a replica starts and a client calls `GET /v1/models` before the first refresh tick
 - **THEN** the response reflects the persisted catalog, not the bootstrap catalog
 
-### Requirement: Fallback client version covers the bootstrap catalog
-
-The configured fallback Codex client version MUST be greater than or equal to
-`0.153.0`, the highest `minimal_client_version` in the bootstrap catalog, so a
-degraded-startup registry refresh still receives `gpt-6-astra` from upstream.
-
-#### Scenario: Degraded-startup refresh still requests GPT-6 Astra
-
-- **GIVEN** the live Codex release lookup fails and no version is cached
-- **WHEN** the model registry refresh fetches `<base>/codex/models?client_version=<fallback>`
-- **THEN** the fallback version is at least `0.153.0` (`gpt-6-astra`'s `minimal_client_version`)
-
 ## ADDED Requirements
 
 ### Requirement: GPT-6 Astra bootstrap metadata matches the captured upstream catalog
 
 The `gpt-6-astra` bootstrap catalog entry MUST mirror the upstream catalog
-entry captured from the live proxy on 2026-09-05 Asia/Tbilisi time
-(2026-09-04 UTC) for metadata fields codex-lb serves before account catalogs
+entry bundled in OpenAI Codex release `rust-v0.153.4` for metadata fields codex-lb serves before account catalogs
 are authoritative. It MUST carry: `priority` `1`; `visibility` `"list"`;
 `context_window` `272000`;
 `max_context_window` `872000`; `minimal_client_version` `"0.153.0"`;
@@ -68,12 +55,12 @@ are authoritative. It MUST carry: `priority` `1`; `visibility` `"list"`;
 `multi_agent_version` `"v2"`; `use_responses_lite` `true`;
 `apply_patch_tool_type` `"freeform"`; `web_search_tool_type`
 `"text_and_image"`; `supports_image_detail_original` `true`;
-`default_service_tier` `"priority"`; the `priority` service tier named
+`default_service_tier` `null`; `shell_type` `"unified_exec"`; the `priority` service tier named
 `"Fast"` with description `"2x speed, increased usage"`; and
 `additional_speed_tiers` containing `"fast"`.
 
 The `gpt-6-astra` entry MUST advertise reasoning levels `low`, `medium`,
-`high`, `xhigh`, `max`, and `ultra`, with default reasoning level `medium`.
+`high`, `xhigh`, `max`, and `ultra`, with default reasoning level `low`.
 It MUST advertise every plan from the captured upstream entry, including
 `free`, `free_workspace`, `plus`, `pro`, `team`, `business`, and `enterprise`.
 
@@ -92,8 +79,9 @@ It MUST advertise every plan from the captured upstream entry, including
 - **AND** no persisted snapshot is loaded
 - **WHEN** a client calls `GET /backend-api/codex/models`
 - **THEN** `gpt-6-astra` advertises `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`
-- **AND** its default reasoning level is `medium`
-- **AND** its default service tier is `priority`
+- **AND** its default reasoning level is `low`
+- **AND** its default service tier is null
+- **AND** its shell type is `unified_exec`
 - **AND** its `priority` service tier is named `Fast` with description `2x speed, increased usage`
 
 #### Scenario: GPT-6 Astra bootstrap websocket preference is honored
