@@ -68,8 +68,6 @@ from app.modules.proxy._service.http_bridge.account_sessions import _HTTPBridgeA
 from app.modules.proxy._service.http_bridge.activity import _HTTPBridgeActivityMixin
 from app.modules.proxy._service.http_bridge.helpers import (
     _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
-    _abort_http_bridge_inflight_creation_by_future_locked,
-    _abort_http_bridge_inflight_creation_locked,
     _active_http_bridge_instance_ring,
     _alias_fallback_key,
     _durable_bridge_lookup_active_owner,
@@ -295,32 +293,6 @@ class _HTTPBridgeMixin(
             return False
         self._http_bridge_background_cleanup_failed |= any(isinstance(result, BaseException) for result in results)
         return not self._http_bridge_background_cleanup_failed
-
-    async def _fail_http_bridge_inflight_session_creation(
-        self,
-        key: "_HTTPBridgeSessionKey",
-        inflight_future: asyncio.Future["_HTTPBridgeSession"] | None,
-        exc: BaseException,
-    ) -> bool:
-        if inflight_future is None:
-            return False
-        async with self._http_bridge_lock:
-            return _abort_http_bridge_inflight_creation_locked(self, key, inflight_future, exc)
-
-    async def _evict_http_bridge_inflight_waiter(
-        self,
-        inflight_future: asyncio.Future["_HTTPBridgeSession"],
-        exc: BaseException,
-    ) -> "_HTTPBridgeSessionKey | None":
-        async with self._http_bridge_lock:
-            stale_key = None
-            for candidate_key, candidate_future in self._http_bridge_inflight_sessions.items():
-                if candidate_future is inflight_future:
-                    stale_key = candidate_key
-                    break
-            if stale_key is None:
-                return None
-            return _abort_http_bridge_inflight_creation_by_future_locked(self, inflight_future, exc)
 
     @overload
     async def _get_or_create_http_bridge_session(

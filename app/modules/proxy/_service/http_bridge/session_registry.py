@@ -20,6 +20,8 @@ from app.core.utils.time import utcnow
 from app.db.models import StickySessionKind
 from app.modules.proxy._service.http_bridge import helpers as _http_bridge_helpers
 from app.modules.proxy._service.http_bridge.helpers import (
+    _abort_http_bridge_inflight_creation_by_future_locked,
+    _abort_http_bridge_inflight_creation_locked,
     _await_task_deferring_cancellation,
     _forget_http_bridge_denied_anchor_fence_owner,
     _http_bridge_allow_durable_takeover,
@@ -84,6 +86,32 @@ def _requires_durable_recovery_alias_serialization(session: _HTTPBridgeSession) 
 
 
 class _HTTPBridgeSessionRegistryMixin:
+    async def _fail_http_bridge_inflight_session_creation(
+        self: Any,
+        key: "_HTTPBridgeSessionKey",
+        inflight_future: asyncio.Future["_HTTPBridgeSession"] | None,
+        exc: BaseException,
+    ) -> bool:
+        if inflight_future is None:
+            return False
+        async with self._http_bridge_lock:
+            return _abort_http_bridge_inflight_creation_locked(self, key, inflight_future, exc)
+
+    async def _evict_http_bridge_inflight_waiter(
+        self: Any,
+        inflight_future: asyncio.Future["_HTTPBridgeSession"],
+        exc: BaseException,
+    ) -> "_HTTPBridgeSessionKey | None":
+        async with self._http_bridge_lock:
+            stale_key = None
+            for candidate_key, candidate_future in self._http_bridge_inflight_sessions.items():
+                if candidate_future is inflight_future:
+                    stale_key = candidate_key
+                    break
+            if stale_key is None:
+                return None
+            return _abort_http_bridge_inflight_creation_by_future_locked(self, inflight_future, exc)
+
     async def prune_idle_http_bridge_sessions(self: Any) -> int:
         """Run the idle sweep off the request path (issue #1354).
 

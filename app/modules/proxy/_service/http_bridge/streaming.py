@@ -2412,10 +2412,10 @@ class _HTTPBridgeStreamingMixin:
                     not owner_forward_fresh_replay
                     and _http_bridge_should_attempt_local_bootstrap_rebind(
                         exc,
+                        owner_pre_dispatch=_owner_forward_failure_was_pre_dispatch(exc),
                         key=bridge_session_key,
                         headers=headers,
                         previous_response_id=recovery_previous_response_id,
-                        owner_pre_dispatch=_owner_forward_failure_was_pre_dispatch(exc),
                     )
                 )
                 should_attempt_turn_state_takeover = False
