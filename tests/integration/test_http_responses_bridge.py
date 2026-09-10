@@ -5384,7 +5384,7 @@ async def test_signed_forward_preserves_generated_turn_state_provenance(
     monkeypatch,
 ):
     from app.modules.proxy import api as proxy_api_module
-    from app.modules.proxy.http_bridge_forwarding import HTTPBridgeForwardContext, build_owner_forward_headers
+    from app.modules.proxy.http_bridge_forwarding import HTTPBridgeForwardContext, build_owner_forward_request
 
     target_settings = _make_app_settings(enabled=True, instance_id="instance-b")
     _install_proxy_settings(
@@ -5436,7 +5436,7 @@ async def test_signed_forward_preserves_generated_turn_state_provenance(
     payload = proxy_module.ResponsesRequest(
         model="gpt-5.1",
         instructions="Return exactly OK.",
-        input="hello",
+        input=[{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}],
     )
     forward_context = HTTPBridgeForwardContext(
         origin_instance="instance-a",
@@ -5448,7 +5448,8 @@ async def test_signed_forward_preserves_generated_turn_state_provenance(
         original_affinity_kind="session_header",
         original_affinity_key=session_id,
     )
-    forward_headers = build_owner_forward_headers(
+    owner_request = build_owner_forward_request(
+        body=payload.model_dump_for_forwarding(),
         headers={"x-request-id": "forwarded-generated-request"},
         payload=payload,
         context=forward_context,
@@ -5456,8 +5457,8 @@ async def test_signed_forward_preserves_generated_turn_state_provenance(
 
     response = await async_client.post(
         "/internal/bridge/responses",
-        json=payload.model_dump_for_forwarding(),
-        headers=forward_headers,
+        json=owner_request.body,
+        headers=owner_request.headers,
     )
 
     assert response.status_code == 200, response.text

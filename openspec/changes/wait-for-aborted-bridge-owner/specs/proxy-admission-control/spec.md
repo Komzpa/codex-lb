@@ -38,8 +38,11 @@ this retry path to replace generated turn-state in-flight creation. The proxy
 MUST classify generated turn-state from recorded provenance rather than key
 text; client-supplied values matching generated prefixes MUST remain explicit
 turn-state. Signed owner forwarding MUST preserve generated turn-state
-provenance across the origin-to-owner boundary. Missing legacy provenance and
-client-supplied headers MUST NOT upgrade explicit turn-state to generated.
+provenance across the origin-to-owner boundary. The provenance proof MUST bind
+the body-proof bytes that the receiver independently validated for that exact
+request; stripping or transplanting either proof MUST NOT grant generated-state
+privilege. Missing legacy provenance and client-supplied headers MUST NOT
+upgrade explicit turn-state to generated.
 Generated turn-state creator timeouts keep the existing structured
 local-overload HTTP 429 behavior and the late owner MUST NOT return an
 unregistered bridge session to the caller.
