@@ -57,7 +57,7 @@ from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.core.resilience.degradation import set_degraded, set_normal
 from app.core.resilience.toggles import resolve_resilience_toggles
-from app.core.usage.quota import apply_usage_quota, has_usable_credits
+from app.core.usage.quota import apply_usage_quota
 from app.core.usage.refresh_policy import usage_freshness_horizon_seconds
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
