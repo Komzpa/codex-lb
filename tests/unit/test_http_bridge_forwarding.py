@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import json
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -114,6 +112,9 @@ def _pre_provenance_tools_bound_signature(
     signature_version: str | None = None,
 ) -> str:
     """Frozen pre-provenance codec; intentionally independent of production helpers."""
+
+    import hashlib
+    import hmac
 
     body_json = json.dumps(
         payload.model_dump_for_forwarding(),

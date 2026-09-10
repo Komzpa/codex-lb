@@ -50,8 +50,6 @@ HTTP_BRIDGE_INTERNAL_FORWARD_PATH = "/internal/bridge/responses"
 HTTP_BRIDGE_FORWARDED_HEADER = "x-codex-bridge-forwarded"
 HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER = "x-codex-bridge-origin-instance"
 HTTP_BRIDGE_TARGET_INSTANCE_HEADER = "x-codex-bridge-target-instance"
-HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER = "x-codex-bridge-turn-state-synthesized"
-HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER = "x-codex-bridge-turn-state-provenance-signature-v1"
 HTTP_BRIDGE_CODEX_AFFINITY_HEADER = "x-codex-bridge-codex-session-affinity"
 HTTP_BRIDGE_RESERVATION_ID_HEADER = "x-codex-bridge-reservation-id"
 HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER = "x-codex-bridge-reservation-key-id"
@@ -76,6 +74,8 @@ HTTP_BRIDGE_SIGNATURE_HEADER = "x-codex-bridge-signature"
 # ``parse_forwarded_request``.
 HTTP_BRIDGE_SIGNATURE_V2_HEADER = "x-codex-bridge-signature-v2"
 _HTTP_BRIDGE_SIGNATURE_VERSION_V2 = "2"
+HTTP_BRIDGE_TURN_STATE_SYNTHESIZED_HEADER = "x-codex-bridge-turn-state-synthesized"
+HTTP_BRIDGE_TURN_STATE_PROVENANCE_SIGNATURE_HEADER = "x-codex-bridge-turn-state-provenance-signature-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,8 +463,8 @@ def parse_forwarded_request(
         return HTTPBridgeForwardedRequest(context=context), None
     if (
         context.file_owner_account_id is not None
-        or turn_state_synthesized_value == "1"
         or extract_input_file_ids(payload.input)
+        or turn_state_synthesized_value == "1"
     ):
         # The rolling-upgrade primary signature does not bind the additive
         # file-owner proof. Never allow a stripped/forged proof to downgrade to
