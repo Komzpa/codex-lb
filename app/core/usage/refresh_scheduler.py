@@ -11,14 +11,10 @@ from typing import Any, AsyncIterator, Protocol, cast
 
 from app.core import usage as usage_core
 from app.core.balancer.logic import RATE_LIMITED_MIN_COOLDOWN_SECONDS
-<<<<<<< HEAD
-from app.core.plan_types import normalize_account_plan_type
-from app.core.resilience.toggles import resolve_resilience_toggles
-from app.core.scheduling.leader_election_handle import get_leader_election as _get_leader_election
-=======
 from app.core.config.settings import get_settings
 from app.core.plan_types import normalize_account_plan_type, normalize_capacity_plan_type
->>>>>>> 45146508c (fix(usage): harden long-window reset recovery)
+from app.core.resilience.toggles import resolve_resilience_toggles
+from app.core.scheduling.leader_election_handle import get_leader_election as _get_leader_election
 from app.core.usage import capacity_for_plan
 from app.core.usage.refresh_policy import USAGE_REFRESH_INTERVAL_SECONDS
 from app.core.utils.time import naive_utc_to_epoch
