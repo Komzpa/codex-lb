@@ -4881,7 +4881,7 @@ class _CompactCommandTransport:
             headers=upstream_headers,
         )
         sse_options = NativeSseOptions(
-            compact_timeout_seconds or settings.stream_idle_timeout_seconds,
+            settings.stream_idle_timeout_seconds,
             MAX_SSE_EVENT_BYTES,
             content_type_aware=True,
             collect_compact=True,
