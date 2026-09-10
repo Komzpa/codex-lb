@@ -777,7 +777,7 @@ def _matches_recovery_long_window(expected_window: str, entry: UsageHistory) -> 
     if entry.window_minutes is None:
         return (entry.window or "primary") == expected_window
     if expected_window == "monthly":
-        return usage_core.is_monthly_window_minutes(entry.window_minutes)
+        return int(entry.window_minutes) == usage_core.DEFAULT_WINDOW_MINUTES_MONTHLY
     if expected_window == "secondary":
         return usage_core.is_weekly_window_minutes(entry.window_minutes)
     return False

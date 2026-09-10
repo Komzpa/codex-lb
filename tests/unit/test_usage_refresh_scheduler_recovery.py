@@ -760,7 +760,7 @@ async def test_reconcile_recovers_team_after_confirmed_weekly_reset_before_legac
     blocked_at = int(now - 3600)
     legacy_weekly_reset_at = int(now + 3 * 24 * 3600)
     next_weekly_reset_at = int(now - 60 + 7 * 24 * 3600)
-    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.REAL_CLOCK.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
     monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
 
@@ -819,7 +819,7 @@ async def test_reconcile_skips_recovery_when_latest_usage_changes_before_cas(
     blocked_at = int(now - 3600)
     legacy_weekly_reset_at = int(now + 3 * 24 * 3600)
     next_weekly_reset_at = int(now - 60 + 7 * 24 * 3600)
-    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.REAL_CLOCK.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
     monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
 
@@ -890,7 +890,7 @@ async def test_reconcile_reblocks_when_latest_usage_changes_after_successful_cas
     blocked_at = int(now - 3600)
     legacy_weekly_reset_at = int(now + 3 * 24 * 3600)
     next_weekly_reset_at = int(now - 60 + 7 * 24 * 3600)
-    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.REAL_CLOCK.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
     monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
 
@@ -970,7 +970,7 @@ async def test_reconcile_reblocks_current_active_row_when_direct_rollback_loses_
     blocked_at = int(now - 3600)
     legacy_weekly_reset_at = int(now + 3 * 24 * 3600)
     next_weekly_reset_at = int(now - 60 + 7 * 24 * 3600)
-    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.REAL_CLOCK.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
     monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
 
@@ -1051,7 +1051,7 @@ async def test_reconcile_preserves_replacement_credentials_when_rollback_loses_c
     blocked_at = int(now - 3600)
     legacy_weekly_reset_at = int(now + 3 * 24 * 3600)
     next_weekly_reset_at = int(now - 60 + 7 * 24 * 3600)
-    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.REAL_CLOCK.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
     monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
 
@@ -1193,7 +1193,7 @@ async def test_reconcile_keeps_team_blocked_when_primary_window_is_exhausted(
     now = 1_700_000_000.0
     blocked_at = int(now - 3600)
     legacy_weekly_reset_at = int(now + 3 * 24 * 3600)
-    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.REAL_CLOCK.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
     monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
 
