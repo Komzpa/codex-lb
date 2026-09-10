@@ -177,6 +177,7 @@ class StubAccountsRepository:
     def __init__(self, accounts: list[Account]) -> None:
         self._accounts = {account.id: account for account in accounts}
         self.status_updates: list[dict[str, Any]] = []
+        self.usage_watermark_updates: list[tuple[int | None | object, int | None | object, int | None | object]] = []
 
     async def get_by_id_fresh(self, account_id: str) -> Account | None:
         return self._accounts.get(account_id)
@@ -195,6 +196,9 @@ class StubAccountsRepository:
         expected_blocked_at: int | None | object = _UNSET,
         expected_refresh_token_encrypted: bytes | None = None,
         expected_plan_type: str | None | object = _UNSET,
+        expected_primary_usage_id: int | None | object = _UNSET,
+        expected_secondary_usage_id: int | None | object = _UNSET,
+        expected_monthly_usage_id: int | None | object = _UNSET,
     ) -> bool:
         account = self._accounts.get(account_id)
         if account is None:
@@ -225,6 +229,9 @@ class StubAccountsRepository:
                 "reset_at": reset_at,
                 "blocked_at": blocked_at,
             }
+        )
+        self.usage_watermark_updates.append(
+            (expected_primary_usage_id, expected_secondary_usage_id, expected_monthly_usage_id)
         )
         return True
 
@@ -335,61 +342,6 @@ class MutatingPlanAccountsRepository(StubAccountsRepository):
         account = next(iter(self._accounts.values()))
         account.plan_type = "free"
         return await super().update_status_if_current(*args, **kwargs)
-
-
-class MutatingUsageAfterSuccessfulCasAccountsRepository(StubAccountsRepository):
-    def __init__(
-        self,
-        accounts: list[Account],
-        *,
-        usage_repo: StubUsageRepository,
-        refreshed_secondary: dict[str, UsageHistory],
-        mutate_current_after_recovery: Callable[[Account], None] | None = None,
-    ) -> None:
-        super().__init__(accounts)
-        self._usage_repo = usage_repo
-        self._refreshed_secondary = refreshed_secondary
-        self._mutate_current_after_recovery = mutate_current_after_recovery
-        self._mutated = False
-
-    async def update_status_if_current(self, *args: Any, **kwargs: Any) -> bool:
-        updated = await super().update_status_if_current(*args, **kwargs)
-        if updated and not self._mutated and args[1] == AccountStatus.ACTIVE:
-            self._usage_repo._secondary = self._refreshed_secondary
-            if self._mutate_current_after_recovery is not None:
-                self._mutate_current_after_recovery(next(iter(self._accounts.values())))
-            self._mutated = True
-        return updated
-
-
-class MutatingLatestUsageRepository(StubUsageRepository):
-    def __init__(
-        self,
-        *,
-        primary: dict[str, UsageHistory],
-        secondary: dict[str, UsageHistory],
-        refreshed_secondary: dict[str, UsageHistory],
-    ) -> None:
-        super().__init__(primary=primary, secondary=secondary)
-        self._refreshed_secondary = refreshed_secondary
-        self._secondary_reads = 0
-
-    async def latest_by_account(
-        self,
-        window: str | None = None,
-        *,
-        account_ids: Collection[str] | None = None,
-    ) -> dict[str, UsageHistory]:
-        if window == "secondary":
-            self._secondary_reads += 1
-            if self._secondary_reads > 1:
-                original = self._secondary
-                self._secondary = self._refreshed_secondary
-                try:
-                    return await super().latest_by_account(window=window, account_ids=account_ids)
-                finally:
-                    self._secondary = original
-        return await super().latest_by_account(window=window, account_ids=account_ids)
 
 
 @pytest.mark.asyncio
@@ -812,7 +764,7 @@ async def test_reconcile_recovers_team_after_confirmed_weekly_reset_before_legac
 
 
 @pytest.mark.asyncio
-async def test_reconcile_skips_recovery_when_latest_usage_changes_before_cas(
+async def test_reconcile_passes_latest_usage_watermarks_to_cas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = 1_700_000_000.0
@@ -846,20 +798,11 @@ async def test_reconcile_skips_recovery_when_latest_usage_changes_before_cas(
         recorded_at=_epoch_to_naive_utc(now - 60),
         window_minutes=10080,
     )
-    exhausted_after = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=100.0,
-        reset_at=next_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 1),
-        window_minutes=10080,
-    )
-    exhausted_after.id = 2
     accounts_repo = StubAccountsRepository([account])
 
     recovered = await refresh_scheduler_module.reconcile_recoverable_account_statuses(
         accounts_repo=accounts_repo,
-        usage_repo=MutatingLatestUsageRepository(
+        usage_repo=StubUsageRepository(
             primary={
                 account.id: _make_usage(
                     account.id,
@@ -871,263 +814,14 @@ async def test_reconcile_skips_recovery_when_latest_usage_changes_before_cas(
                 )
             },
             secondary={account.id: after},
-            refreshed_secondary={account.id: exhausted_after},
         ),
         accounts=[account],
         long_window_reset_evidence={account.id: _reset_evidence(before, after)},
     )
 
-    assert recovered == 0
-    assert account.status == AccountStatus.RATE_LIMITED
-    assert accounts_repo.status_updates == []
-
-
-@pytest.mark.asyncio
-async def test_reconcile_reblocks_when_latest_usage_changes_after_successful_cas(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = 1_700_000_000.0
-    blocked_at = int(now - 3600)
-    legacy_weekly_reset_at = int(now + 3 * 24 * 3600)
-    next_weekly_reset_at = int(now - 60 + 7 * 24 * 3600)
-    monkeypatch.setattr("app.modules.proxy.load_balancer.REAL_CLOCK.time", lambda: now)
-    monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
-    monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
-
-    account = _make_account(
-        "acc_team_usage_post_cas_watermark",
-        status=AccountStatus.RATE_LIMITED,
-        plan_type="team",
-        reset_at=legacy_weekly_reset_at,
-        blocked_at=blocked_at,
-    )
-    before = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=100.0,
-        reset_at=legacy_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 120),
-        window_minutes=10080,
-    )
-    after = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=0.0,
-        reset_at=next_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 60),
-        window_minutes=10080,
-    )
-    exhausted_after = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=100.0,
-        reset_at=next_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 1),
-        window_minutes=10080,
-    )
-    exhausted_after.id = 2
-    usage_repo = StubUsageRepository(
-        primary={
-            account.id: _make_usage(
-                account.id,
-                window="primary",
-                used_percent=0.0,
-                reset_at=int(now + 5 * 3600),
-                recorded_at=_epoch_to_naive_utc(now - 60),
-                window_minutes=300,
-            )
-        },
-        secondary={account.id: after},
-    )
-    accounts_repo = MutatingUsageAfterSuccessfulCasAccountsRepository(
-        [account],
-        usage_repo=usage_repo,
-        refreshed_secondary={account.id: exhausted_after},
-    )
-
-    recovered = await refresh_scheduler_module.reconcile_recoverable_account_statuses(
-        accounts_repo=accounts_repo,
-        usage_repo=usage_repo,
-        accounts=[account],
-        long_window_reset_evidence={account.id: _reset_evidence(before, after)},
-    )
-
-    assert recovered == 0
-    assert account.status == AccountStatus.RATE_LIMITED
-    assert account.reset_at == legacy_weekly_reset_at
-    assert account.blocked_at == blocked_at
-    assert [update["status"] for update in accounts_repo.status_updates] == [
-        AccountStatus.ACTIVE,
-        AccountStatus.RATE_LIMITED,
-    ]
-
-
-@pytest.mark.asyncio
-async def test_reconcile_reblocks_current_active_row_when_direct_rollback_loses_cas(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = 1_700_000_000.0
-    blocked_at = int(now - 3600)
-    legacy_weekly_reset_at = int(now + 3 * 24 * 3600)
-    next_weekly_reset_at = int(now - 60 + 7 * 24 * 3600)
-    monkeypatch.setattr("app.modules.proxy.load_balancer.REAL_CLOCK.time", lambda: now)
-    monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
-    monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
-
-    account = _make_account(
-        "acc_team_usage_post_cas_rollback_retry",
-        status=AccountStatus.RATE_LIMITED,
-        plan_type="team",
-        reset_at=legacy_weekly_reset_at,
-        blocked_at=blocked_at,
-    )
-    before = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=100.0,
-        reset_at=legacy_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 120),
-        window_minutes=10080,
-    )
-    after = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=0.0,
-        reset_at=next_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 60),
-        window_minutes=10080,
-    )
-    exhausted_after = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=100.0,
-        reset_at=next_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 1),
-        window_minutes=10080,
-    )
-    exhausted_after.id = 2
-    usage_repo = StubUsageRepository(
-        primary={
-            account.id: _make_usage(
-                account.id,
-                window="primary",
-                used_percent=0.0,
-                reset_at=int(now + 5 * 3600),
-                recorded_at=_epoch_to_naive_utc(now - 60),
-                window_minutes=300,
-            )
-        },
-        secondary={account.id: after},
-    )
-    accounts_repo = MutatingUsageAfterSuccessfulCasAccountsRepository(
-        [account],
-        usage_repo=usage_repo,
-        refreshed_secondary={account.id: exhausted_after},
-        mutate_current_after_recovery=lambda current: setattr(current, "blocked_at", blocked_at + 1),
-    )
-
-    recovered = await refresh_scheduler_module.reconcile_recoverable_account_statuses(
-        accounts_repo=accounts_repo,
-        usage_repo=usage_repo,
-        accounts=[account],
-        long_window_reset_evidence={account.id: _reset_evidence(before, after)},
-    )
-
-    assert recovered == 0
-    assert account.status == AccountStatus.RATE_LIMITED
-    assert account.reset_at == legacy_weekly_reset_at
-    assert account.blocked_at == blocked_at
-    assert [update["status"] for update in accounts_repo.status_updates] == [
-        AccountStatus.ACTIVE,
-        AccountStatus.RATE_LIMITED,
-    ]
-
-
-@pytest.mark.asyncio
-async def test_reconcile_preserves_replacement_credentials_when_rollback_loses_cas(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = 1_700_000_000.0
-    blocked_at = int(now - 3600)
-    legacy_weekly_reset_at = int(now + 3 * 24 * 3600)
-    next_weekly_reset_at = int(now - 60 + 7 * 24 * 3600)
-    monkeypatch.setattr("app.modules.proxy.load_balancer.REAL_CLOCK.time", lambda: now)
-    monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
-    monkeypatch.setattr(refresh_scheduler_module.time, "time", lambda: now)
-
-    account = _make_account(
-        "acc_team_usage_post_cas_replacement",
-        status=AccountStatus.RATE_LIMITED,
-        plan_type="team",
-        reset_at=legacy_weekly_reset_at,
-        blocked_at=blocked_at,
-    )
-    before = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=100.0,
-        reset_at=legacy_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 120),
-        window_minutes=10080,
-    )
-    after = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=0.0,
-        reset_at=next_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 60),
-        window_minutes=10080,
-    )
-    exhausted_after = _make_usage(
-        account.id,
-        window="secondary",
-        used_percent=100.0,
-        reset_at=next_weekly_reset_at,
-        recorded_at=_epoch_to_naive_utc(now - 1),
-        window_minutes=10080,
-    )
-    exhausted_after.id = 2
-
-    def replace_credentials(current: Account) -> None:
-        current.plan_type = "plus"
-        current.refresh_token_encrypted = b"replacement-refresh"
-
-    usage_repo = StubUsageRepository(
-        primary={
-            account.id: _make_usage(
-                account.id,
-                window="primary",
-                used_percent=0.0,
-                reset_at=int(now + 5 * 3600),
-                recorded_at=_epoch_to_naive_utc(now - 60),
-                window_minutes=300,
-            )
-        },
-        secondary={account.id: after},
-    )
-    accounts_repo = MutatingUsageAfterSuccessfulCasAccountsRepository(
-        [account],
-        usage_repo=usage_repo,
-        refreshed_secondary={account.id: exhausted_after},
-        mutate_current_after_recovery=replace_credentials,
-    )
-
-    recovered = await refresh_scheduler_module.reconcile_recoverable_account_statuses(
-        accounts_repo=accounts_repo,
-        usage_repo=usage_repo,
-        accounts=[account],
-        long_window_reset_evidence={account.id: _reset_evidence(before, after)},
-    )
-
-    assert recovered == 0
+    assert recovered == 1
     assert account.status == AccountStatus.ACTIVE
-    assert account.reset_at is None
-    assert account.blocked_at is None
-    assert account.plan_type == "plus"
-    assert account.refresh_token_encrypted == b"replacement-refresh"
-    assert [update["status"] for update in accounts_repo.status_updates] == [
-        AccountStatus.ACTIVE,
-    ]
+    assert accounts_repo.usage_watermark_updates == [(1, 1, None)]
 
 
 @pytest.mark.asyncio

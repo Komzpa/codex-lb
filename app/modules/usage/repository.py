@@ -327,28 +327,38 @@ def _window_clause(window: str | None, history_model=UsageHistory):
     return history_model.window == window
 
 
-def _recorded_at_epoch_expr(recorded_at, dialect_name: str):
-    if dialect_name == "sqlite":
-        return sqlalchemy_cast(func.strftime("%s", recorded_at), Integer)
-    return func.extract("epoch", recorded_at)
-
-
 def _usage_reset_confirmed_clause(before, after, *, dialect_name: str, min_reset_jump_seconds: int):
-    before_observed_at = _recorded_at_epoch_expr(before.recorded_at, dialect_name)
-    observed_at = _recorded_at_epoch_expr(after.recorded_at, dialect_name)
     window_seconds = func.coalesce(after.window_minutes * 60, _FALLBACK_ROLLING_WINDOW_SECONDS)
     window_started_at = after.reset_at - window_seconds
-    crossed_previous_reset = and_(
-        before_observed_at <= before.reset_at,
-        before.reset_at <= observed_at,
-        observed_at < after.reset_at,
-    )
-    reanchored_between_samples = and_(
-        after.used_percent < before.used_percent,
-        before_observed_at <= window_started_at,
-        window_started_at <= observed_at,
-        observed_at < after.reset_at,
-    )
+    if dialect_name == "sqlite":
+        before_reset_at = func.datetime(before.reset_at, "unixepoch")
+        after_reset_at = func.datetime(after.reset_at, "unixepoch")
+        window_started_at = func.datetime(window_started_at, "unixepoch")
+        crossed_previous_reset = and_(
+            before.recorded_at <= before_reset_at,
+            before_reset_at <= after.recorded_at,
+            after.recorded_at < after_reset_at,
+        )
+        reanchored_between_samples = and_(
+            after.used_percent < before.used_percent,
+            before.recorded_at <= window_started_at,
+            window_started_at <= after.recorded_at,
+            after.recorded_at < after_reset_at,
+        )
+    else:
+        before_observed_at = func.extract("epoch", before.recorded_at)
+        observed_at = func.extract("epoch", after.recorded_at)
+        crossed_previous_reset = and_(
+            before_observed_at <= before.reset_at,
+            before.reset_at <= observed_at,
+            observed_at < after.reset_at,
+        )
+        reanchored_between_samples = and_(
+            after.used_percent < before.used_percent,
+            before_observed_at <= window_started_at,
+            window_started_at <= observed_at,
+            observed_at < after.reset_at,
+        )
     return and_(
         before.reset_at.is_not(None),
         after.reset_at.is_not(None),
@@ -1067,7 +1077,7 @@ class UsageRepository:
                     min_reset_jump_seconds=min_reset_jump_seconds,
                 ),
             )
-            .order_by(candidate_after.recorded_at.asc(), candidate_after.id.asc())
+            .order_by(candidate_after.recorded_at.desc(), candidate_after.id.desc())
             .limit(1)
         )
         row = (await self._session.execute(pair_stmt)).one_or_none()

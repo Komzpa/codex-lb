@@ -52,8 +52,6 @@ class _UsageResetEvidence:
 
 
 class _RecoverableAccountsRepository(Protocol):
-    async def get_by_id_fresh(self, account_id: str) -> Account | None: ...
-
     async def update_status_if_current(
         self,
         account_id: str,
@@ -68,6 +66,9 @@ class _RecoverableAccountsRepository(Protocol):
         expected_blocked_at: int | None | object = None,
         expected_refresh_token_encrypted: bytes | None = None,
         expected_plan_type: str | None | object = None,
+        expected_primary_usage_id: int | None | object = None,
+        expected_secondary_usage_id: int | None | object = None,
+        expected_monthly_usage_id: int | None | object = None,
     ) -> bool: ...
 
 
@@ -397,8 +398,10 @@ async def reconcile_recoverable_account_statuses(
     soft_drain_enabled = resolve_resilience_toggles(dashboard_settings).soft_drain_enabled
 
     candidate_ids = [account.id for account in candidates]
-    latest_primary = await usage_repo.latest_by_account(window="primary", account_ids=candidate_ids)
-    latest_secondary = await usage_repo.latest_by_account(window="secondary", account_ids=candidate_ids)
+    raw_latest_primary = await usage_repo.latest_by_account(window="primary", account_ids=candidate_ids)
+    raw_latest_secondary = await usage_repo.latest_by_account(window="secondary", account_ids=candidate_ids)
+    latest_primary = raw_latest_primary
+    latest_secondary = raw_latest_secondary
     latest_primary, latest_secondary = _normalize_latest_usage_windows(latest_primary, latest_secondary)
     latest_monthly = await usage_repo.latest_by_account(window="monthly", account_ids=candidate_ids)
 
@@ -443,20 +446,11 @@ async def reconcile_recoverable_account_statuses(
             and blocked_at == account.blocked_at
         ):
             continue
-        if not await _recovery_usage_watermark_is_current(
-            account=account,
-            usage_repo=usage_repo,
-            expected_primary=latest_primary.get(account.id),
-            expected_secondary=latest_secondary.get(account.id),
-            expected_monthly=monthly_entry,
-        ):
-            continue
         previous_status = account.status
         previous_deactivation_reason = account.deactivation_reason
         previous_reset_at = account.reset_at
         previous_blocked_at = account.blocked_at
         previous_plan_type = account.plan_type
-        previous_refresh_token_encrypted = account.refresh_token_encrypted
         updated = await accounts_repo.update_status_if_current(
             account.id,
             status,
@@ -467,31 +461,13 @@ async def reconcile_recoverable_account_statuses(
             expected_deactivation_reason=previous_deactivation_reason,
             expected_reset_at=previous_reset_at,
             expected_blocked_at=previous_blocked_at,
+            expected_refresh_token_encrypted=account.refresh_token_encrypted,
             expected_plan_type=previous_plan_type,
+            expected_primary_usage_id=_usage_history_id(raw_latest_primary.get(account.id)),
+            expected_secondary_usage_id=_usage_history_id(raw_latest_secondary.get(account.id)),
+            expected_monthly_usage_id=_usage_history_id(monthly_entry),
         )
         if not updated:
-            continue
-        if not await _recovery_usage_watermark_is_current(
-            account=account,
-            usage_repo=usage_repo,
-            expected_primary=latest_primary.get(account.id),
-            expected_secondary=latest_secondary.get(account.id),
-            expected_monthly=monthly_entry,
-        ):
-            await _restore_recoverable_account_status(
-                accounts_repo,
-                account_id=account.id,
-                previous_status=previous_status,
-                previous_deactivation_reason=previous_deactivation_reason,
-                previous_reset_at=previous_reset_at,
-                previous_blocked_at=previous_blocked_at,
-                recovery_status=status,
-                recovery_deactivation_reason=deactivation_reason,
-                recovery_reset_at=reset_at,
-                recovery_blocked_at=blocked_at,
-                recovery_plan_type=previous_plan_type,
-                recovery_refresh_token_encrypted=previous_refresh_token_encrypted,
-            )
             continue
         account.status = status
         account.deactivation_reason = deactivation_reason
@@ -501,94 +477,12 @@ async def reconcile_recoverable_account_statuses(
     return recovered
 
 
-async def _restore_recoverable_account_status(
-    accounts_repo: _RecoverableAccountsRepository,
-    *,
-    account_id: str,
-    previous_status: AccountStatus,
-    previous_deactivation_reason: str | None,
-    previous_reset_at: int | None,
-    previous_blocked_at: int | None,
-    recovery_status: AccountStatus,
-    recovery_deactivation_reason: str | None,
-    recovery_reset_at: int | None,
-    recovery_blocked_at: int | None,
-    recovery_plan_type: str | None,
-    recovery_refresh_token_encrypted: bytes,
-) -> None:
-    restored = await accounts_repo.update_status_if_current(
-        account_id,
-        previous_status,
-        previous_deactivation_reason,
-        previous_reset_at,
-        blocked_at=previous_blocked_at,
-        expected_status=recovery_status,
-        expected_deactivation_reason=recovery_deactivation_reason,
-        expected_reset_at=recovery_reset_at,
-        expected_blocked_at=recovery_blocked_at,
-        expected_refresh_token_encrypted=recovery_refresh_token_encrypted,
-        expected_plan_type=recovery_plan_type,
-    )
-    if restored:
-        return
-
-    current = await accounts_repo.get_by_id_fresh(account_id)
-    if current is None or current.delete_requested_at is not None or current.status != AccountStatus.ACTIVE:
-        return
-    if current.plan_type != recovery_plan_type or current.refresh_token_encrypted != recovery_refresh_token_encrypted:
-        return
-
-    await accounts_repo.update_status_if_current(
-        account_id,
-        previous_status,
-        previous_deactivation_reason,
-        previous_reset_at,
-        blocked_at=previous_blocked_at,
-        expected_status=current.status,
-        expected_deactivation_reason=current.deactivation_reason,
-        expected_reset_at=current.reset_at,
-        expected_blocked_at=current.blocked_at,
-        expected_refresh_token_encrypted=recovery_refresh_token_encrypted,
-        expected_plan_type=recovery_plan_type,
-    )
-
-
-def _usage_history_identity(entry: UsageHistory | None) -> tuple[int | None, datetime | None] | None:
-    if entry is None:
-        return None
-    return (entry.id, entry.recorded_at)
+def _usage_history_id(entry: UsageHistory | None) -> int | None:
+    return entry.id if entry is not None else None
 
 
 def _usage_history_at_or_before(left: UsageHistory, right: UsageHistory) -> bool:
     return (left.recorded_at, left.id or 0) <= (right.recorded_at, right.id or 0)
-
-
-async def _recovery_usage_watermark_is_current(
-    *,
-    account: Account,
-    usage_repo: _LatestUsageRepository,
-    expected_primary: UsageHistory | None,
-    expected_secondary: UsageHistory | None,
-    expected_monthly: UsageHistory | None,
-) -> bool:
-    account_ids = [account.id]
-    current_primary = await usage_repo.latest_by_account(window="primary", account_ids=account_ids)
-    current_secondary = await usage_repo.latest_by_account(window="secondary", account_ids=account_ids)
-    current_primary, current_secondary = _normalize_latest_usage_windows(current_primary, current_secondary)
-    current_monthly = await usage_repo.latest_by_account(window="monthly", account_ids=account_ids)
-    if _usage_history_identity(current_primary.get(account.id)) != _usage_history_identity(expected_primary):
-        return False
-    expected_long = _select_long_window_entry(
-        account=account,
-        monthly_entry=expected_monthly,
-        secondary_entry=expected_secondary,
-    )
-    current_long = _select_long_window_entry(
-        account=account,
-        monthly_entry=current_monthly.get(account.id),
-        secondary_entry=current_secondary.get(account.id),
-    )
-    return _usage_history_identity(current_long) == _usage_history_identity(expected_long)
 
 
 def _confirmed_early_long_window_reset_recovery(

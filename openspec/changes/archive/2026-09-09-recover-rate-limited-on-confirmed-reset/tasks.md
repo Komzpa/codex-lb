@@ -24,6 +24,7 @@
 - [x] 4.3 Cover the 30-second floor, missing or mismatched markers, stale/pre-block evidence, timestamp jitter, exhausted after/latest usage, generic Retry-After cooldown, and a Plus account with primary usage at `100%`.
 - [x] 4.4 Cover compare-and-set contention and re-block-after-candidate races, proving neither stale recovery nor warm-up traffic occurs.
 - [x] 4.5 Cover active-only warm-up plus a non-exhausted-to-available real reset to prove prior exhaustion is no longer required.
+- [x] 4.6 Add the reset-transition lookup-index migration with upgrade/downgrade coverage and PostgreSQL invalid-index repair coverage.
 
 ## 5. Verification
 
@@ -36,3 +37,4 @@
 - [x] 6.1 Generalize the canonical reset-evidence resolver from Free monthly history to the plan-applicable long window: monthly for Free and secondary for paid plans.
 - [x] 6.2 Permit marker-guarded early recovery for a paid account only when its long-window reset matches the current block, while preserving primary-exhaustion and generic Retry-After protection.
 - [x] 6.3 Add Team weekly reset regressions for persisted-history recovery and stale-deadline reconciliation.
+- [x] 6.4 Guard recovery at one database linearization point with the current account, plan, credential, and raw usage-window watermarks; an operator's same-value reactivation and any newer exhausted usage row win.

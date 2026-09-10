@@ -25,4 +25,4 @@ None.
 
 - Affected code: background usage refresh scheduling, recoverable-status reconciliation, limit warm-up candidate construction, and the compare-and-set account-status repository path.
 - Affected tests: focused scheduler, status-recovery, warm-up, and repository-backed integration coverage.
-- No API, schema, migration, setting, dependency, dashboard, or deployment contract changes.
+- Adds the forward `20260904_000000_add_usage_reset_transition_index` migration for the reset-transition lookup, including PostgreSQL repair of an invalid leftover index and an explicit downgrade; no API, setting, dependency, dashboard, or deployment contract changes.
