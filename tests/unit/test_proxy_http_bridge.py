@@ -42,7 +42,7 @@ from app.core.clients.proxy_websocket import (
     UpstreamWebSocketTransportError,
     WebsocketsUpstreamWebSocket,
 )
-from app.core.clock import REAL_SCHEDULER, RealScheduler
+from app.core.clock import REAL_SCHEDULER, RealScheduler, Scheduler
 from app.core.config.dashboard_overrides import dashboard_overrides_bound, with_dashboard_overrides
 from app.core.config.settings import Settings
 from app.core.errors import HTTP_BRIDGE_EVENTLESS_TIMEOUT_CODE, openai_error
@@ -22286,7 +22286,6 @@ def test_owner_forward_proxy_error_classifies_explicit_drain_as_receiver_rejecte
     )
 
 
-
 def test_turn_state_only_generated_drain_rejection_preserves_retryable_owner_error() -> None:
     source = ProxyResponseError(
         503,
@@ -22325,6 +22324,7 @@ def test_ambiguous_drain_rejection_does_not_bootstrap_rebind_session_key() -> No
         )
         is False
     )
+
 
 def test_turn_state_draining_owner_rejection_does_not_rebind_previous_response() -> None:
     source = ProxyResponseError(
@@ -23463,7 +23463,11 @@ async def test_http_bridge_aborted_owner_wait_clamps_to_remaining_request_budget
 
     assert waited is False
     assert exhausted is False
-    wait_for_owner.assert_awaited_once_with(inflight_future, timeout=pytest.approx(1.25))
+    wait_for_owner.assert_awaited_once_with(
+        inflight_future,
+        timeout=pytest.approx(1.25),
+        scheduler=http_bridge_helpers_module.REAL_SCHEDULER,
+    )
 
 
 @pytest.mark.asyncio
@@ -23498,7 +23502,11 @@ async def test_http_bridge_retained_owner_cleanup_clamps_to_remaining_request_bu
                 request_deadline=11.25,
             )
         assert exc_info.value.payload["error"]["code"] == "capacity_exhausted_active_sessions"
-        wait_for_owner.assert_awaited_once_with(retained_future, timeout=pytest.approx(1.25))
+        wait_for_owner.assert_awaited_once_with(
+            retained_future,
+            timeout=pytest.approx(1.25),
+            scheduler=http_bridge_helpers_module.REAL_SCHEDULER,
+        )
         evict_waiter.assert_not_awaited()
 
         wait_for_owner.reset_mock()
@@ -37933,7 +37941,12 @@ async def test_wait_for_aborted_owner_preserves_observer_cancellation(
     )
     setattr(inflight_future, http_bridge_helpers_module._HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, owner_task)
 
-    async def observer_cancelled_wait(shared: asyncio.Future[Any], *, timeout: float | None = None) -> Any:
+    async def observer_cancelled_wait(
+        shared: asyncio.Future[Any],
+        *,
+        timeout: float | None = None,
+        scheduler: Scheduler | None = None,
+    ) -> Any:
         assert shared is owner_task
         owner_task.cancel()
         await asyncio.gather(owner_task, return_exceptions=True)
@@ -37969,7 +37982,12 @@ async def test_wait_for_aborted_owner_accepts_owner_timeout_completion(
     )
     setattr(inflight_future, http_bridge_helpers_module._HTTP_BRIDGE_INFLIGHT_OWNER_TASK_ATTR, owner_task)
 
-    async def owner_timeout_wait(shared: asyncio.Future[Any], *, timeout: float | None = None) -> Any:
+    async def owner_timeout_wait(
+        shared: asyncio.Future[Any],
+        *,
+        timeout: float | None = None,
+        scheduler: Scheduler | None = None,
+    ) -> Any:
         assert shared is owner_task
         await shared
 
