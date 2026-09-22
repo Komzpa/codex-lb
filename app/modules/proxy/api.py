@@ -7334,6 +7334,7 @@ async def _transcribe_request(
 @usage_router.get("/api/codex/usage/", response_model=RateLimitStatusPayload, include_in_schema=False)
 async def codex_usage(
     request: Request,
+    response: Response,
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Depends(validate_codex_provider_usage_identity),
 ) -> RateLimitStatusPayload:
@@ -7342,6 +7343,7 @@ async def codex_usage(
         if api_key is not None
         else _attach_codex_usage_reset_credits(await context.service.get_rate_limit_payload(), request)
     )
+    response.headers.update(await _rate_limit_headers_for_request(context, api_key))
     return RateLimitStatusPayload.from_data(payload)
 
 

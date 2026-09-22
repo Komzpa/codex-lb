@@ -1,0 +1,4 @@
+- [ ] Add refreshed aggregate quota headers to `/api/codex/usage` for ChatGPT-authenticated callers.
+- [ ] Keep API-key JSON quota bodies and upstream-quota suppression unchanged.
+- [ ] Add route tests for headers, suppression, unavailable data, and refresh.
+- [ ] Validate OpenSpec and run focused tests.

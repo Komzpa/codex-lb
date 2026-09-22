@@ -164,6 +164,9 @@ async def test_codex_usage_aggregates_windows(async_client, db_setup):
     assert credits["has_credits"] is True
     assert credits["unlimited"] is False
     assert credits["balance"] == "15.0"
+    assert response.headers["x-codex-primary-used-percent"] == "20.0"
+    assert response.headers["x-codex-secondary-used-percent"] == "50.0"
+    assert response.headers["x-codex-credits-balance"] == "15.00"
 
 
 @pytest.mark.asyncio
