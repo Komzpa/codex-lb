@@ -8,9 +8,10 @@ import pytest
 
 from app.core.clients.rate_limit_reset_credits import RateLimitResetCreditsSnapshot, ResetCreditItem
 from app.core.clients.usage import ConsumeRateLimitResetCreditResponse
+from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
 from app.core.usage.models import UsagePayload
-from app.core.utils.time import utcnow
+from app.core.utils.time import naive_utc_to_epoch, utcnow
 from app.db.models import Account, AccountStatus, ApiKeyLimit, LimitType, LimitWindow, UsageHistory
 from app.db.session import SessionLocal
 from app.dependencies import get_proxy_service_for_app
@@ -19,6 +20,7 @@ from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService, LimitRuleInput
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.rate_limit_reset_credits.store import get_rate_limit_reset_credits_store
+from app.modules.settings.repository import SettingsRepository
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 
 pytestmark = pytest.mark.integration
@@ -614,7 +616,12 @@ async def test_codex_usage_api_key_exposes_monthly_credit_window(async_client, d
 
 
 @pytest.mark.asyncio
-async def test_codex_usage_api_key_ignores_aggregate_workspace_limits(async_client, db_setup):
+@pytest.mark.parametrize("hide_upstream", [False, True])
+async def test_codex_usage_api_key_ignores_aggregate_workspace_limits(async_client, db_setup, hide_upstream):
+    async with SessionLocal() as session:
+        await SettingsRepository(session).update(hide_upstream_quota_from_api_keys=hide_upstream)
+        await session.commit()
+    await get_settings_cache().invalidate()
     now = utcnow()
     suffix = str(int(now.timestamp() * 1_000_000))
 
@@ -628,7 +635,7 @@ async def test_codex_usage_api_key_ignores_aggregate_workspace_limits(async_clie
                     recorded_at=now,
                     window="primary",
                     used_percent=80.0,
-                    reset_at=int((now + timedelta(hours=4)).timestamp()),
+                    reset_at=naive_utc_to_epoch(now + timedelta(hours=4)),
                     window_minutes=300,
                 ),
                 UsageHistory(
@@ -636,7 +643,7 @@ async def test_codex_usage_api_key_ignores_aggregate_workspace_limits(async_clie
                     recorded_at=now,
                     window="primary",
                     used_percent=90.0,
-                    reset_at=int((now + timedelta(hours=4)).timestamp()),
+                    reset_at=naive_utc_to_epoch(now + timedelta(hours=4)),
                     window_minutes=300,
                 ),
                 UsageHistory(
@@ -644,7 +651,7 @@ async def test_codex_usage_api_key_ignores_aggregate_workspace_limits(async_clie
                     recorded_at=now,
                     window="secondary",
                     used_percent=70.0,
-                    reset_at=int((now + timedelta(days=6)).timestamp()),
+                    reset_at=naive_utc_to_epoch(now + timedelta(days=6)),
                     window_minutes=10080,
                 ),
                 UsageHistory(
@@ -652,7 +659,7 @@ async def test_codex_usage_api_key_ignores_aggregate_workspace_limits(async_clie
                     recorded_at=now,
                     window="secondary",
                     used_percent=60.0,
-                    reset_at=int((now + timedelta(days=6)).timestamp()),
+                    reset_at=naive_utc_to_epoch(now + timedelta(days=6)),
                     window_minutes=10080,
                 ),
             ]
@@ -703,6 +710,12 @@ async def test_codex_usage_api_key_ignores_aggregate_workspace_limits(async_clie
     assert payload["rate_limit"]["primary_window"]["used_percent"] == 5
     assert payload["rate_limit"]["secondary_window"]["used_percent"] == 10
     assert payload["credits"]["balance"] == "450"
+    if hide_upstream:
+        assert "x-codex-primary-used-percent" not in response.headers
+        assert "x-codex-secondary-used-percent" not in response.headers
+    else:
+        assert float(response.headers["x-codex-primary-used-percent"]) == 85.0
+        assert float(response.headers["x-codex-secondary-used-percent"]) == 65.0
 
 
 @pytest.mark.asyncio
