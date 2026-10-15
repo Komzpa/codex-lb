@@ -9139,7 +9139,11 @@ async def _normalize_public_responses_stream(
             sequence_number = payload.get("sequence_number")
             if isinstance(sequence_number, int) and not isinstance(sequence_number, bool):
                 next_sequence_number = max(next_sequence_number, sequence_number + 1)
-                if enforce_openai_sdk_contract and reserve_created_sequence and payload.get("type") == "response.failed":
+                if (
+                    enforce_openai_sdk_contract
+                    and reserve_created_sequence
+                    and payload.get("type") == "response.failed"
+                ):
                     return payload, sequence_number - 1
                 return payload, None
             if enforce_openai_sdk_contract and payload.get("type") == "response.failed":
