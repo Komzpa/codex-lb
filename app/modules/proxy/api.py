@@ -8293,6 +8293,12 @@ async def _stream_response_error_events(
             # a marked terminal straight back into a terminated stream.
             failed_event = synthetic_transport_failure_event(failed_event)
         yield retry_hint + format_sse_event(failed_event)
+    finally:
+        # The native Responses path may stop consuming this wrapper after the
+        # terminal event. Close the inner lease-holding generator explicitly;
+        # async-generator ``aclose()`` does not cascade through a suspended
+        # ``async for`` by itself.
+        await _close_responses_stream_best_effort(stream, action="response error events")
 
 
 def _stream_startup_error_response(
@@ -9140,6 +9146,7 @@ async def _normalize_public_responses_stream(
             payload = dict(payload)
             payload.pop(SYNTHETIC_TRANSPORT_FAILURE_MARKER, None)
             if preserve_native_failure_lifecycle:
+                await _close_responses_stream_best_effort(stream, action="native transport failure")
                 raise ProxyResponseError(
                     502,
                     openai_error("stream_incomplete", "Native upstream transport ended before a terminal event"),
@@ -9941,68 +9948,74 @@ async def _normalize_reasoning_summary_stream(stream: AsyncIterator[str]) -> Asy
         normalized["delta"] = cleaned
         return [format_sse_event(normalized)]
 
-    async for event_block in stream:
-        payload = _parse_sse_payload(event_block)
-        if payload is None:
-            yield event_block
-            continue
-        # Error frames can omit the discriminator and carry only ``error``;
-        # classify those as terminal so a pending reasoning candidate flushes
-        # before the frame is forwarded.
-        event_type = classify_event_type(payload)
-        event_key = _reasoning_summary_delta_key(payload)
-        if (
-            pending
-            and not _is_reasoning_summary_interleavable_event(event_type)
-            and not (
-                event_type in _REASONING_SUMMARY_DELTA_TYPES | _REASONING_SUMMARY_DONE_TYPES and event_key in pending
-            )
-        ):
-            for pending_key in tuple(pending):
-                for buffered in flush(pending_key):
-                    yield buffered
-        if event_type in _REASONING_SUMMARY_DELTA_TYPES:
-            delta = payload.get("delta")
-            if not isinstance(delta, str):
+    try:
+        async for event_block in stream:
+            payload = _parse_sse_payload(event_block)
+            if payload is None:
                 yield event_block
                 continue
-            key = event_key
-            if key in pending:
-                pending[key].append((payload, event_block))
-                buffered_text = "".join(cast(str, item.get("delta")) for item, _ in pending[key])
-                if _strip_blank_html_comment_lines(buffered_text) != buffered_text:
+            # Error frames can omit the discriminator and carry only ``error``;
+            # classify those as terminal so a pending reasoning candidate flushes
+            # before the frame is forwarded.
+            event_type = classify_event_type(payload)
+            event_key = _reasoning_summary_delta_key(payload)
+            if (
+                pending
+                and not _is_reasoning_summary_interleavable_event(event_type)
+                and not (
+                    event_type in _REASONING_SUMMARY_DELTA_TYPES | _REASONING_SUMMARY_DONE_TYPES
+                    and event_key in pending
+                )
+            ):
+                for pending_key in tuple(pending):
+                    for buffered in flush(pending_key):
+                        yield buffered
+            if event_type in _REASONING_SUMMARY_DELTA_TYPES:
+                delta = payload.get("delta")
+                if not isinstance(delta, str):
+                    yield event_block
+                    continue
+                key = event_key
+                if key in pending:
+                    pending[key].append((payload, event_block))
+                    buffered_text = "".join(cast(str, item.get("delta")) for item, _ in pending[key])
+                    if _strip_blank_html_comment_lines(buffered_text) != buffered_text:
+                        for buffered in flush(key):
+                            yield buffered
+                        continue
+                    if _could_be_blank_html_comment_line(buffered_text):
+                        continue
                     for buffered in flush(key):
                         yield buffered
                     continue
-                if _could_be_blank_html_comment_line(buffered_text):
+                cleaned_delta = _strip_blank_html_comment_lines(delta)
+                if cleaned_delta != delta:
+                    normalized_payload = dict(payload)
+                    normalized_payload["delta"] = cleaned_delta
+                    yield format_sse_event(normalized_payload)
                     continue
+                if _could_be_blank_html_comment_line(delta):
+                    pending[key] = [(payload, event_block)]
+                    continue
+                yield event_block
+                continue
+            if event_type in _REASONING_SUMMARY_DONE_TYPES:
+                key = event_key
                 for buffered in flush(key):
                     yield buffered
-                continue
-            cleaned_delta = _strip_blank_html_comment_lines(delta)
-            if cleaned_delta != delta:
-                normalized_payload = dict(payload)
-                normalized_payload["delta"] = cleaned_delta
-                yield format_sse_event(normalized_payload)
-                continue
-            if _could_be_blank_html_comment_line(delta):
-                pending[key] = [(payload, event_block)]
-                continue
+            elif event_type in _PUBLIC_RESPONSE_STREAM_TERMINAL_TYPES:
+                for key in tuple(pending):
+                    for buffered in flush(key):
+                        yield buffered
             yield event_block
-            continue
-        if event_type in _REASONING_SUMMARY_DONE_TYPES:
-            key = event_key
+
+        for key in tuple(pending):
             for buffered in flush(key):
                 yield buffered
-        elif event_type in _PUBLIC_RESPONSE_STREAM_TERMINAL_TYPES:
-            for key in tuple(pending):
-                for buffered in flush(key):
-                    yield buffered
-        yield event_block
-
-    for key in tuple(pending):
-        for buffered in flush(key):
-            yield buffered
+    finally:
+        # Close the normalizer below this wrapper so a downstream early return
+        # reaches the retry generator and releases its account leases.
+        await _close_responses_stream_best_effort(stream, action="reasoning summary")
 
 
 def _is_public_passthrough_output_item_type(item_type: str) -> bool:
