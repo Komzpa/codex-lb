@@ -896,10 +896,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                                     and not saw_text_delta
                                 )
                 elif preserve_raw_sse_line:
-                    _, raw_error_message, _, raw_error_code = _raw_error_fields(
-                        event_type,
-                        event_payload,
-                    )
+                    _, raw_error_message, _, raw_error_code = _raw_error_fields(event_type, event_payload)
                     _observe_terminal_stream_error_frame(raw_error_code, raw_error_message)
                     status = "error"
                     error_code = raw_error_code
