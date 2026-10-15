@@ -5,7 +5,17 @@ import json
 import logging
 import math
 import time
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, Iterable, Iterator, Mapping
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterable,
+    Iterator,
+    Mapping,
+)
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -9043,7 +9053,7 @@ async def _normalize_public_responses_stream(
     enforce_openai_sdk_contract: bool = True,
     forward_unparseable_data: bool = False,
     preserve_native_failure_lifecycle: bool = False,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str, None]:
     """Normalize upstream SSE for public-contract and native Codex clients.
 
     Args:
