@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from typing import Any
+from collections.abc import AsyncGenerator, AsyncIterator
+from typing import Any, cast
 
 import pytest
 from starlette.requests import ClientDisconnect
@@ -42,7 +42,7 @@ async def test_keepalive_propagates_source_timeout(after_heartbeat: bool) -> Non
         assert caught.value is failure
         assert closed.is_set()
     finally:
-        await stream.aclose()
+        await cast(AsyncGenerator[str, None], stream).aclose()
 
 
 @pytest.mark.parametrize("spec_version", ["2.3", "2.4"])
