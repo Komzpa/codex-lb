@@ -70,6 +70,7 @@ async def inject_sse_keepalives(
             return
 
         async def _next_chunk(it: AsyncIterator[str]) -> str:
+            """Drive one source read in its independently owned task."""
             return await it.__anext__()
 
         pending: asyncio.Task[str] | None = None
@@ -91,10 +92,19 @@ async def inject_sse_keepalives(
                     # would flood the downstream while starving the event loop.
                     if not idle_timer.expired():
                         raise
-                    if on_keepalive is not None:
-                        on_keepalive()
-                    yield keepalive_frame
-                    continue
+                    if pending.done():
+                        # Timer cancellation can win the waiter race even when
+                        # the source has already settled. Honor that outcome.
+                        try:
+                            chunk = pending.result()
+                        except StopAsyncIteration:
+                            pending = None
+                            break
+                    else:
+                        if on_keepalive is not None:
+                            on_keepalive()
+                        yield keepalive_frame
+                        continue
                 except StopAsyncIteration:
                     pending = None
                     break

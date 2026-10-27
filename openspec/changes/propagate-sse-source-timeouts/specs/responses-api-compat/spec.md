@@ -14,6 +14,13 @@ The SSE keepalive injector MUST emit heartbeats only when its own idle interval 
 - **WHEN** that pending chunk fails with TimeoutError before the consumer resumes
 - **THEN** the next read propagates the upstream error and closes the source
 
+#### Scenario: Source failure collides with idle expiry
+- **GIVEN** the idle timer cancels the waiting read
+- **AND** the pending source read fails before that waiting read resumes
+- **WHEN** the consumer's same read resumes
+- **THEN** it raises the original source exception without a heartbeat or heartbeat callback
+- **AND** the wrapper and source close without another consumer read
+
 #### Scenario: Healthy source remains idle
 - **WHEN** the injector's idle interval expires while the source is still pending
 - **THEN** the injector emits a heartbeat and preserves the pending source read
