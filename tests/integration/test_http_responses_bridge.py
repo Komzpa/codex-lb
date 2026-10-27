@@ -61,7 +61,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _reserve_http_bridge_unanchored_handoff,
 )
 from app.modules.proxy.affinity import _codex_session_selection_key
-from app.modules.proxy.durable_bridge_coordinator import DurableBridgeSessionCoordinator
+from app.modules.proxy.durable_bridge_coordinator import DurableBridgeLookup, DurableBridgeSessionCoordinator
 from app.modules.proxy.durable_bridge_repository import DurableBridgeRepository
 from app.modules.proxy.load_balancer import (
     CONTINUITY_OWNER_UNAVAILABLE,
@@ -12445,10 +12445,22 @@ async def test_v1_responses_http_bridge_reused_unanchored_refresh_reserves_canon
         refresh_started.set()
         await allow_refresh.wait()
         return http_bridge_helpers_module._HTTPBridgeLeaseRenewal(
-            snapshot, "instance-a", SimpleNamespace(
-                session_id=canonical.durable_session_id, owner_instance_id="instance-a", owner_epoch=1,
+            snapshot,
+            "instance-a",
+            DurableBridgeLookup(
+                session_id="durable-shared",
+                canonical_kind=shared_key.affinity_kind,
+                canonical_key=shared_key.affinity_key,
+                api_key_scope="",
                 account_id=canonical.account.id,
-            ), None
+                owner_instance_id="instance-a",
+                owner_epoch=1,
+                lease_expires_at=None,
+                state=HttpBridgeSessionState.ACTIVE,
+                latest_turn_state=None,
+                latest_response_id=None,
+            ),
+            None,
         )
 
     async def fake_create_http_bridge_session(self, key, **kwargs):
@@ -12666,6 +12678,7 @@ async def test_http_bridge_delayed_foreign_renewal_rejects_stale_reuse(_owned_re
     close.assert_awaited_once()
     async with SessionLocal() as verification:
         row = await verification.get(HttpBridgeSessionRecord, foreign.session_id)
+        assert row is not None
         assert row.owner_instance_id == "instance-b"
         assert row.owner_epoch == foreign.owner_epoch
         assert row.state == HttpBridgeSessionState.ACTIVE
@@ -12736,6 +12749,7 @@ async def test_http_bridge_late_renewal_preserves_concurrent_replacement(
         assert not winner.closed
     async with SessionLocal() as verification:
         row = await verification.get(HttpBridgeSessionRecord, claimed.session_id)
+        assert row is not None
         assert row.owner_instance_id == "instance-a"
         assert row.owner_epoch == claimed.owner_epoch
         assert row.state == HttpBridgeSessionState.ACTIVE

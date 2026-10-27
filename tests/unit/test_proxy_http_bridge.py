@@ -10187,6 +10187,7 @@ async def test_get_or_create_http_bridge_session_registers_turn_state_alias_with
         == prompt_cache_key
     )
     refresh_durable.assert_awaited_once()
+    assert refresh_durable.await_args is not None
     assert refresh_durable.await_args.args[0].session is session
 
 

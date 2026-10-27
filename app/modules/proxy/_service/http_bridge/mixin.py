@@ -68,7 +68,6 @@ from app.modules.proxy._service.compact import (
 from app.modules.proxy._service.http_bridge.account_sessions import _HTTPBridgeAccountSessionsMixin
 from app.modules.proxy._service.http_bridge.activity import _HTTPBridgeActivityMixin
 from app.modules.proxy._service.http_bridge.helpers import (
-    _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
     _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR,
     _HTTPBridgeLeaseRenewal,
     _HTTPBridgeSelectionSnapshot,
@@ -165,7 +164,6 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
 from app.modules.proxy._service.http_bridge.session_registry import _HTTPBridgeSessionRegistryMixin
 from app.modules.proxy._service.http_bridge.streaming import _HTTPBridgeStreamingMixin
 from app.modules.proxy._service.http_bridge.upstream_events import _HTTPBridgeUpstreamEventsMixin
-from app.modules.proxy._service.observability import _hash_identifier
 from app.modules.proxy._service.support import (
     _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE,
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
@@ -235,7 +233,6 @@ logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
 _REQUEST_TRANSPORT_HTTP = "http"
 _UPSTREAM_CLOSE_CODES_SKIP_SAME_ACCOUNT_RETRY = frozenset({1011})
-_HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
 
 
 class _HTTPBridgeMixin(
@@ -248,99 +245,6 @@ class _HTTPBridgeMixin(
     _HTTPBridgeUpstreamEventsMixin,
     _HTTPBridgeServiceProtocol,
 ):
-    def _schedule_http_bridge_session_closes(
-        self,
-        sessions: list["_HTTPBridgeSession"],
-        *,
-        reason: str,
-    ) -> None:
-        for session in sessions:
-            if len(self._background_cleanup_tasks) >= _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD:
-                logger.warning(
-                    "http_bridge_background_cleanup_backlog action=session_close count=%d threshold=%d reason=%s",
-                    len(self._background_cleanup_tasks),
-                    _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD,
-                    reason,
-                )
-            self._schedule_cancel_safe_cleanup(
-                self._close_http_bridge_session_bounded(session, reason=reason),
-                action="http_bridge_session_close",
-                request_id=_hash_identifier(session.key.affinity_key),
-            )
-
-    async def _drain_http_bridge_background_cleanup_tasks(self, *, reason: str) -> bool:
-        tasks = [
-            task
-            for task in self._background_cleanup_tasks
-            if (
-                task.get_name().startswith("proxy-http_bridge_session_close-")
-                or task.get_name().startswith("http-bridge-close-")
-                or task.get_name().startswith("cancelled-task-cleanup-")
-            )
-        ]
-        if not tasks:
-            return not self._http_bridge_background_cleanup_failed
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*(asyncio.shield(task) for task in tasks), return_exceptions=True),
-                timeout=_HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            logger.warning(
-                "http_bridge_background_cleanup_drain_timeout reason=%s count=%d timeout_seconds=%.1f",
-                reason,
-                len(tasks),
-                _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
-            )
-            return False
-        self._http_bridge_background_cleanup_failed |= any(isinstance(result, BaseException) for result in results)
-        return not self._http_bridge_background_cleanup_failed
-
-    async def _fail_http_bridge_inflight_session_creation(
-        self,
-        key: "_HTTPBridgeSessionKey",
-        inflight_future: asyncio.Future["_HTTPBridgeSession"] | None,
-        exc: BaseException,
-    ) -> bool:
-        if inflight_future is None:
-            return False
-        async with self._http_bridge_lock:
-            current_future = self._http_bridge_inflight_sessions.get(key)
-            if current_future is not inflight_future:
-                return False
-            if getattr(inflight_future, "_http_bridge_handoff", False):
-                return False
-            self._http_bridge_inflight_sessions.pop(key, None)
-            if inflight_future.done():
-                return True
-            if isinstance(exc, asyncio.CancelledError):
-                inflight_future.cancel()
-            else:
-                inflight_future.set_exception(exc)
-                inflight_future.exception()
-            return True
-
-    async def _evict_http_bridge_inflight_waiter(
-        self,
-        inflight_future: asyncio.Future["_HTTPBridgeSession"],
-        exc: BaseException,
-    ) -> "_HTTPBridgeSessionKey | None":
-        async with self._http_bridge_lock:
-            stale_key = None
-            for candidate_key, candidate_future in self._http_bridge_inflight_sessions.items():
-                if candidate_future is inflight_future:
-                    stale_key = candidate_key
-                    break
-            if stale_key is None:
-                return None
-            if getattr(inflight_future, "_http_bridge_handoff", False):
-                return None
-            self._http_bridge_inflight_sessions.pop(stale_key, None)
-            if not inflight_future.done():
-                inflight_future.set_exception(exc)
-                inflight_future.exception()
-            return stale_key
-
     @overload
     async def _get_or_create_http_bridge_session(
         self,
@@ -1744,42 +1648,6 @@ class _HTTPBridgeMixin(
             logger.warning("Failed to mark durable HTTP bridge sessions draining", exc_info=True)
             return False
         return True
-
-    def _prune_http_bridge_sessions_locked(self) -> list["_HTTPBridgeSession"]:
-        now = clock_for(self).monotonic()
-        stale_keys: list[_HTTPBridgeSessionKey] = []
-        for key, session in self._http_bridge_sessions.items():
-            if _http_bridge_session_has_admission_waiter(session):
-                continue
-            if session.handoff_in_progress:
-                continue
-            if session.closed:
-                stale_keys.append(key)
-                continue
-            if getattr(session, "unanchored_reservation_id", None) is not None:
-                continue
-            pending_count = self._http_bridge_pending_count_nowait(session, context="idle_prune")
-            if pending_count is None:
-                continue
-            if pending_count:
-                continue
-            if now - session.last_used_at < session.idle_ttl_seconds:
-                continue
-            stale_keys.append(key)
-        sessions_to_close: list[_HTTPBridgeSession] = []
-        for key in stale_keys:
-            session = self._detach_http_bridge_session_locked(key)
-            if session is not None:
-                _log_http_bridge_event(
-                    "evict_idle",
-                    key,
-                    account_id=session.account.id,
-                    model=session.request_model,
-                    cache_key_family=key.affinity_kind,
-                    model_class=_extract_model_class(session.request_model) if session.request_model else None,
-                )
-                sessions_to_close.append(session)
-        return sessions_to_close
 
     _close_http_bridge_session = _helpers_close_http_bridge_session
 

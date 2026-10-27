@@ -107,3 +107,9 @@ The real previous-response selection consumer held its first durable renewal whi
 
 Retro: snapshot freshness is not itself eligibility. Review every distinct consumer's reselection and publication guard, and distinguish an actually observed reviewer model from a requested model. The earlier automated review banner showed `gpt-6.1-sol` despite a requested Astra configuration; it is not evidence of an Astra review.
 
+### Published-head CI repair
+
+Registry cleanup, inflight failure/eviction and idle pruning now live in the existing session-registry mixin; inherited method names and the ownership receipt protocol are unchanged. This keeps the mixin within its existing architecture budget without raising limits or changing selection, cancellation, quarantine, retirement, alias-generation or original-deadline behavior.
+
+The blocked-renewal fixture uses the real typed durable lookup, and optional database rows and mock await records are asserted present before inspection. Retro: use the existing responsibility boundary, not an architecture-limit increase or type suppression; retained 1385-test/67-spec evidence is historical identity, not renewed approval.
+
