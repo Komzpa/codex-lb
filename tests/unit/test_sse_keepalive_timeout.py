@@ -140,6 +140,6 @@ async def test_completed_source_failure_wins_idle_expiry(
         assert caught.value is failure
         assert heartbeats == []
         assert closed.is_set()
-        assert generator.ag_frame is None
+        assert generator.ag_frame is None  # type: ignore[unresolved-attribute]
     finally:
         await generator.aclose()
