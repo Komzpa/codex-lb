@@ -20,6 +20,8 @@ from app.core.utils.time import utcnow
 from app.db.models import StickySessionKind
 from app.modules.proxy._service.http_bridge import helpers as _http_bridge_helpers
 from app.modules.proxy._service.http_bridge.helpers import (
+    _HTTPBridgeLeaseRenewal,
+    _HTTPBridgeSessionSnapshot,
     _await_task_deferring_cancellation,
     _forget_http_bridge_denied_anchor_fence_owner,
     _http_bridge_allow_durable_takeover,
@@ -766,11 +768,11 @@ class _HTTPBridgeSessionRegistryMixin:
 
     async def _refresh_durable_http_bridge_session(
         self: _HTTPBridgeServiceProtocol,
-        session: _HTTPBridgeSession,
-    ) -> None:
-        """Renew the durable lease; callers must hold ``self._http_bridge_lock``."""
+        snapshot: _HTTPBridgeSessionSnapshot,
+    ) -> _HTTPBridgeLeaseRenewal:
+        """Read ownership outside the registry lock; publication is caller-owned."""
 
-        await _renew_durable_http_bridge_lease(self, session)
+        return await _renew_durable_http_bridge_lease(self, snapshot)
 
     async def reconcile_durable_http_bridge_ownership(self: _HTTPBridgeServiceProtocol) -> int:
         """Close local sessions whose durable row is owned by another instance/epoch."""

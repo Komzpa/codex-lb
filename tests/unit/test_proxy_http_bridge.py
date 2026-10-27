@@ -10155,7 +10155,9 @@ async def test_get_or_create_http_bridge_session_registers_turn_state_alias_with
         "_active_http_bridge_instance_ring",
         AsyncMock(return_value=("instance-a", ["instance-a"])),
     )
-    refresh_durable = AsyncMock()
+    refresh_durable = AsyncMock(side_effect=lambda snapshot: http_bridge_helpers_module._HTTPBridgeLeaseRenewal(
+        snapshot, "instance-a", None, None
+    ))
     monkeypatch.setattr(service, "_refresh_durable_http_bridge_session", refresh_durable)
 
     resolved = await service._get_or_create_http_bridge_session(
@@ -10184,7 +10186,8 @@ async def test_get_or_create_http_bridge_session_registers_turn_state_alias_with
         ]
         == prompt_cache_key
     )
-    refresh_durable.assert_awaited_once_with(session)
+    refresh_durable.assert_awaited_once()
+    assert refresh_durable.await_args.args[0].session is session
 
 
 @pytest.mark.asyncio
@@ -23307,6 +23310,14 @@ async def test_close_all_http_bridge_sessions_fails_capacity_waiters_instead_of_
     monkeypatch.setattr(service, "_create_http_bridge_session", create_http_bridge_session)
     monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock())
     monkeypatch.setattr(service, "_close_http_bridge_session", AsyncMock())
+    waiting = asyncio.Event()
+    original_wait = service._await_http_bridge_registry_wait
+
+    async def observe_wait(future, *, timeout):
+        waiting.set()
+        return await original_wait(future, timeout=timeout)
+
+    monkeypatch.setattr(service, "_await_http_bridge_registry_wait", observe_wait)
 
     waiter = asyncio.create_task(
         service._get_or_create_http_bridge_session(
@@ -23322,7 +23333,7 @@ async def test_close_all_http_bridge_sessions_fails_capacity_waiters_instead_of_
             max_sessions=1,
         )
     )
-    await asyncio.sleep(0)
+    await asyncio.wait_for(waiting.wait(), timeout=1.0)
 
     await service.close_all_http_bridge_sessions()
 
@@ -37516,7 +37527,11 @@ async def test_renew_adopts_a_same_instance_epoch_advance_for_the_registered_ses
     schedule_closes = Mock()
     monkeypatch.setattr(service, "_schedule_http_bridge_session_closes", schedule_closes)
 
-    await http_bridge_helpers_module._renew_durable_http_bridge_lease(service, registered)
+    renewal = await http_bridge_helpers_module._renew_durable_http_bridge_lease(
+        service, http_bridge_helpers_module._HTTPBridgeSessionSnapshot.capture(registered)
+    )
+    async with service._http_bridge_lock:
+        http_bridge_helpers_module._apply_durable_http_bridge_renewal_locked(service, renewal)
 
     assert registered.durable_owner_epoch == 4
     assert registered.closed is False
@@ -37551,7 +37566,11 @@ async def test_renew_still_evicts_when_another_local_session_holds_the_slot(
     monkeypatch.setattr(service, "_schedule_http_bridge_session_closes", Mock())
 
     with pytest.raises(ProxyResponseError) as exc_info:
-        await http_bridge_helpers_module._renew_durable_http_bridge_lease(service, loser)
+        renewal = await http_bridge_helpers_module._renew_durable_http_bridge_lease(
+            service, http_bridge_helpers_module._HTTPBridgeSessionSnapshot.capture(loser)
+        )
+        async with service._http_bridge_lock:
+            http_bridge_helpers_module._apply_durable_http_bridge_renewal_locked(service, renewal)
 
     assert exc_info.value.status_code == 409
     assert loser.durable_owner_epoch == 3
@@ -37639,7 +37658,11 @@ async def test_renew_evicts_when_a_newer_process_incarnation_advanced_the_epoch(
     monkeypatch.setattr(service, "_schedule_http_bridge_session_closes", Mock())
 
     with pytest.raises(ProxyResponseError) as exc_info:
-        await http_bridge_helpers_module._renew_durable_http_bridge_lease(service, old_process_session)
+        renewal = await http_bridge_helpers_module._renew_durable_http_bridge_lease(
+            service, http_bridge_helpers_module._HTTPBridgeSessionSnapshot.capture(old_process_session)
+        )
+        async with service._http_bridge_lock:
+            http_bridge_helpers_module._apply_durable_http_bridge_renewal_locked(service, renewal)
 
     assert exc_info.value.status_code == 409
     assert old_process_session.durable_owner_epoch == 3
@@ -37673,7 +37696,11 @@ async def test_renew_does_not_adopt_an_epoch_advance_that_moved_the_row_to_anoth
     monkeypatch.setattr(service, "_schedule_http_bridge_session_closes", Mock())
 
     with pytest.raises(ProxyResponseError) as exc_info:
-        await http_bridge_helpers_module._renew_durable_http_bridge_lease(service, session)
+        renewal = await http_bridge_helpers_module._renew_durable_http_bridge_lease(
+            service, http_bridge_helpers_module._HTTPBridgeSessionSnapshot.capture(session)
+        )
+        async with service._http_bridge_lock:
+            http_bridge_helpers_module._apply_durable_http_bridge_renewal_locked(service, renewal)
 
     assert exc_info.value.status_code == 409
     assert session.durable_owner_epoch == 3

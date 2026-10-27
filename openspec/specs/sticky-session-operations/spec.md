@@ -897,6 +897,39 @@ All durable HTTP bridge session lease writes — renewal, release, and continuit
 ### Requirement: Fenced-out replicas evict their local bridge session
 When a replica discovers through a fenced renewal or fenced alias write that another instance or epoch owns the durable session, it MUST close its local in-memory bridge session — closing the upstream websocket and releasing the account lease — instead of adopting the new epoch and continuing to serve. A replica MUST also reconcile durable ownership for local sessions whose lease is past its TTL on the ring-heartbeat cadence and close any session that has been fenced out, so orphaned upstream connections and account leases are bounded by the lease TTL rather than the idle TTL.
 
+Renewal verdicts MUST be applied only to the captured local session generation,
+durable session ID/epoch and account/transport identity. A still-current foreign
+owner MUST evict only the expected session and fail with HTTP 409
+`bridge_instance_mismatch`. A missing durable row or failed verification for an
+established durable identity MUST fail with the existing HTTP 502 ownership
+lookup unavailable envelope, never successful reuse. Only deliberately
+identity-free ordinary in-memory sessions MAY retain the in-memory fallback;
+account-neutral recovery without durable identity MUST still fail closed and
+evict its failed recovery generation.
+
+The same-instance epoch adoption exception MUST require the same process
+incarnation, durable row and account, an increased epoch, and the same still-
+registered local session. A result captured before a local epoch or transport
+change MUST be discarded rather than adopted or used for eviction. Reconciliation
+MUST snapshot durable ID and epoch before its unlocked lookup and ignore a result
+after replacement or same-object reclamation. Condemned resource cleanup MUST
+remain single-flight and MUST preserve successor aliases, leases and capacity.
+
+#### Scenario: Unavailable ordinary durable renewal is not in-memory fallback
+
+- **GIVEN** a reusable ordinary local session has an established durable ID/epoch
+- **WHEN** renewal raises or the durable row is missing
+- **THEN** the request fails with the ownership lookup unavailable HTTP 502
+- **AND** the unverified socket is not returned as successful reuse
+
+#### Scenario: A late foreign sweep cannot evict a reclaimed generation
+
+- **GIVEN** reconciliation captured a local session's durable ID/epoch
+- **WHEN** the session is replaced or the same object reclaims a newer epoch
+  before the old foreign-owner lookup returns
+- **THEN** the old result does not detach or close the current generation
+
+
 #### Scenario: Fenced-out renewal closes the local session
 - **GIVEN** replica A holds a local bridge session and replica B took over the durable row
 - **WHEN** replica A's lease renewal is fenced out

@@ -39,6 +39,8 @@ from app.db.models import (
 from app.modules.proxy import durable_bridge_repository as durable_bridge_repository_module
 from app.modules.proxy import service as proxy_service
 from app.modules.proxy._service.http_bridge.helpers import (
+    _HTTPBridgeSessionSnapshot,
+    _apply_durable_http_bridge_renewal_locked,
     _http_bridge_allow_durable_takeover,
     _http_bridge_claim_allows_takeover,
     _http_bridge_durable_lookup_allows_turn_state_takeover,
@@ -4520,7 +4522,9 @@ async def test_fenced_out_renewal_evicts_local_session_and_raises_mismatch(
     )
 
     with pytest.raises(ProxyResponseError) as exc_info:
-        await service._refresh_durable_http_bridge_session(session)
+        renewal = await service._refresh_durable_http_bridge_session(_HTTPBridgeSessionSnapshot.capture(session))
+        async with service._http_bridge_lock:
+            _apply_durable_http_bridge_renewal_locked(service, renewal)
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.payload["error"]["code"] == "bridge_instance_mismatch"
@@ -4555,7 +4559,9 @@ async def test_owned_renewal_keeps_local_session_open(monkeypatch: pytest.Monkey
         ),
     )
 
-    await service._refresh_durable_http_bridge_session(session)
+    renewal = await service._refresh_durable_http_bridge_session(_HTTPBridgeSessionSnapshot.capture(session))
+    async with service._http_bridge_lock:
+        assert _apply_durable_http_bridge_renewal_locked(service, renewal) is not None
 
     assert session.closed is False
     assert service._http_bridge_sessions[session.key] is session
@@ -4583,7 +4589,9 @@ async def test_recovery_renewal_outage_evicts_local_session_and_fails_closed(
     )
 
     with pytest.raises(ProxyResponseError) as exc_info:
-        await service._refresh_durable_http_bridge_session(session)
+        renewal = await service._refresh_durable_http_bridge_session(_HTTPBridgeSessionSnapshot.capture(session))
+        async with service._http_bridge_lock:
+            _apply_durable_http_bridge_renewal_locked(service, renewal)
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.payload["error"]["code"] == "upstream_unavailable"
@@ -4592,6 +4600,67 @@ async def test_recovery_renewal_outage_evicts_local_session_and_fails_closed(
     await service._drain_http_bridge_background_cleanup_tasks(reason="test")
     cast(Any, session.upstream).close.assert_awaited()
     service._load_balancer.release_account_lease.assert_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["error", "missing"])
+async def test_ordinary_durable_renewal_unavailable_fails_closed(monkeypatch, failure):
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(proxy_service, "get_settings", _make_app_settings)
+    session = _make_bridge_session()
+    session.durable_session_id = "ordinary-durable"
+    session.durable_owner_epoch = 3
+    service._http_bridge_sessions[session.key] = session
+    renew = AsyncMock(side_effect=RuntimeError("database unavailable")) if failure == "error" else AsyncMock(return_value=None)
+    service._durable_bridge = cast(Any, SimpleNamespace(renew_live_session=renew))
+    renewal = await service._refresh_durable_http_bridge_session(_HTTPBridgeSessionSnapshot.capture(session))
+    async with service._http_bridge_lock:
+        with pytest.raises(ProxyResponseError) as exc_info:
+            _apply_durable_http_bridge_renewal_locked(service, renewal)
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.payload["error"]["code"] == "upstream_unavailable"
+    assert service._http_bridge_sessions[session.key] is session
+    assert not session.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["epoch", "replacement"])
+async def test_reconcile_discards_superseded_foreign_snapshot(monkeypatch, change):
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(proxy_service, "get_settings", _make_app_settings)
+    session = _make_bridge_session()
+    session.durable_session_id = "reclaimed-sweep"
+    session.durable_owner_epoch = 1
+    service._http_bridge_sessions[session.key] = session
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def lookup_sessions(*, session_ids):
+        assert session_ids == ["reclaimed-sweep"]
+        entered.set()
+        await release.wait()
+        return [_durable_lookup(session_id="reclaimed-sweep", owner_instance_id="foreign", owner_epoch=2)]
+
+    service._durable_bridge = cast(Any, SimpleNamespace(lookup_sessions=lookup_sessions))
+    sweep = asyncio.create_task(service.reconcile_durable_http_bridge_ownership())
+    try:
+        await asyncio.wait_for(entered.wait(), 5.0)
+        async with service._http_bridge_lock:
+            if change == "epoch":
+                winner = session
+                winner.durable_owner_epoch = 3
+            else:
+                winner = _make_bridge_session()
+                winner.durable_session_id = "reclaimed-sweep"
+                winner.durable_owner_epoch = 3
+                service._http_bridge_sessions[session.key] = winner
+    finally:
+        release.set()
+        count = await sweep
+    assert count == 0
+    assert service._http_bridge_sessions[session.key] is winner
+    assert not winner.closed
+    assert winner.durable_owner_epoch == 3
 
 
 @pytest.mark.asyncio
