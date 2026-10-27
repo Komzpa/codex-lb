@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
+from types import AsyncGeneratorType
 from typing import Any, cast
 
 import pytest
@@ -140,6 +141,7 @@ async def test_completed_source_failure_wins_idle_expiry(
         assert caught.value is failure
         assert heartbeats == []
         assert closed.is_set()
-        assert generator.ag_frame is None  # type: ignore[unresolved-attribute]
+        assert isinstance(generator, AsyncGeneratorType)
+        assert generator.ag_frame is None
     finally:
         await generator.aclose()
