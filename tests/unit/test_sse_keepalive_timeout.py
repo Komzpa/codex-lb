@@ -84,29 +84,37 @@ async def test_streaming_response_does_not_flood_heartbeats_after_source_timeout
     assert closed.is_set()
 
 
-@pytest.mark.parametrize("failure_type", [TimeoutError, RuntimeError])
-async def test_completed_source_failure_wins_idle_expiry(
-    monkeypatch: pytest.MonkeyPatch, failure_type: type[Exception]
+@pytest.mark.parametrize("failure_type", [TimeoutError, RuntimeError, None, StopAsyncIteration])
+async def test_completed_source_outcome_wins_idle_expiry(
+    monkeypatch: pytest.MonkeyPatch, failure_type: type[Exception] | None
 ) -> None:
-    """Raise the original failure on the colliding read and close both owners."""
+    """Honor settled chunks, exhaustion and original failures before heartbeats."""
     timers: list[asyncio.Timeout] = []
     real_timeout = asyncio.timeout
     closed = asyncio.Event()
     heartbeats: list[None] = []
-    failure = failure_type("provider failed at idle deadline")
+    failure = (
+        failure_type("provider failed at idle deadline")
+        if failure_type is not None and failure_type is not StopAsyncIteration
+        else None
+    )
     release = asyncio.Event()
     real_wait = sse_module.wait_on_shared_future
 
-    async def deliver_cancellation_after_failure(pending: asyncio.Future[str]) -> str:
+    async def deliver_cancellation_after_settlement(pending: asyncio.Future[str]) -> str:
         """Settle the source before delivering the real idle cancellation."""
         try:
             return await real_wait(pending)
         except asyncio.CancelledError:
             assert timers[-1].expired()
             release.set()
-            with pytest.raises(failure_type) as caught:
-                await real_wait(pending)
-            assert caught.value is failure
+            if failure_type is None:
+                assert await real_wait(pending) == "data: settled\n\n"
+            else:
+                with pytest.raises(failure_type) as caught:
+                    await real_wait(pending)
+                if failure is not None:
+                    assert caught.value is failure
             assert pending.done()
             raise
 
@@ -121,24 +129,35 @@ async def test_completed_source_failure_wins_idle_expiry(
         heartbeats.append(None)
 
     async def source() -> AsyncIterator[str]:
-        """Queue expiry before source failure, both before the waiter resumes."""
+        """Queue expiry before source settlement, both before the waiter resumes."""
         try:
             yield "data: first\n\n"
             timers[-1].reschedule(asyncio.get_running_loop().time() - 1)
             await release.wait()
-            raise failure
+            if failure_type is StopAsyncIteration:
+                return
+            if failure is not None:
+                raise failure
+            yield "data: settled\n\n"
         finally:
             closed.set()
 
     monkeypatch.setattr(asyncio, "timeout", capture_timeout)
-    monkeypatch.setattr(sse_module, "wait_on_shared_future", deliver_cancellation_after_failure)
+    monkeypatch.setattr(sse_module, "wait_on_shared_future", deliver_cancellation_after_settlement)
     stream = inject_sse_keepalives(source(), 30, on_keepalive=on_keepalive)
     generator = cast(AsyncGenerator[str, None], stream)
     try:
         assert await anext(stream) == "data: first\n\n"
-        with pytest.raises(failure_type) as caught:
-            await anext(stream)
-        assert caught.value is failure
+        if failure_type is None:
+            assert await anext(stream) == "data: settled\n\n"
+            assert heartbeats == []
+            with pytest.raises(StopAsyncIteration):
+                await anext(stream)
+        else:
+            with pytest.raises(failure_type) as caught:
+                await anext(stream)
+            if failure is not None:
+                assert caught.value is failure
         assert heartbeats == []
         assert closed.is_set()
         assert isinstance(generator, AsyncGeneratorType)

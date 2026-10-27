@@ -21,6 +21,14 @@ The SSE keepalive injector MUST emit heartbeats only when its own idle interval 
 - **THEN** it raises the original source exception without a heartbeat or heartbeat callback
 - **AND** the wrapper and source close without another consumer read
 
+#### Scenario: Source chunk or exhaustion collides with idle expiry
+- **GIVEN** the idle timer cancels the waiting read
+- **AND** the pending source read settles before that waiting read resumes
+- **WHEN** the source settles with a normal chunk
+- **THEN** the same consumer read yields that chunk without a heartbeat or heartbeat callback
+- **WHEN** the source instead settles with StopAsyncIteration
+- **THEN** the same consumer read ends the stream without a heartbeat or heartbeat callback
+
 #### Scenario: Healthy source remains idle
 - **WHEN** the injector's idle interval expires while the source is still pending
 - **THEN** the injector emits a heartbeat and preserves the pending source read
