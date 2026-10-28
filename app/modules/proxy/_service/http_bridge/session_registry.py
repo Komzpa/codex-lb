@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import Any
 
 from app.core.clients.proxy import ProxyResponseError
-from app.core.clock import scheduler_for
+from app.core.clock import clock_for, scheduler_for
 from app.core.config.dashboard_overrides import effective_settings
 from app.core.errors import openai_error
 from app.core.metrics.prometheus import (
@@ -20,6 +20,7 @@ from app.core.utils.time import utcnow
 from app.db.models import StickySessionKind
 from app.modules.proxy._service.http_bridge import helpers as _http_bridge_helpers
 from app.modules.proxy._service.http_bridge.helpers import (
+    _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
     _await_task_deferring_cancellation,
     _forget_http_bridge_denied_anchor_fence_owner,
     _http_bridge_allow_durable_takeover,
@@ -29,7 +30,10 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_owner_lookup_unavailable_error_envelope,
     _http_bridge_previous_response_alias_key,
     _http_bridge_request_budget_seconds,
+    _http_bridge_session_has_admission_waiter,
     _http_bridge_turn_state_alias_key,
+    _HTTPBridgeLeaseRenewal,
+    _HTTPBridgeSessionSnapshot,
     _is_missing_durable_bridge_table_error,
     _log_http_bridge_event,
     _persist_http_bridge_previous_response_alias,
@@ -46,6 +50,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _headers_with_turn_state,
     _service_get_settings,
 )
+from app.modules.proxy._service.observability import _hash_identifier
 from app.modules.proxy._service.support import _HTTPBridgeSession, _HTTPBridgeSessionKey
 from app.modules.proxy.affinity import _AffinityPolicy, _extract_model_class
 from app.modules.proxy.continuity import (
@@ -61,6 +66,7 @@ from app.modules.proxy.durable_bridge_repository import (
 from app.modules.proxy.durable_bridge_runtime import http_bridge_owner_process_epoch
 
 logger = logging.getLogger("app.modules.proxy.service")
+_HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
 
 
 def _recovery_can_rebind_live_alias(session: _HTTPBridgeSession) -> bool:
@@ -84,6 +90,99 @@ def _requires_durable_recovery_alias_serialization(session: _HTTPBridgeSession) 
 
 
 class _HTTPBridgeSessionRegistryMixin:
+    def _schedule_http_bridge_session_closes(
+        self: _HTTPBridgeServiceProtocol,
+        sessions: list["_HTTPBridgeSession"],
+        *,
+        reason: str,
+    ) -> None:
+        for session in sessions:
+            if len(self._background_cleanup_tasks) >= _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD:
+                logger.warning(
+                    "http_bridge_background_cleanup_backlog action=session_close count=%d threshold=%d reason=%s",
+                    len(self._background_cleanup_tasks),
+                    _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD,
+                    reason,
+                )
+            self._schedule_cancel_safe_cleanup(
+                self._close_http_bridge_session_bounded(session, reason=reason),
+                action="http_bridge_session_close",
+                request_id=_hash_identifier(session.key.affinity_key),
+            )
+
+    async def _drain_http_bridge_background_cleanup_tasks(self: _HTTPBridgeServiceProtocol, *, reason: str) -> bool:
+        tasks = [
+            task
+            for task in self._background_cleanup_tasks
+            if (
+                task.get_name().startswith("proxy-http_bridge_session_close-")
+                or task.get_name().startswith("http-bridge-close-")
+                or task.get_name().startswith("cancelled-task-cleanup-")
+            )
+        ]
+        if not tasks:
+            return not self._http_bridge_background_cleanup_failed
+        try:
+            results = await scheduler_for(self).wait_for(
+                asyncio.gather(*(asyncio.shield(task) for task in tasks), return_exceptions=True),
+                timeout=_HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "http_bridge_background_cleanup_drain_timeout reason=%s count=%d timeout_seconds=%.1f",
+                reason,
+                len(tasks),
+                _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
+            )
+            return False
+        self._http_bridge_background_cleanup_failed |= any(isinstance(result, BaseException) for result in results)
+        return not self._http_bridge_background_cleanup_failed
+
+    async def _fail_http_bridge_inflight_session_creation(
+        self: _HTTPBridgeServiceProtocol,
+        key: "_HTTPBridgeSessionKey",
+        inflight_future: asyncio.Future["_HTTPBridgeSession"] | None,
+        exc: BaseException,
+    ) -> bool:
+        if inflight_future is None:
+            return False
+        async with self._http_bridge_lock:
+            current_future = self._http_bridge_inflight_sessions.get(key)
+            if current_future is not inflight_future:
+                return False
+            if getattr(inflight_future, "_http_bridge_handoff", False):
+                return False
+            self._http_bridge_inflight_sessions.pop(key, None)
+            if inflight_future.done():
+                return True
+            if isinstance(exc, asyncio.CancelledError):
+                inflight_future.cancel()
+            else:
+                inflight_future.set_exception(exc)
+                inflight_future.exception()
+            return True
+
+    async def _evict_http_bridge_inflight_waiter(
+        self: _HTTPBridgeServiceProtocol,
+        inflight_future: asyncio.Future["_HTTPBridgeSession"],
+        exc: BaseException,
+    ) -> "_HTTPBridgeSessionKey | None":
+        async with self._http_bridge_lock:
+            stale_key = None
+            for candidate_key, candidate_future in self._http_bridge_inflight_sessions.items():
+                if candidate_future is inflight_future:
+                    stale_key = candidate_key
+                    break
+            if stale_key is None:
+                return None
+            if getattr(inflight_future, "_http_bridge_handoff", False):
+                return None
+            self._http_bridge_inflight_sessions.pop(stale_key, None)
+            if not inflight_future.done():
+                inflight_future.set_exception(exc)
+                inflight_future.exception()
+            return stale_key
+
     async def prune_idle_http_bridge_sessions(self: Any) -> int:
         """Run the idle sweep off the request path (issue #1354).
 
@@ -766,13 +865,49 @@ class _HTTPBridgeSessionRegistryMixin:
 
     async def _refresh_durable_http_bridge_session(
         self: _HTTPBridgeServiceProtocol,
-        session: _HTTPBridgeSession,
-    ) -> None:
-        """Renew the durable lease; callers must hold ``self._http_bridge_lock``."""
+        snapshot: _HTTPBridgeSessionSnapshot,
+    ) -> _HTTPBridgeLeaseRenewal:
+        """Read ownership outside the registry lock; publication is caller-owned."""
 
-        await _renew_durable_http_bridge_lease(self, session)
+        return await _renew_durable_http_bridge_lease(self, snapshot)
 
     async def reconcile_durable_http_bridge_ownership(self: _HTTPBridgeServiceProtocol) -> int:
         """Close local sessions whose durable row is owned by another instance/epoch."""
 
         return await _reconcile_durable_http_bridge_ownership(self)
+
+    def _prune_http_bridge_sessions_locked(self: _HTTPBridgeServiceProtocol) -> list["_HTTPBridgeSession"]:
+        now = clock_for(self).monotonic()
+        stale_keys: list[_HTTPBridgeSessionKey] = []
+        for key, session in self._http_bridge_sessions.items():
+            if _http_bridge_session_has_admission_waiter(session):
+                continue
+            if session.handoff_in_progress:
+                continue
+            if session.closed:
+                stale_keys.append(key)
+                continue
+            if getattr(session, "unanchored_reservation_id", None) is not None:
+                continue
+            pending_count = self._http_bridge_pending_count_nowait(session, context="idle_prune")
+            if pending_count is None:
+                continue
+            if pending_count:
+                continue
+            if now - session.last_used_at < session.idle_ttl_seconds:
+                continue
+            stale_keys.append(key)
+        sessions_to_close: list[_HTTPBridgeSession] = []
+        for key in stale_keys:
+            session = self._detach_http_bridge_session_locked(key)
+            if session is not None:
+                _log_http_bridge_event(
+                    "evict_idle",
+                    key,
+                    account_id=session.account.id,
+                    model=session.request_model,
+                    cache_key_family=key.affinity_kind,
+                    model_class=_extract_model_class(session.request_model) if session.request_model else None,
+                )
+                sessions_to_close.append(session)
+        return sessions_to_close

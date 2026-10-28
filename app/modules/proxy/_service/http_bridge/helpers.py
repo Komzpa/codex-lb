@@ -7,8 +7,9 @@ import logging
 import math
 import sys
 import time
-from collections.abc import Callable, Coroutine, Iterable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from ipaddress import ip_address
 from typing import Any, Final, Literal, Mapping, TypeVar, cast
@@ -38,6 +39,7 @@ from app.core.clients.proxy import (  # noqa: F401  # noqa: F401
 from app.core.clients.proxy import codex_control_request as core_codex_control_request  # noqa: F401
 from app.core.clients.proxy import compact_responses as core_compact_responses  # noqa: F401
 from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # noqa: F401
+from app.core.clients.proxy_websocket import UpstreamWebSocket
 from app.core.clock import REAL_SCHEDULER, Scheduler, clock_for, scheduler_for
 from app.core.config.settings import Settings, get_settings
 from app.core.config.settings_cache import get_settings_cache
@@ -72,10 +74,15 @@ from app.core.openai.requests import (
 from app.core.resilience.overload import local_overload_error
 from app.core.types import JsonValue
 from app.core.utils.request_id import get_request_id
-from app.core.utils.shared_future import _await_task_deferring_cancellation, wait_on_shared_future
+from app.core.utils.shared_future import (
+    _await_cleanup_deferring_cancellation,
+    _await_task_deferring_cancellation,
+    wait_on_shared_future,
+)
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import (
+    Account,
     AccountStatus,
     DashboardSettings,
     StickySessionKind,
@@ -2045,30 +2052,138 @@ def _release_http_bridge_unanchored_handoff(
         session.unanchored_reservation_id = None
 
 
-async def _refresh_reused_http_bridge_session_with_handoff(
-    service: "_HTTPBridgeServiceProtocol",
-    session: "_HTTPBridgeSession",
-    *,
-    key: "_HTTPBridgeSessionKey",
-    request_scope_id: str,
-    reserve_handoff: bool,
-) -> None:
-    if reserve_handoff:
-        _reserve_http_bridge_unanchored_handoff(session, request_scope_id=request_scope_id)
-    try:
-        await service._refresh_durable_http_bridge_session(session)
-        _log_http_bridge_event(
-            "reuse",
-            key,
+@dataclass(frozen=True, slots=True)
+class _HTTPBridgeSessionSnapshot:
+    """Immutable identity and reuse inputs captured under the registry lock."""
+
+    session: _HTTPBridgeSession = field(compare=False)
+    account: Account = field(compare=False)
+    upstream: UpstreamWebSocket = field(compare=False)
+    identity: int
+    key: _HTTPBridgeSessionKey
+    durable_session_id: str | None
+    owner_epoch: int | None
+    account_identity: int
+    account_id: str
+    account_status: AccountStatus
+    upstream_identity: int
+    downstream_turn_state: str | None
+    request_model: str | None
+    request_service_tier: str | None
+    reservation_id: str | None
+    closed: bool
+    quarantined: bool
+    handoff_in_progress: bool
+    retire_after_drain: bool
+    queued_request_count: int
+    admission_waiter_count: int
+    pending_request_ids: tuple[int, ...]
+    alias_registration_generation: int
+
+    @classmethod
+    def capture(cls, session: _HTTPBridgeSession) -> _HTTPBridgeSessionSnapshot:
+        return cls(
+            session=session,
+            account=session.account,
+            upstream=session.upstream,
+            identity=id(session),
+            key=session.key,
+            durable_session_id=session.durable_session_id,
+            owner_epoch=session.durable_owner_epoch,
+            account_identity=id(session.account),
             account_id=session.account.id,
-            model=session.request_model,
-            pending_count=service._http_bridge_pending_count_nowait(session, context="reuse_log"),
-            cache_key_family=key.affinity_kind,
-            model_class=_extract_model_class(session.request_model) if session.request_model else None,
+            account_status=session.account.status,
+            upstream_identity=id(session.upstream),
+            downstream_turn_state=session.downstream_turn_state,
+            request_model=session.request_model,
+            request_service_tier=session.request_service_tier,
+            reservation_id=session.unanchored_reservation_id,
+            closed=session.closed,
+            quarantined=session.quarantined,
+            handoff_in_progress=session.handoff_in_progress,
+            retire_after_drain=session.upstream_control.retire_after_drain,
+            queued_request_count=session.queued_request_count,
+            admission_waiter_count=session.admission_waiter_count,
+            pending_request_ids=tuple(id(request) for request in session.pending_requests),
+            alias_registration_generation=session.alias_registration_generation,
         )
+
+    def matches(self) -> bool:
+        return self == self.capture(self.session)
+
+
+@dataclass(frozen=True, slots=True)
+class _HTTPBridgeSelectionSnapshot:
+    turn_state_target: _HTTPBridgeSessionKey | None
+    previous_response_target: _HTTPBridgeSessionKey | None
+    slots: tuple[
+        tuple[_HTTPBridgeSessionKey, _HTTPBridgeSessionSnapshot | None, asyncio.Future[_HTTPBridgeSession] | None], ...
+    ]
+
+    @classmethod
+    def capture(
+        cls,
+        service: _HTTPBridgeServiceProtocol,
+        *,
+        requested_key: _HTTPBridgeSessionKey,
+        key: _HTTPBridgeSessionKey,
+        incoming_turn_state: str | None,
+        previous_response_id: str | None,
+        api_key_id: str | None,
+    ) -> _HTTPBridgeSelectionSnapshot:
+        turn_target = (
+            service._http_bridge_turn_state_index.get(_http_bridge_turn_state_alias_key(incoming_turn_state, api_key_id))
+            if incoming_turn_state is not None
+            else None
+        )
+        previous_target = (
+            service._http_bridge_previous_response_index.get(
+                _http_bridge_previous_response_alias_key(previous_response_id, api_key_id)
+            )
+            if previous_response_id is not None
+            else None
+        )
+        keys = dict.fromkeys(k for k in (requested_key, key, turn_target, previous_target) if k is not None)
+        return cls(
+            turn_target,
+            previous_target,
+            tuple(
+                (
+                    slot,
+                    _HTTPBridgeSessionSnapshot.capture(session)
+                    if (session := service._http_bridge_sessions.get(slot)) is not None
+                    else None,
+                    service._http_bridge_inflight_sessions.get(slot),
+                )
+                for slot in keys
+            ),
+        )
+
+
+async def _release_http_bridge_lookup_reservation(
+    service: _HTTPBridgeServiceProtocol,
+    snapshot: _HTTPBridgeSessionSnapshot,
+    request_scope_id: str,
+) -> None:
+    async with service._http_bridge_lock:
+        _release_http_bridge_unanchored_handoff(snapshot.session, request_scope_id=request_scope_id)
+
+
+@asynccontextmanager
+async def _http_bridge_lookup_lock(
+    service: _HTTPBridgeServiceProtocol,
+    snapshot: _HTTPBridgeSessionSnapshot | None,
+    request_scope_id: str,
+) -> AsyncIterator[None]:
+    try:
+        async with service._http_bridge_lock:
+            yield
     except BaseException:
-        if reserve_handoff:
-            _release_http_bridge_unanchored_handoff(session, request_scope_id=request_scope_id)
+        if snapshot is not None:
+            await _await_cleanup_deferring_cancellation(
+                _release_http_bridge_lookup_reservation(service, snapshot, request_scope_id),
+                scheduler=scheduler_for(service),
+            )
         raise
 
 
@@ -3077,101 +3192,88 @@ def _fail_closed_http_bridge_recovery_lease(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _HTTPBridgeLeaseRenewal:
+    snapshot: _HTTPBridgeSessionSnapshot
+    current_instance: str
+    lookup: DurableBridgeLookup | None
+    error: Exception | None
+
+
 async def _renew_durable_http_bridge_lease(
     service: _HTTPBridgeServiceProtocol,
-    session: _HTTPBridgeSession,
-) -> None:
-    """Renew the durable lease; callers must hold ``service._http_bridge_lock``.
-
-    Raises the retryable instance-mismatch error after evicting the local
-    session when the renewal reveals the durable row is owned by another
-    instance/epoch (fenced out).
-    """
-
-    account_neutral_recovery = is_http_bridge_account_neutral_replay(
-        kind=session.key.affinity_kind,
-        key=session.key.affinity_key,
-    )
-    if session.durable_session_id is None or session.durable_owner_epoch is None:
-        if account_neutral_recovery:
-            raise _fail_closed_http_bridge_recovery_lease(
-                service,
-                session,
-                detail="outcome=missing_durable_identity",
-            )
-        return
+    snapshot: _HTTPBridgeSessionSnapshot,
+) -> _HTTPBridgeLeaseRenewal:
+    """Request-owned I/O only; the caller MUST NOT hold the registry lock."""
     current_instance = _service_get_settings().http_responses_session_bridge_instance_id
-    try:
-        lookup = await service._durable_bridge.renew_live_session(
-            session_id=session.durable_session_id,
-            api_key_id=session.key.api_key_id,
-            instance_id=current_instance,
-            owner_epoch=session.durable_owner_epoch,
-            lease_ttl_seconds=_http_bridge_durable_lease_ttl_seconds(),
-            latest_turn_state=session.downstream_turn_state,
-            latest_response_id=None,
-        )
-    except Exception as exc:
-        if account_neutral_recovery:
-            raise _fail_closed_http_bridge_recovery_lease(
-                service,
-                session,
-                detail="outcome=renew_error",
-            ) from exc
-        logger.warning("Failed to renew durable HTTP bridge session lease", exc_info=True)
-        return
-    if lookup is None:
-        if account_neutral_recovery:
-            raise _fail_closed_http_bridge_recovery_lease(
-                service,
-                session,
-                detail="outcome=durable_row_missing",
+    lookup = None
+    error: Exception | None = None
+    if snapshot.durable_session_id is not None and snapshot.owner_epoch is not None:
+        try:
+            lookup = await service._durable_bridge.renew_live_session(
+                session_id=snapshot.durable_session_id,
+                api_key_id=snapshot.key.api_key_id,
+                instance_id=current_instance,
+                owner_epoch=snapshot.owner_epoch,
+                lease_ttl_seconds=_http_bridge_durable_lease_ttl_seconds(),
+                latest_turn_state=snapshot.downstream_turn_state,
+                latest_response_id=None,
             )
-        return
-    if lookup.owner_instance_id == current_instance and lookup.owner_epoch == session.durable_owner_epoch:
-        return
+        except Exception as exc:
+            error = exc
+    return _HTTPBridgeLeaseRenewal(snapshot, current_instance, lookup, error)
+
+
+def _apply_durable_http_bridge_renewal_locked(
+    service: _HTTPBridgeServiceProtocol,
+    renewal: _HTTPBridgeLeaseRenewal,
+) -> _HTTPBridgeSessionSnapshot | None:
+    """Apply only after selection/alias revalidation; None means superseded."""
+    snapshot = renewal.snapshot
+    session = snapshot.session
+    if not snapshot.matches():
+        return None
+    registered = service._http_bridge_sessions.get(snapshot.key) is session
+    recovery = is_http_bridge_account_neutral_replay(kind=snapshot.key.affinity_kind, key=snapshot.key.affinity_key)
+    missing_identity = snapshot.durable_session_id is None or snapshot.owner_epoch is None
+    lookup = renewal.lookup
+    if missing_identity and not recovery:
+        # Deliberate no-durable-identity fallback is not a failed renewal.
+        return snapshot if registered else None
+    if lookup is None or renewal.error is not None:
+        if not registered:
+            return None
+        detail = (
+            "missing_durable_identity" if missing_identity else "renew_error"
+            if renewal.error is not None else "durable_row_missing"
+        )
+        if recovery:
+            raise _fail_closed_http_bridge_recovery_lease(service, session, detail=f"outcome={detail}") from renewal.error
+        raise ProxyResponseError(502, _http_bridge_owner_lookup_unavailable_error_envelope()) from renewal.error
+    if lookup.session_id != snapshot.durable_session_id:
+        if not registered:
+            return None
+        raise ProxyResponseError(502, _http_bridge_owner_lookup_unavailable_error_envelope())
     if (
-        lookup.owner_instance_id == current_instance
-        and lookup.owner_process_epoch == http_bridge_owner_process_epoch()
-        and lookup.owner_epoch > session.durable_owner_epoch
-        # A claim rewrites the row's account_id, so an advance that moved the
-        # row to another account is a real ownership change for this session,
-        # not a superseded creator: never adopt across it.
-        and lookup.account_id == session.account.id
-        and service._http_bridge_sessions.get(session.key) is session
+        lookup.owner_instance_id == renewal.current_instance
+        and lookup.owner_epoch == snapshot.owner_epoch
+        and lookup.account_id == snapshot.account_id
     ):
-        # THIS process advanced the epoch while this session still holds the
-        # registry slot for its key — a creator that was superseded mid claim,
-        # not a real ownership loss (issue #1695). Evicting here would 409 the
-        # session that legitimately owns the key, so adopt the epoch and keep
-        # renewing. The process-epoch check matters because two incarnations
-        # can share a configured instance ID across a graceful restart: the
-        # successor's claim must still fence the predecessor out. A DIFFERENT
-        # local session holding the slot also falls through: that one won, and
-        # this session must be evicted.
+        return snapshot if registered else None
+    if (
+        registered
+        and lookup.owner_instance_id == renewal.current_instance
+        and lookup.owner_process_epoch == http_bridge_owner_process_epoch()
+        and snapshot.owner_epoch is not None
+        and lookup.owner_epoch > snapshot.owner_epoch
+        and lookup.account_id == snapshot.account_id
+    ):
+        # Preserve only the same-process, same-row/account adoption exception.
         session.durable_owner_epoch = lookup.owner_epoch
-        return
-    # Fenced out: another instance/epoch owns the durable session. Never adopt
-    # the foreign epoch — evict the local session so its upstream websocket and
-    # account lease are released, and fail the request with the retryable
-    # instance-mismatch contract used by rejected claims.
-    detached = service._detach_http_bridge_session_locked(session.key, expected_session=session)
+        return _HTTPBridgeSessionSnapshot.capture(session)
+    detached = service._detach_http_bridge_session_locked(snapshot.key, expected_session=session)
     session.closed = True
     service._schedule_http_bridge_session_closes([detached or session], reason="durable_fenced_out")
-    _log_http_bridge_event(
-        "fenced_out_evict",
-        session.key,
-        account_id=session.account.id,
-        model=session.request_model,
-        detail=(
-            f"owner_instance={lookup.owner_instance_id}, owner_epoch={lookup.owner_epoch}, "
-            f"current_instance={current_instance}, local_epoch={session.durable_owner_epoch}, "
-            "outcome=renew_fenced_out"
-        ),
-        cache_key_family=session.key.affinity_kind,
-        model_class=_extract_model_class(session.request_model) if session.request_model else None,
-        owner_check_applied=True,
-    )
     if PROMETHEUS_AVAILABLE and bridge_instance_mismatch_total is not None:
         bridge_instance_mismatch_total.labels(outcome="renew_fenced_out").inc()
     raise ProxyResponseError(
@@ -3197,7 +3299,7 @@ async def _reconcile_durable_http_bridge_ownership(service: _HTTPBridgeServicePr
     now = clock_for(service).monotonic()
     async with service._http_bridge_lock:
         candidates = [
-            (key, session)
+            (key, session, session.durable_session_id, session.durable_owner_epoch)
             for key, session in service._http_bridge_sessions.items()
             if not session.closed
             and session.durable_session_id is not None
@@ -3207,13 +3309,19 @@ async def _reconcile_durable_http_bridge_ownership(service: _HTTPBridgeServicePr
     if not candidates:
         return 0
     lookups = await service._durable_bridge.lookup_sessions(
-        session_ids=[session.durable_session_id for _, session in candidates if session.durable_session_id]
+        session_ids=[session_id for _, _, session_id, _ in candidates if session_id is not None]
     )
     lookup_by_id = {lookup.session_id: lookup for lookup in lookups}
     fenced_sessions: list[_HTTPBridgeSession] = []
     async with service._http_bridge_lock:
-        for key, session in candidates:
-            lookup = lookup_by_id.get(session.durable_session_id or "")
+        for key, session, session_id, owner_epoch in candidates:
+            if (
+                service._http_bridge_sessions.get(key) is not session
+                or session.durable_session_id != session_id
+                or session.durable_owner_epoch != owner_epoch
+            ):
+                continue
+            lookup = lookup_by_id.get(session_id or "")
             if lookup is None or lookup.owner_instance_id is None:
                 continue
             if lookup.owner_instance_id == current_instance and lookup.owner_epoch == session.durable_owner_epoch:
@@ -3661,8 +3769,18 @@ async def _http_bridge_owner_instance(
     key: _HTTPBridgeSessionKey,
     settings: Settings,
     ring_membership: RingMembershipService | None = None,
+    *,
+    resolved_ring: tuple[str, tuple[str, ...]] | None = None,
 ) -> str | None:
-    instance_id, ring = await _active_http_bridge_instance_ring(settings, ring_membership)
+    instance_id, ring = resolved_ring or await _active_http_bridge_instance_ring(settings, ring_membership)
+    return _http_bridge_owner_from_ring(key, instance_id, ring)
+
+
+def _http_bridge_owner_from_ring(
+    key: _HTTPBridgeSessionKey,
+    instance_id: str,
+    ring: tuple[str, ...],
+) -> str | None:
     if len(ring) <= 1:
         return instance_id
     hash_input = f"{key.affinity_kind}:{key.affinity_key}:{key.api_key_id or ''}"

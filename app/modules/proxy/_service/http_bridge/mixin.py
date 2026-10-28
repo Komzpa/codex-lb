@@ -47,6 +47,7 @@ from app.core.metrics.prometheus import (
 )
 from app.core.utils.locks import fast_lock
 from app.core.utils.request_id import ensure_request_scope_id
+from app.core.utils.shared_future import _await_cleanup_deferring_cancellation
 from app.db.models import (
     DashboardSettings,
     StickySessionKind,
@@ -67,8 +68,11 @@ from app.modules.proxy._service.compact import (
 from app.modules.proxy._service.http_bridge.account_sessions import _HTTPBridgeAccountSessionsMixin
 from app.modules.proxy._service.http_bridge.activity import _HTTPBridgeActivityMixin
 from app.modules.proxy._service.http_bridge.helpers import (
-    _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
     _HTTP_BRIDGE_INFLIGHT_STARTED_AT_ATTR,
+    _HTTPBridgeLeaseRenewal,
+    _HTTPBridgeSelectionSnapshot,
+    _HTTPBridgeSessionSnapshot,
+    _apply_durable_http_bridge_renewal_locked,
     _active_http_bridge_instance_ring,
     _alias_fallback_key,
     _durable_bridge_lookup_active_owner,
@@ -92,6 +96,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_locally_owned_fork_key,
     _http_bridge_models_compatible,
     _http_bridge_owner_check_required,
+    _http_bridge_lookup_lock,
     _http_bridge_owner_instance,
     _http_bridge_owner_lookup_unavailable_error_envelope,
     _http_bridge_parallel_fork_key,
@@ -122,7 +127,8 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _raise_if_http_bridge_creation_superseded,
     _record_bridge_drain_recovery_allowed,
     _record_bridge_first_turn_timeout,
-    _refresh_reused_http_bridge_session_with_handoff,
+    _release_http_bridge_lookup_reservation,
+    _release_http_bridge_unanchored_handoff,
     _register_http_bridge_turn_state_aliases_locked,
     _require_http_bridge_bound_account_not_excluded,
     _reserve_http_bridge_unanchored_handoff,
@@ -144,6 +150,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _estimated_lease_tokens_from_request_usage_budget,
     _prefer_earlier_reset_window,
     _proxy_admission_wait_timeout_seconds,
+    _raise_proxy_budget_exhausted,
     _raise_proxy_unavailable,
     _record_continuity_fail_closed,
     _record_same_account_takeover,
@@ -157,7 +164,6 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
 from app.modules.proxy._service.http_bridge.session_registry import _HTTPBridgeSessionRegistryMixin
 from app.modules.proxy._service.http_bridge.streaming import _HTTPBridgeStreamingMixin
 from app.modules.proxy._service.http_bridge.upstream_events import _HTTPBridgeUpstreamEventsMixin
-from app.modules.proxy._service.observability import _hash_identifier
 from app.modules.proxy._service.support import (
     _ACCOUNT_MODEL_UNSUPPORTED_ERROR_CODE,
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
@@ -227,7 +233,6 @@ logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
 _REQUEST_TRANSPORT_HTTP = "http"
 _UPSTREAM_CLOSE_CODES_SKIP_SAME_ACCOUNT_RETRY = frozenset({1011})
-_HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
 
 
 class _HTTPBridgeMixin(
@@ -240,99 +245,6 @@ class _HTTPBridgeMixin(
     _HTTPBridgeUpstreamEventsMixin,
     _HTTPBridgeServiceProtocol,
 ):
-    def _schedule_http_bridge_session_closes(
-        self,
-        sessions: list["_HTTPBridgeSession"],
-        *,
-        reason: str,
-    ) -> None:
-        for session in sessions:
-            if len(self._background_cleanup_tasks) >= _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD:
-                logger.warning(
-                    "http_bridge_background_cleanup_backlog action=session_close count=%d threshold=%d reason=%s",
-                    len(self._background_cleanup_tasks),
-                    _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD,
-                    reason,
-                )
-            self._schedule_cancel_safe_cleanup(
-                self._close_http_bridge_session_bounded(session, reason=reason),
-                action="http_bridge_session_close",
-                request_id=_hash_identifier(session.key.affinity_key),
-            )
-
-    async def _drain_http_bridge_background_cleanup_tasks(self, *, reason: str) -> bool:
-        tasks = [
-            task
-            for task in self._background_cleanup_tasks
-            if (
-                task.get_name().startswith("proxy-http_bridge_session_close-")
-                or task.get_name().startswith("http-bridge-close-")
-                or task.get_name().startswith("cancelled-task-cleanup-")
-            )
-        ]
-        if not tasks:
-            return not self._http_bridge_background_cleanup_failed
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*(asyncio.shield(task) for task in tasks), return_exceptions=True),
-                timeout=_HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            logger.warning(
-                "http_bridge_background_cleanup_drain_timeout reason=%s count=%d timeout_seconds=%.1f",
-                reason,
-                len(tasks),
-                _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
-            )
-            return False
-        self._http_bridge_background_cleanup_failed |= any(isinstance(result, BaseException) for result in results)
-        return not self._http_bridge_background_cleanup_failed
-
-    async def _fail_http_bridge_inflight_session_creation(
-        self,
-        key: "_HTTPBridgeSessionKey",
-        inflight_future: asyncio.Future["_HTTPBridgeSession"] | None,
-        exc: BaseException,
-    ) -> bool:
-        if inflight_future is None:
-            return False
-        async with self._http_bridge_lock:
-            current_future = self._http_bridge_inflight_sessions.get(key)
-            if current_future is not inflight_future:
-                return False
-            if getattr(inflight_future, "_http_bridge_handoff", False):
-                return False
-            self._http_bridge_inflight_sessions.pop(key, None)
-            if inflight_future.done():
-                return True
-            if isinstance(exc, asyncio.CancelledError):
-                inflight_future.cancel()
-            else:
-                inflight_future.set_exception(exc)
-                inflight_future.exception()
-            return True
-
-    async def _evict_http_bridge_inflight_waiter(
-        self,
-        inflight_future: asyncio.Future["_HTTPBridgeSession"],
-        exc: BaseException,
-    ) -> "_HTTPBridgeSessionKey | None":
-        async with self._http_bridge_lock:
-            stale_key = None
-            for candidate_key, candidate_future in self._http_bridge_inflight_sessions.items():
-                if candidate_future is inflight_future:
-                    stale_key = candidate_key
-                    break
-            if stale_key is None:
-                return None
-            if getattr(inflight_future, "_http_bridge_handoff", False):
-                return None
-            self._http_bridge_inflight_sessions.pop(stale_key, None)
-            if not inflight_future.done():
-                inflight_future.set_exception(exc)
-                inflight_future.exception()
-            return stale_key
-
     @overload
     async def _get_or_create_http_bridge_session(
         self,
@@ -433,6 +345,7 @@ class _HTTPBridgeMixin(
     ) -> "_HTTPBridgeSession | _HTTPBridgeOwnerForward":
         settings = _service_get_settings()
         request_scope_id = ensure_request_scope_id()
+        requested_key = key
         api_key_id = api_key.id if api_key is not None else None
         incoming_turn_state = _sticky_key_from_turn_state_header(headers)
         incoming_session_key, initial_session_key = _turn_keys(headers, api_key, key, session_header_fallback_key)
@@ -508,7 +421,88 @@ class _HTTPBridgeMixin(
                 ("local account-neutral recovery", session.account.id),
             )
 
+        pending_renewal: _HTTPBridgeSessionSnapshot | None = None
+        renewal_context: _HTTPBridgeSelectionSnapshot | None = None
+        renewal_result: _HTTPBridgeLeaseRenewal | None = None
+        routing_context: _HTTPBridgeSelectionSnapshot | None = None
+        pending_routing = False
+        resolved_ring: tuple[str, tuple[str, ...]] | None = None
+        ring_error: Exception | None = None
+        resolved_endpoint: str | None = None
+        endpoint_error: Exception | None = None
+
+        def selection_snapshot() -> _HTTPBridgeSelectionSnapshot:
+            return _HTTPBridgeSelectionSnapshot.capture(
+                self,
+                requested_key=requested_key,
+                key=key,
+                incoming_turn_state=incoming_turn_state,
+                previous_response_id=previous_response_id,
+                api_key_id=api_key_id,
+            )
+
         while True:
+            if request_deadline is not None and clock_for(self).monotonic() >= request_deadline:
+                if pending_renewal is not None:
+                    await _await_cleanup_deferring_cancellation(
+                        _release_http_bridge_lookup_reservation(self, pending_renewal, request_scope_id),
+                        scheduler=scheduler_for(self),
+                    )
+                _raise_proxy_budget_exhausted()
+            if pending_renewal is not None:
+                try:
+                    renewal_result = await self._refresh_durable_http_bridge_session(pending_renewal)
+                except BaseException:
+                    await _await_cleanup_deferring_cancellation(
+                        _release_http_bridge_lookup_reservation(self, pending_renewal, request_scope_id),
+                        scheduler=scheduler_for(self),
+                    )
+                    raise
+            if pending_routing:
+                resolved_ring = None
+                ring_error = endpoint_error = None
+                resolved_endpoint = None
+                try:
+                    resolved_ring = await _active_http_bridge_instance_ring(settings, self._ring_membership)
+                except Exception as exc:
+                    ring_error = exc
+                if request_deadline is not None and clock_for(self).monotonic() >= request_deadline:
+                    _raise_proxy_budget_exhausted()
+                if resolved_ring is not None:
+                    current_instance, ring = resolved_ring
+                    resolved_owner = _durable_bridge_lookup_active_owner(durable_lookup)
+                    if key == locally_owned_fork_key:
+                        resolved_owner = current_instance
+                    if resolved_owner is None:
+                        resolved_owner = await _http_bridge_owner_instance(
+                            key, settings, self._ring_membership, resolved_ring=resolved_ring
+                        )
+                    if request_deadline is not None and clock_for(self).monotonic() >= request_deadline:
+                        _raise_proxy_budget_exhausted()
+                    if (
+                        resolved_owner is not None
+                        and resolved_owner != current_instance
+                        and (len(ring) > 1 or durable_lookup is not None)
+                        and (_http_bridge_owner_check_required(key, gateway_safe_mode=gateway_safe_mode)
+                             or bool(incoming_turn_state or previous_response_id))
+                        and not (previous_response_id is not None and allow_previous_response_recovery_rebind)
+                        and not allow_bootstrap_owner_rebind
+                        and allow_forward_to_owner
+                        and not forwarded_request
+                        and self._ring_membership is not None
+                    ):
+                        try:
+                            resolved_endpoint = await self._ring_membership.resolve_endpoint(resolved_owner)
+                        except Exception as exc:
+                            endpoint_error = exc
+                pending_routing = False
+            if request_deadline is not None and clock_for(self).monotonic() >= request_deadline:
+                if pending_renewal is not None:
+                    await _await_cleanup_deferring_cancellation(
+                        _release_http_bridge_lookup_reservation(self, pending_renewal, request_scope_id),
+                        scheduler=scheduler_for(self),
+                    )
+                _raise_proxy_budget_exhausted()
             account_neutral_recovery = is_http_bridge_account_neutral_replay(
                 kind=key.affinity_kind,
                 key=key.affinity_key,
@@ -552,7 +546,38 @@ class _HTTPBridgeMixin(
                 or key.strength == "hard"
                 or not fallback_on_preferred_account_unavailable
             )
-            async with self._http_bridge_lock:
+            async with _http_bridge_lookup_lock(self, pending_renewal, request_scope_id):
+                accepted_renewal: _HTTPBridgeSessionSnapshot | None = None
+                if pending_renewal is not None:
+                    original_snapshot = pending_renewal
+                    pending_renewal = None
+                    if renewal_context != selection_snapshot():
+                        _release_http_bridge_unanchored_handoff(
+                            original_snapshot.session, request_scope_id=request_scope_id
+                        )
+                        key = requested_key
+                        routing_context = None
+                        continue
+                    assert renewal_result is not None
+                    try:
+                        accepted_renewal = _apply_durable_http_bridge_renewal_locked(self, renewal_result)
+                    except BaseException:
+                        _release_http_bridge_unanchored_handoff(
+                            original_snapshot.session, request_scope_id=request_scope_id
+                        )
+                        raise
+                    if accepted_renewal is None:
+                        _release_http_bridge_unanchored_handoff(
+                            original_snapshot.session, request_scope_id=request_scope_id
+                        )
+                        key = requested_key
+                        routing_context = None
+                        continue
+                if routing_context is not None and routing_context != selection_snapshot():
+                    routing_context = None
+                    key = requested_key
+                    continue
+                promote_reuse_to_codex = False
                 if (
                     incoming_turn_state is not None
                     and forwarded_affinity is None
@@ -603,11 +628,7 @@ class _HTTPBridgeMixin(
                         ):
                             raise ProxyResponseError(502, _http_bridge_continuity_lost_error_envelope())
                         else:
-                            self._promote_http_bridge_session_to_codex_affinity(
-                                alias_session,
-                                turn_state=incoming_turn_state,
-                            )
-                            _register_http_bridge_turn_state_aliases_locked(self, alias_session)
+                            promote_reuse_to_codex = True
                             key = alias_session.key
                     elif incoming_turn_state.startswith("http_turn_"):
                         if previous_response_id is not None:
@@ -632,20 +653,8 @@ class _HTTPBridgeMixin(
                                 )
                             ):
                                 key = previous_session.key
-                                self._promote_http_bridge_session_to_codex_affinity(
-                                    previous_session,
-                                    turn_state=incoming_turn_state,
-                                )
-                                previous_session.downstream_turn_state_aliases.add(incoming_turn_state)
-                                for alias in previous_session.downstream_turn_state_aliases:
-                                    self._http_bridge_turn_state_index[
-                                        _http_bridge_turn_state_alias_key(
-                                            alias,
-                                            previous_session.key.api_key_id,
-                                        )
-                                    ] = previous_session.key
-                                continue
-                            if previous_session is not None and not _http_bridge_models_compatible(
+                                promote_reuse_to_codex = True
+                            elif previous_session is not None and not _http_bridge_models_compatible(
                                 previous_session.request_model, request_model
                             ):
                                 model_transition_rebind = True
@@ -671,7 +680,9 @@ class _HTTPBridgeMixin(
                                 raise ProxyResponseError(502, _http_bridge_continuity_lost_error_envelope())
                             elif previous_key is not None:
                                 self._http_bridge_previous_response_index.pop(previous_alias_key, None)
-                        if model_transition_rebind:
+                        if promote_reuse_to_codex:
+                            pass
+                        elif model_transition_rebind:
                             if not is_http_bridge_account_neutral_replay(
                                 kind=key.affinity_kind,
                                 key=key.affinity_key,
@@ -690,6 +701,16 @@ class _HTTPBridgeMixin(
                     if any(session.key == key for session in pruned_sessions):
                         force_durable_takeover = True
                     self._schedule_http_bridge_session_closes(pruned_sessions, reason="registry_detach")
+                if accepted_renewal is not None and self._http_bridge_sessions.get(
+                    accepted_renewal.session.key
+                ) is not accepted_renewal.session:
+                    _release_http_bridge_unanchored_handoff(
+                        accepted_renewal.session, request_scope_id=request_scope_id
+                    )
+                    accepted_renewal = None
+                    key = requested_key
+                    routing_context = None
+                    continue
                 existing = self._http_bridge_sessions.get(key)
                 retained_handoff = bool(
                     existing and existing.closed and _http_bridge_session_has_admission_waiter(existing)
@@ -710,6 +731,17 @@ class _HTTPBridgeMixin(
                         session_key_quarantined=_http_bridge_session_key_quarantined(self, existing.key),
                     )
                 )
+                if (
+                    accepted_renewal is not None
+                    and accepted_renewal.key == key
+                    and (existing is not accepted_renewal.session or not reusable)
+                ):
+                    _release_http_bridge_unanchored_handoff(
+                        accepted_renewal.session, request_scope_id=request_scope_id
+                    )
+                    key = requested_key
+                    routing_context = None
+                    continue
                 fork_key = _http_bridge_parallel_fork_key(
                     key=key,
                     session=existing,
@@ -733,6 +765,7 @@ class _HTTPBridgeMixin(
                     locally_owned_fork_key = _http_bridge_locally_owned_fork_key(
                         fork_key, forwarded_request, forwarded_original_request_unanchored
                     )
+                    routing_context = None
                     continue
                 if retained_handoff and not reusable:
                     existing, force_durable_takeover = self._recover_http_bridge_incompatible_admission_handoff(
@@ -751,25 +784,50 @@ class _HTTPBridgeMixin(
                 if reusable:
                     assert existing is not None
                     current_instance = settings.http_responses_session_bridge_instance_id
-                    if _durable_bridge_lookup_allows_local_reuse(durable_lookup, current_instance=current_instance):
+                    if _durable_bridge_lookup_allows_local_reuse(durable_lookup, current_instance=current_instance) or (
+                        existing.durable_session_id is not None and existing.durable_owner_epoch is not None
+                    ):
+                        if accepted_renewal is None or accepted_renewal.session is not existing:
+                            if original_request_unanchored:
+                                _reserve_http_bridge_unanchored_handoff(existing, request_scope_id=request_scope_id)
+                            pending_renewal = _HTTPBridgeSessionSnapshot.capture(existing)
+                            routing_context = None
+                            renewal_context = selection_snapshot()
+                            continue
+                        if promote_reuse_to_codex and incoming_turn_state is not None:
+                            self._promote_http_bridge_session_to_codex_affinity(existing, turn_state=incoming_turn_state)
+                            _register_http_bridge_turn_state_aliases_locked(self, existing)
                         existing.api_key = api_key
                         existing.request_model = request_model
                         existing.request_service_tier = request_service_tier
                         existing.last_used_at = clock_for(self).monotonic()
-                        await _refresh_reused_http_bridge_session_with_handoff(
-                            self,
-                            existing,
-                            key=key,
-                            request_scope_id=request_scope_id,
-                            reserve_handoff=original_request_unanchored,
+                        _log_http_bridge_event(
+                            "reuse", key, account_id=existing.account.id, model=request_model,
+                            pending_count=self._http_bridge_pending_count_nowait(existing, context="reuse_log"),
+                            cache_key_family=key.affinity_kind,
+                            model_class=_extract_model_class(request_model) if request_model else None,
                         )
                         return existing
+                    if routing_context is None and (
+                        _http_bridge_owner_check_required(key, gateway_safe_mode=gateway_safe_mode)
+                        or key.affinity_kind == "prompt_cache"
+                    ):
+                        routing_context = selection_snapshot()
+                        pending_routing = True
+                        continue
                     old_account_id = existing.account.id
                     detached = self._detach_http_bridge_session_locked(key, expected_session=existing)
                     if detached is not None:
                         force_durable_takeover = True
                         self._schedule_http_bridge_session_closes([detached], reason="registry_detach")
                     existing = None
+                if accepted_renewal is None and routing_context is None and (
+                    _http_bridge_owner_check_required(key, gateway_safe_mode=gateway_safe_mode)
+                    or key.affinity_kind == "prompt_cache"
+                ):
+                    routing_context = selection_snapshot()
+                    pending_routing = True
+                    continue
                 if existing is not None and (
                     force_goal_restart_account_reselection
                     or (not existing.closed and existing.account.status in ROUTABLE_STATUSES)
@@ -813,46 +871,8 @@ class _HTTPBridgeMixin(
                     gateway_safe_mode=gateway_safe_mode,
                 )
                 if owner_check_required or key.affinity_kind == "prompt_cache":
-                    owner_instance = _durable_bridge_lookup_active_owner(durable_lookup)
                     hard_continuity_lookup = owner_check_required or bool(incoming_turn_state or previous_response_id)
-                    ring_lookup_failed = False
-                    if key == locally_owned_fork_key:
-                        owner_instance = settings.http_responses_session_bridge_instance_id
-                    if owner_instance is None:
-                        try:
-                            owner_instance = await _http_bridge_owner_instance(key, settings, self._ring_membership)
-                        except Exception as exc:
-                            ring_lookup_failed = True
-                            if hard_continuity_lookup:
-                                _record_continuity_fail_closed(
-                                    surface="http_bridge",
-                                    reason="owner_metadata_unavailable",
-                                    previous_response_id=previous_response_id,
-                                    session_id=incoming_turn_state or incoming_session_key,
-                                    upstream_error_code="owner_lookup_failed",
-                                )
-                                raise ProxyResponseError(
-                                    502,
-                                    _http_bridge_owner_lookup_unavailable_error_envelope(),
-                                ) from exc
-                            if _http_bridge_can_local_recover_without_ring(
-                                key=key,
-                                headers=headers,
-                                previous_response_id=previous_response_id,
-                                durable_lookup=durable_lookup,
-                            ):
-                                logger.warning(
-                                    "Bridge owner lookup failed; allowing local recovery path",
-                                    exc_info=True,
-                                )
-                                owner_instance = settings.http_responses_session_bridge_instance_id
-                            else:
-                                raise
-                    try:
-                        current_instance, ring = await _active_http_bridge_instance_ring(
-                            settings, self._ring_membership
-                        )
-                    except Exception as exc:
+                    if ring_error is not None:
                         if hard_continuity_lookup:
                             _record_continuity_fail_closed(
                                 surface="http_bridge",
@@ -862,22 +882,22 @@ class _HTTPBridgeMixin(
                                 upstream_error_code="ring_lookup_failed",
                             )
                             raise ProxyResponseError(
-                                502,
-                                _http_bridge_owner_lookup_unavailable_error_envelope(),
-                            ) from exc
-                        if ring_lookup_failed or _http_bridge_can_local_recover_without_ring(
-                            key=key,
-                            headers=headers,
-                            previous_response_id=previous_response_id,
+                                502, _http_bridge_owner_lookup_unavailable_error_envelope()
+                            ) from ring_error
+                        if not _http_bridge_can_local_recover_without_ring(
+                            key=key, headers=headers, previous_response_id=previous_response_id,
                             durable_lookup=durable_lookup,
                         ):
-                            logger.warning(
-                                "Bridge ring lookup failed; falling back to local recovery ring", exc_info=True
-                            )
-                            current_instance = settings.http_responses_session_bridge_instance_id
-                            ring = (current_instance,)
-                        else:
-                            raise
+                            raise ring_error
+                        current_instance = settings.http_responses_session_bridge_instance_id
+                        ring = (current_instance,)
+                    else:
+                        assert resolved_ring is not None
+                        current_instance, ring = resolved_ring
+                    owner_instance = (
+                        settings.http_responses_session_bridge_instance_id
+                        if ring_error is not None else resolved_owner
+                    )
                     owner_mismatch = owner_instance is not None and owner_instance != current_instance
                     if owner_mismatch and (len(ring) > 1 or durable_lookup is not None):
                         if PROMETHEUS_AVAILABLE and bridge_owner_mismatch_total is not None:
@@ -990,7 +1010,9 @@ class _HTTPBridgeMixin(
                                         force_durable_takeover = True
                                 else:
                                     assert owner_instance is not None
-                                    owner_endpoint = await self._ring_membership.resolve_endpoint(owner_instance)
+                                    if endpoint_error is not None:
+                                        raise endpoint_error
+                                    owner_endpoint = resolved_endpoint
                                     if owner_endpoint is None:
                                         if _http_bridge_has_durable_recovery_anchor(
                                             previous_response_id=previous_response_id,
@@ -1168,29 +1190,34 @@ class _HTTPBridgeMixin(
                                 previous_session is not None
                                 and not previous_session.closed
                                 and _http_bridge_session_account_active(previous_session)
+                                and not _http_bridge_session_key_quarantined(self, previous_session.key)
+                                and _http_bridge_session_reusable_for_request(
+                                    session=previous_session,
+                                    key=previous_session.key,
+                                    incoming_turn_state=incoming_turn_state,
+                                    previous_response_id=previous_response_id,
+                                )
                                 and _http_bridge_compatible(previous_session, request_model, request_service_tier, True)
                             ):
                                 key = previous_session.key
                                 existing = previous_session
                                 inflight_future = self._http_bridge_inflight_sessions.get(previous_key)
-                                if incoming_turn_state:
-                                    self._promote_http_bridge_session_to_codex_affinity(
-                                        previous_session,
-                                        turn_state=incoming_turn_state,
-                                    )
-                                    previous_session.downstream_turn_state_aliases.add(incoming_turn_state)
-                                    for alias in previous_session.downstream_turn_state_aliases:
-                                        self._http_bridge_turn_state_index[
-                                            _http_bridge_turn_state_alias_key(
-                                                alias,
-                                                previous_session.key.api_key_id,
-                                            )
-                                        ] = previous_session.key
                                 if inflight_future is None:
+                                    if accepted_renewal is None or accepted_renewal.session is not previous_session:
+                                        pending_renewal = _HTTPBridgeSessionSnapshot.capture(previous_session)
+                                        key = requested_key
+                                        routing_context = None
+                                        renewal_context = selection_snapshot()
+                                        continue
+                                    if incoming_turn_state:
+                                        self._promote_http_bridge_session_to_codex_affinity(
+                                            previous_session, turn_state=incoming_turn_state
+                                        )
+                                        _register_http_bridge_turn_state_aliases_locked(self, previous_session)
+                                    previous_session.api_key = api_key
                                     previous_session.request_model = request_model
                                     previous_session.request_service_tier = request_service_tier
                                     previous_session.last_used_at = clock_for(self).monotonic()
-                                    await self._refresh_durable_http_bridge_session(previous_session)
                                     _log_http_bridge_event(
                                         "reuse",
                                         key,
@@ -1225,6 +1252,7 @@ class _HTTPBridgeMixin(
                                     bind_account_neutral_recovery_owner(previous_session)
                                     if key != recovery_fork_key:
                                         key = recovery_fork_key
+                                        routing_context = None
                                         continue
                             elif previous_key is not None and _http_bridge_alias_target_is_stale(previous_session):
                                 self._http_bridge_previous_response_index.pop(previous_alias_key, None)
@@ -1438,6 +1466,7 @@ class _HTTPBridgeMixin(
                     locally_owned_fork_key = _http_bridge_locally_owned_fork_key(
                         fork_key, forwarded_request, forwarded_original_request_unanchored
                     )
+                    routing_context = None
                     continue
                 if (
                     not force_goal_restart_account_reselection
@@ -1460,11 +1489,11 @@ class _HTTPBridgeMixin(
                 ):
                     current_instance = settings.http_responses_session_bridge_instance_id
                     if _durable_bridge_lookup_allows_local_reuse(durable_lookup, current_instance=current_instance):
-                        session.api_key = api_key
-                        session.request_model = request_model
-                        session.request_service_tier = request_service_tier
-                        session.last_used_at = clock_for(self).monotonic()
-                        return session
+                        # The creator's future is not an ownership receipt. Re-enter
+                        # locked selection and verify the currently registered generation.
+                        key = session.key
+                        routing_context = None
+                        continue
                 if force_goal_restart_account_reselection or (
                     not session.closed and session.account.status in ROUTABLE_STATUSES
                 ):
@@ -1619,42 +1648,6 @@ class _HTTPBridgeMixin(
             logger.warning("Failed to mark durable HTTP bridge sessions draining", exc_info=True)
             return False
         return True
-
-    def _prune_http_bridge_sessions_locked(self) -> list["_HTTPBridgeSession"]:
-        now = clock_for(self).monotonic()
-        stale_keys: list[_HTTPBridgeSessionKey] = []
-        for key, session in self._http_bridge_sessions.items():
-            if _http_bridge_session_has_admission_waiter(session):
-                continue
-            if session.handoff_in_progress:
-                continue
-            if session.closed:
-                stale_keys.append(key)
-                continue
-            if getattr(session, "unanchored_reservation_id", None) is not None:
-                continue
-            pending_count = self._http_bridge_pending_count_nowait(session, context="idle_prune")
-            if pending_count is None:
-                continue
-            if pending_count:
-                continue
-            if now - session.last_used_at < session.idle_ttl_seconds:
-                continue
-            stale_keys.append(key)
-        sessions_to_close: list[_HTTPBridgeSession] = []
-        for key in stale_keys:
-            session = self._detach_http_bridge_session_locked(key)
-            if session is not None:
-                _log_http_bridge_event(
-                    "evict_idle",
-                    key,
-                    account_id=session.account.id,
-                    model=session.request_model,
-                    cache_key_family=key.affinity_kind,
-                    model_class=_extract_model_class(session.request_model) if session.request_model else None,
-                )
-                sessions_to_close.append(session)
-        return sessions_to_close
 
     _close_http_bridge_session = _helpers_close_http_bridge_session
 

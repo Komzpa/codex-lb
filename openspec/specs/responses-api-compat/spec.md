@@ -3295,6 +3295,58 @@ registering replacement session creation as in-flight, the service MUST fail or
 remove the in-flight creation marker before propagating cancellation. Later
 requests MUST NOT wait on an orphaned creation future that can never complete.
 
+HTTP bridge session reuse and owner routing MUST perform durable renewal,
+membership and endpoint database I/O outside the global registry lock, including
+the operation's execute, commit, owner-read, rollback and close await chain.
+Cancellation MAY remain pending while canonical teardown owns its session; it
+MUST NOT prevent unrelated registry admission or alias removal during that
+teardown. Renewal MUST remain request-owned, without a detached renewal worker
+or a new arbitrary timeout.
+
+Both canonical and previous-response reuse MUST capture immutable session
+identity, durable ID/epoch, account/transport, relevant aliases, inflight identity
+and reservation ownership under the lock. Unanchored canonical reuse MUST reserve
+using the server request scope before yielding. After I/O, selection eligibility
+and captured inputs MUST be revalidated under the lock before accepted-use
+metadata, alias promotion or return. Superseded results MUST NOT return an old
+session, evict a winner, clear its reservation or overwrite its durable epoch.
+Creation waiters MUST re-enter registry selection rather than treating a creator
+future as a durable ownership receipt.
+
+Owner routing MUST compute hash ownership from the same resolved membership
+ring used for its routing decision. A membership/endpoint result or error whose
+registry inputs changed while suspended MUST be discarded and routing reselected
+before forwarding, detachment or creation admission. Live local reuse MUST NOT
+require a ring lookup. Endpoint absence MUST NOT override durable claim fencing,
+including refusal to take over a live DRAINING owner.
+
+#### Scenario: Cancellation cleanup leaves unrelated registry operations available
+
+- **GIVEN** canonical or previous-response reuse entered a real database execute,
+  commit or rollback path and its request-owned teardown remains gated
+- **WHEN** the reuse request is cancelled, including repeated cancellation
+- **THEN** unrelated soft admission and alias removal complete before teardown
+  is released
+- **AND** after release cancellation propagates and only that request's original
+  reservation is cleared; a committed write is not compensated without fencing
+
+#### Scenario: Previous-response eligibility changes during renewal
+
+- **GIVEN** previous-response reuse is awaiting durable renewal
+- **WHEN** the selected session is quarantined or marked to retire after drain
+- **THEN** reselection MUST NOT renew or publish that ineligible session for reuse
+- **AND** a still-eligible session remains available for independently renewed continuity
+
+#### Scenario: A superseded owner lookup cannot route past a new local winner
+
+- **GIVEN** membership or endpoint I/O is suspended after routing inputs were
+  captured
+- **WHEN** another request installs a local winner or changes the relevant alias
+  or inflight binding
+- **THEN** the old observation, including an endpoint error, is discarded
+- **AND** the current generation is independently selected and verified
+
+
 #### Scenario: wedged stale pending lock does not block fresh soft request
 
 - **GIVEN** the HTTP responses bridge has an idle or stale local session whose

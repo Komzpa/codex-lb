@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clock import Clock, Scheduler
@@ -11,6 +11,9 @@ from app.db.models import Account
 from app.modules.proxy._service.support import _HTTPBridgeSession, _HTTPBridgeSessionKey, _WebSocketRequestState
 from app.modules.proxy.durable_bridge_repository import DurableBridgeAliasRegistrationReceipt
 from app.modules.proxy.load_balancer import AccountSelection
+
+if TYPE_CHECKING:
+    from app.modules.proxy._service.http_bridge.helpers import _HTTPBridgeLeaseRenewal, _HTTPBridgeSessionSnapshot
 
 
 class _HTTPBridgeServiceProtocol(Protocol):
@@ -91,7 +94,9 @@ class _HTTPBridgeServiceProtocol(Protocol):
         *,
         owned_unanchored_handoff: bool,
     ) -> bool: ...
-    async def _refresh_durable_http_bridge_session(self, session: _HTTPBridgeSession) -> None: ...
+    async def _refresh_durable_http_bridge_session(
+        self, snapshot: _HTTPBridgeSessionSnapshot
+    ) -> _HTTPBridgeLeaseRenewal: ...
     def _http_bridge_pending_count_nowait(self, session: _HTTPBridgeSession, *, context: str) -> int | None: ...
     async def abandon_stale_http_bridge_operations(self) -> int: ...
     def _detach_http_bridge_session_locked(

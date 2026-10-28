@@ -20,6 +20,8 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.dml import Update
 
 import app.core.middleware.dashboard_overrides as dashboard_overrides_middleware_module
 import app.modules.proxy.load_balancer as load_balancer_module
@@ -35,6 +37,7 @@ from app.core.utils.request_id import (
     set_request_scope_id,
 )
 from app.core.utils.time import to_utc_naive, utcnow
+from app.core.clock import clock_for
 from app.db.models import (
     Account,
     AccountStatus,
@@ -58,6 +61,7 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _reserve_http_bridge_unanchored_handoff,
 )
 from app.modules.proxy.affinity import _codex_session_selection_key
+from app.modules.proxy.durable_bridge_coordinator import DurableBridgeLookup, DurableBridgeSessionCoordinator
 from app.modules.proxy.durable_bridge_repository import DurableBridgeRepository
 from app.modules.proxy.load_balancer import (
     CONTINUITY_OWNER_UNAVAILABLE,
@@ -3293,6 +3297,9 @@ async def test_v1_responses_http_bridge_waits_for_inflight_recreation_on_missing
         )
         await asyncio.sleep(0)
         assert not waiter.done()
+        async with service._http_bridge_lock:
+            service._http_bridge_sessions[replay_key] = expected_session
+            service._http_bridge_inflight_sessions.pop(replay_key)
         inflight_future.set_result(expected_session)
         returned = await waiter
     finally:
@@ -3532,8 +3539,9 @@ async def test_v1_responses_http_bridge_closes_disallowed_session_before_owner_m
     service._http_bridge_sessions[key] = stale_session
     service._http_bridge_turn_state_index[alias_key] = key
 
-    async def fake_http_bridge_owner_instance(session_key, settings, ring_membership=None):
+    async def fake_http_bridge_owner_instance(session_key, settings, ring_membership=None, *, resolved_ring=None):
         del settings, ring_membership
+        assert resolved_ring == ("instance-a", ("instance-a", "instance-b"))
         assert session_key == key
         return "instance-b"
 
@@ -12430,10 +12438,30 @@ async def test_v1_responses_http_bridge_reused_unanchored_refresh_reserves_canon
     refresh_started = asyncio.Event()
     allow_refresh = asyncio.Event()
 
-    async def blocked_refresh(session):
-        assert session is canonical
+    # Keep renewal suspended while a same-key follower takes its own fork.
+
+    async def blocked_refresh(snapshot):
+        assert snapshot.session is canonical
         refresh_started.set()
         await allow_refresh.wait()
+        return http_bridge_helpers_module._HTTPBridgeLeaseRenewal(
+            snapshot,
+            "instance-a",
+            DurableBridgeLookup(
+                session_id="durable-shared",
+                canonical_kind=shared_key.affinity_kind,
+                canonical_key=shared_key.affinity_key,
+                api_key_scope="",
+                account_id=canonical.account.id,
+                owner_instance_id="instance-a",
+                owner_epoch=1,
+                lease_expires_at=None,
+                state=HttpBridgeSessionState.ACTIVE,
+                latest_turn_state=None,
+                latest_response_id=None,
+            ),
+            None,
+        )
 
     async def fake_create_http_bridge_session(self, key, **kwargs):
         del self
@@ -12474,11 +12502,14 @@ async def test_v1_responses_http_bridge_reused_unanchored_refresh_reserves_canon
     assert canonical.unanchored_reservation_id == "refresh-request-a"
 
     second_task = asyncio.create_task(get_session("refresh-request-b"))
-    await asyncio.sleep(0)
-    assert not second_task.done()
-    allow_refresh.set()
-
-    first, second = await asyncio.gather(first_task, second_task)
+    try:
+        second = await asyncio.wait_for(asyncio.shield(second_task), timeout=_TEST_SYNC_TIMEOUT_SECONDS)
+        assert not allow_refresh.is_set()
+        assert not first_task.done()
+        assert canonical.unanchored_reservation_id == "refresh-request-a"
+    finally:
+        allow_refresh.set()
+        first, second = await asyncio.gather(first_task, second_task)
     try:
         assert first is canonical
         assert second is not canonical
@@ -12555,6 +12586,568 @@ async def test_v1_responses_http_bridge_cancellation_during_durable_refresh_rele
         reset_request_id(request_id_token)
 
     assert getattr(canonical, "unanchored_reservation_id", None) is None
+
+
+@pytest_asyncio.fixture
+async def _owned_registry_reuse(async_client, app_instance, monkeypatch):
+    _install_proxy_settings(
+        monkeypatch, admission_wait_timeout_seconds=1.0,
+        app_settings=_make_app_settings(enabled=True, instance_id="instance-a", instance_ring=[]),
+        dashboard_settings=_make_dashboard_settings(),
+    )
+    service = get_proxy_service_for_app(app_instance)
+    account_id = await _import_account(async_client, "owner-race", "owner-race@example.com")
+    key = proxy_module._HTTPBridgeSessionKey("session_header", "renewal-race", None)
+    canonical = _make_dummy_bridge_session(key)
+    canonical.account = await _get_account(account_id)
+    coordinator = service._durable_bridge
+
+    async def claim(instance_id="instance-a"):
+        return await coordinator.claim_live_session(
+            session_key_kind=key.affinity_kind, session_key_value=key.affinity_key, api_key_id=None,
+            instance_id=instance_id, owner_process_epoch="race-process", lease_ttl_seconds=60.0,
+            account_id=account_id, model="gpt-5.4", service_tier=None,
+            latest_turn_state=None, latest_response_id=None, allow_takeover=True,
+        )
+
+    claimed = await claim()
+    canonical.durable_session_id = claimed.session_id
+    canonical.durable_owner_epoch = claimed.owner_epoch
+    canonical.previous_response_ids.add("resp_race")
+    service._http_bridge_sessions[key] = canonical
+    service._http_bridge_previous_response_index[("resp_race", None)] = key
+
+    async def lookup(reuse_path):
+        request_key = key if reuse_path == "canonical" else proxy_module._HTTPBridgeSessionKey("request", "prev-race", None)
+        return await service._get_or_create_http_bridge_session(
+            request_key, headers={}, affinity=proxy_module._AffinityPolicy(), api_key=None,
+            request_model="gpt-5.4", idle_ttl_seconds=120.0, max_sessions=8,
+            previous_response_id="resp_race" if reuse_path == "previous_response" else None,
+        )
+
+    return SimpleNamespace(service=service, canonical=canonical, coordinator=coordinator, claim=claim, lookup=lookup)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reuse_path", ["canonical", "previous_response"])
+@pytest.mark.parametrize("failure", ["error", "missing"])
+async def test_http_bridge_durable_reuse_unavailable_fails_closed(_owned_registry_reuse, monkeypatch, reuse_path, failure):
+    case = _owned_registry_reuse
+    renew = AsyncMock(side_effect=RuntimeError("database unavailable")) if failure == "error" else AsyncMock(return_value=None)
+    monkeypatch.setattr(case.coordinator, "renew_live_session", renew)
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        await case.lookup(reuse_path)
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.payload["error"]["code"] == "upstream_unavailable"
+    assert case.service._http_bridge_sessions[case.canonical.key] is case.canonical
+    assert not case.canonical.closed
+    assert case.canonical.unanchored_reservation_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reuse_path", ["canonical", "previous_response"])
+async def test_http_bridge_delayed_foreign_renewal_rejects_stale_reuse(_owned_registry_reuse, monkeypatch, reuse_path):
+    case = _owned_registry_reuse
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = case.coordinator.renew_live_session
+
+    async def delayed_renewal(**kwargs):
+        entered.set()
+        await release.wait()
+        return await original(**kwargs)
+
+    monkeypatch.setattr(case.coordinator, "renew_live_session", delayed_renewal)
+    upstream = case.canonical.upstream
+    close = AsyncMock(wraps=upstream.close)
+    upstream.close = close
+    owner = asyncio.create_task(case.lookup(reuse_path))
+    try:
+        await _wait_for_event(entered)
+        foreign = await case.claim("instance-b")
+        assert foreign.owner_instance_id == "instance-b"
+    finally:
+        release.set()
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        await owner
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.payload["error"]["code"] == "bridge_instance_mismatch"
+    assert case.canonical.closed
+    assert case.canonical.key not in case.service._http_bridge_sessions
+    assert case.canonical.unanchored_reservation_id is None
+    await case.service._drain_http_bridge_background_cleanup_tasks(reason="test")
+    close.assert_awaited_once()
+    async with SessionLocal() as verification:
+        row = await verification.get(HttpBridgeSessionRecord, foreign.session_id)
+        assert row is not None
+        assert row.owner_instance_id == "instance-b"
+        assert row.owner_epoch == foreign.owner_epoch
+        assert row.state == HttpBridgeSessionState.ACTIVE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reuse_path", ["canonical", "previous_response"])
+@pytest.mark.parametrize("late_verdict", ["owned", "foreign", "error"])
+@pytest.mark.parametrize("replacement", [False, True], ids=["same-object-epoch", "replacement"])
+async def test_http_bridge_late_renewal_preserves_concurrent_replacement(
+    _owned_registry_reuse, monkeypatch, reuse_path, late_verdict, replacement,
+):
+    case = _owned_registry_reuse
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = case.coordinator.renew_live_session
+    if late_verdict == "foreign":
+        foreign = await case.claim("instance-b")
+        assert foreign.owner_instance_id == "instance-b"
+    calls = []
+
+    async def delayed_renewal(**kwargs):
+        calls.append(kwargs["owner_epoch"])
+        if len(calls) > 1:
+            return await original(**kwargs)
+        receipt = None if late_verdict == "error" else await original(**kwargs)
+        entered.set()
+        await release.wait()
+        if late_verdict == "error":
+            raise RuntimeError("late ownership read error")
+        return receipt
+
+    monkeypatch.setattr(case.coordinator, "renew_live_session", delayed_renewal)
+    owner = asyncio.create_task(case.lookup(reuse_path))
+    predecessor = case.canonical
+    try:
+        await _wait_for_event(entered)
+        claimed = await case.claim()
+        assert claimed.owner_instance_id == "instance-a"
+        async with case.service._http_bridge_lock:
+            if replacement:
+                detached = case.service._detach_http_bridge_session_locked(predecessor.key, expected_session=predecessor)
+                assert detached is predecessor
+                winner = _make_dummy_bridge_session(predecessor.key)
+                winner.account = predecessor.account
+                winner.previous_response_ids.add("resp_race")
+                case.service._http_bridge_sessions[winner.key] = winner
+            else:
+                winner = predecessor
+            winner.durable_session_id = claimed.session_id
+            winner.durable_owner_epoch = claimed.owner_epoch
+            winner.downstream_turn_state_aliases.add("winner-turn")
+            case.service._http_bridge_turn_state_index[("winner-turn", None)] = winner.key
+            case.service._http_bridge_previous_response_index[("resp_race", None)] = winner.key
+    finally:
+        release.set()
+    assert await owner is winner
+    assert len(calls) == 2
+    assert calls[0] < calls[1] == claimed.owner_epoch
+    assert not winner.closed
+    assert winner.durable_owner_epoch == claimed.owner_epoch
+    assert case.service._http_bridge_sessions[winner.key] is winner
+    assert case.service._http_bridge_turn_state_index[("winner-turn", None)] == winner.key
+    assert case.service._http_bridge_previous_response_index[("resp_race", None)] == winner.key
+    if replacement:
+        await case.service._close_http_bridge_session(predecessor)
+        await case.service._close_http_bridge_session(predecessor)
+        assert winner.resource_close_task is None
+        assert not winner.closed
+    async with SessionLocal() as verification:
+        row = await verification.get(HttpBridgeSessionRecord, claimed.session_id)
+        assert row is not None
+        assert row.owner_instance_id == "instance-a"
+        assert row.owner_epoch == claimed.owner_epoch
+        assert row.state == HttpBridgeSessionState.ACTIVE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["quarantine", "retire", "eligible"])
+async def test_http_bridge_previous_response_renewal_rechecks_eligibility(
+    _owned_registry_reuse, monkeypatch, transition,
+):
+    from app.modules.proxy._service.http_bridge.quarantine import _quarantine_http_bridge_session
+
+    case = _owned_registry_reuse
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = case.coordinator.renew_live_session
+    calls = []
+
+    async def held_renewal(**kwargs):
+        receipt = await original(**kwargs)
+        calls.append(receipt)
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+        return receipt
+
+    monkeypatch.setattr(case.coordinator, "renew_live_session", held_renewal)
+    owner = asyncio.create_task(case.lookup("previous_response"))
+    try:
+        await _wait_for_event(entered)
+        async with case.service._http_bridge_lock:
+            if transition == "quarantine":
+                _quarantine_http_bridge_session(case.service, case.canonical, reason="test")
+            elif transition == "retire":
+                case.canonical.upstream_control.retire_after_drain = True
+            else:
+                case.canonical.alias_registration_generation += 1
+    finally:
+        release.set()
+    if transition == "eligible":
+        assert await owner is case.canonical
+        assert len(calls) == 2
+    else:
+        with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+            await owner
+        assert exc_info.value.status_code == 502
+        assert case.canonical.request_model == "gpt-5.4"
+        assert case.service._http_bridge_sessions[case.canonical.key] is case.canonical
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_previous_response_alias_retarget_revalidates(_owned_registry_reuse, monkeypatch):
+    case = _owned_registry_reuse
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = case.coordinator.renew_live_session
+    calls = []
+
+    async def renewal(**kwargs):
+        calls.append(kwargs["session_id"])
+        receipt = await original(**kwargs)
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+        return receipt
+
+    monkeypatch.setattr(case.coordinator, "renew_live_session", renewal)
+    owner = asyncio.create_task(case.lookup("previous_response"))
+    try:
+        await _wait_for_event(entered)
+        winner_key = proxy_module._HTTPBridgeSessionKey("session_header", "retargeted", None)
+        winner = _make_dummy_bridge_session(winner_key)
+        winner.account = case.canonical.account
+        claimed = await case.coordinator.claim_live_session(
+            session_key_kind=winner_key.affinity_kind, session_key_value=winner_key.affinity_key, api_key_id=None,
+            instance_id="instance-a", owner_process_epoch="retarget", lease_ttl_seconds=60.0,
+            account_id=winner.account.id, model="gpt-5.4", service_tier=None,
+            latest_turn_state=None, latest_response_id=None, allow_takeover=False,
+        )
+        winner.durable_session_id, winner.durable_owner_epoch = claimed.session_id, claimed.owner_epoch
+        winner.previous_response_ids.add("resp_race")
+        async with case.service._http_bridge_lock:
+            case.service._http_bridge_sessions[winner_key] = winner
+            case.service._http_bridge_previous_response_index[("resp_race", None)] = winner_key
+    finally:
+        release.set()
+    assert await owner is winner
+    assert calls == [case.canonical.durable_session_id, winner.durable_session_id]
+    assert not case.canonical.closed
+    assert case.service._http_bridge_previous_response_index[("resp_race", None)] == winner_key
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_anchored_renewal_crosses_idle_ttl(_owned_registry_reuse, monkeypatch):
+    from app.modules.proxy._service.http_bridge import mixin as bridge_mixin
+
+    case = _owned_registry_reuse
+    session = case.canonical
+    original = case.coordinator.renew_live_session
+    calls = []
+
+    async def crossing_renewal(**kwargs):
+        result = await original(**kwargs)
+        calls.append(result)
+        session.last_used_at = clock_for(case.service).monotonic() - session.idle_ttl_seconds - 1
+        return result
+
+    async def unavailable_ring(*args, **kwargs):
+        raise RuntimeError("ring unavailable")
+
+    monkeypatch.setattr(case.coordinator, "renew_live_session", crossing_renewal)
+    monkeypatch.setattr(bridge_mixin, "_active_http_bridge_instance_ring", unavailable_ring)
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        await case.service._get_or_create_http_bridge_session(
+            session.key, headers={}, affinity=proxy_module._AffinityPolicy(), api_key=None,
+            request_model="gpt-5.4", idle_ttl_seconds=120.0, max_sessions=8,
+            previous_response_id="resp_race",
+        )
+    assert calls and calls[0] is not None
+    assert exc_info.value.status_code == 502
+    assert session.key not in case.service._http_bridge_sessions
+    assert session.unanchored_reservation_id is None
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_snapshot_churn_respects_request_deadline(_owned_registry_reuse, monkeypatch):
+    case = _owned_registry_reuse
+    original = case.coordinator.renew_live_session
+    calls = []
+
+    async def churning_renewal(**kwargs):
+        result = await original(**kwargs)
+        calls.append(result)
+        async with case.service._http_bridge_lock:
+            case.canonical.alias_registration_generation += 1
+        await asyncio.sleep(0.1)
+        return result
+
+    monkeypatch.setattr(case.coordinator, "renew_live_session", churning_renewal)
+    with pytest.raises(proxy_module.ProxyResponseError) as exc_info:
+        await asyncio.wait_for(
+            case.service._get_or_create_http_bridge_session(
+                case.canonical.key, headers={}, affinity=proxy_module._AffinityPolicy(), api_key=None,
+                request_model="gpt-5.4", idle_ttl_seconds=120.0, max_sessions=8,
+                request_deadline=clock_for(case.service).monotonic() + 0.35,
+            ),
+            timeout=2.0,
+        )
+    assert len(calls) >= 2
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.payload["error"]["code"] == "upstream_request_timeout"
+    assert case.canonical.unanchored_reservation_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["membership", "endpoint"])
+@pytest.mark.parametrize("mutation", ["session", "alias", "inflight"])
+async def test_http_bridge_ring_reads_leave_registry_available(
+    _owned_registry_reuse, monkeypatch, stage, mutation,
+):
+    case = _owned_registry_reuse
+    service = case.service
+    membership = service._ring_membership
+    await membership.register("instance-a", endpoint_base_url="http://instance-a")
+    await membership.register("instance-b", endpoint_base_url="http://instance-b")
+    key = next(
+        candidate for index in range(100)
+        if http_bridge_helpers_module._http_bridge_owner_from_ring(
+            candidate := proxy_module._HTTPBridgeSessionKey("turn_state_header", f"ring-held-{index}", None),
+            "instance-a", ("instance-a", "instance-b"),
+        ) == "instance-b"
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_list = membership.list_active
+    original_endpoint = membership.resolve_endpoint
+    list_calls, endpoint_calls = [], []
+
+    async def list_active(*args, **kwargs):
+        list_calls.append(kwargs)
+        result = await original_list(*args, **kwargs)
+        if stage == "membership" and len(list_calls) == 1:
+            entered.set()
+            await release.wait()
+        return result
+
+    async def resolve_endpoint(instance_id):
+        endpoint_calls.append(instance_id)
+        result = await original_endpoint(instance_id)
+        if stage == "endpoint" and len(endpoint_calls) == 1:
+            entered.set()
+            await release.wait()
+            raise RuntimeError("stale endpoint failure must not beat local winner")
+        return result
+
+    monkeypatch.setattr(membership, "list_active", list_active)
+    monkeypatch.setattr(membership, "resolve_endpoint", resolve_endpoint)
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock())
+
+    async def create_session(key, **kwargs):
+        session = _make_dummy_bridge_session(key)
+        session.request_model = kwargs["request_model"]
+        return session
+
+    monkeypatch.setattr(service, "_create_http_bridge_session", create_session)
+    incoming_turn = key.affinity_key
+
+    async def lookup(request_key=key, incoming=incoming_turn):
+        return await service._get_or_create_http_bridge_session(
+            request_key, headers={"x-codex-turn-state": incoming} if incoming else {},
+            affinity=proxy_module._AffinityPolicy(), api_key=None,
+            request_model="gpt-5.4", idle_ttl_seconds=120.0, max_sessions=8,
+            allow_forward_to_owner=True,
+        )
+
+    owner = asyncio.create_task(lookup())
+    unrelated_task = None
+    change_task = None
+    marker = None
+    try:
+        await _wait_for_event(entered)
+        winner = case.canonical
+
+        async def mutate_and_unregister():
+            nonlocal marker
+            async with service._http_bridge_lock:
+                service._unregister_http_bridge_previous_response_id_locked(case.canonical, "resp_race")
+                if mutation == "alias":
+                    service._http_bridge_turn_state_index[(incoming_turn, None)] = winner.key
+                else:
+                    old_key = winner.key
+                    service._http_bridge_sessions.pop(old_key, None)
+                    winner.key = key
+                    service._http_bridge_sessions[key] = winner
+                    if mutation == "inflight":
+                        marker = asyncio.get_running_loop().create_future()
+                        service._http_bridge_inflight_sessions[key] = marker
+
+        unrelated_task = asyncio.create_task(lookup(proxy_module._HTTPBridgeSessionKey("request", "ring-unrelated", None), None))
+        change_task = asyncio.create_task(mutate_and_unregister())
+        await asyncio.wait_for(
+            asyncio.gather(asyncio.shield(unrelated_task), asyncio.shield(change_task)), _TEST_SYNC_TIMEOUT_SECONDS
+        )
+        assert not release.is_set()
+        assert not owner.done()
+        assert ("resp_race", None) not in service._http_bridge_previous_response_index
+    finally:
+        release.set()
+        if marker is not None:
+            assert service._http_bridge_inflight_sessions.get(key) is marker
+            marker.set_result(winner)
+        await asyncio.gather(
+            owner, *(task for task in (unrelated_task, change_task) if task is not None), return_exceptions=True
+        )
+    assert await owner is winner
+    assert not winner.closed
+    assert len(list_calls) == 1
+    if stage == "endpoint":
+        assert endpoint_calls == ["instance-b"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reuse_path", ["canonical", "previous_response"])
+@pytest.mark.parametrize("phase", ["execute", "commit", "rollback"])
+async def test_http_bridge_reuse_db_cancellation_leaves_registry_available(
+    async_client, app_instance, monkeypatch, reuse_path, phase,
+):
+    _install_proxy_settings(
+        monkeypatch, admission_wait_timeout_seconds=1.0,
+        app_settings=_make_app_settings(enabled=True, instance_id="instance-a", instance_ring=[]),
+        dashboard_settings=_make_dashboard_settings(),
+    )
+    service = get_proxy_service_for_app(app_instance)
+    account_id = await _import_account(async_client, "owner-cancellation", "owner-cancellation@example.com")
+    key = proxy_module._HTTPBridgeSessionKey("session_header", "db-cancellation", None)
+    canonical = _make_dummy_bridge_session(key)
+    canonical.account = await _get_account(account_id)
+    claimed = await service._durable_bridge.claim_live_session(
+        session_key_kind=key.affinity_kind, session_key_value=key.affinity_key, api_key_id=None,
+        instance_id="instance-a", owner_process_epoch="test-cancellation", lease_ttl_seconds=60.0,
+        account_id=account_id, model=canonical.request_model, service_tier=None,
+        latest_turn_state=None, latest_response_id=None, allow_takeover=False,
+    )
+    canonical.durable_session_id = claimed.session_id
+    canonical.durable_owner_epoch = claimed.owner_epoch
+    service._http_bridge_sessions[key] = canonical
+    canonical.previous_response_ids.add("resp_cancel_owner")
+    alias_key = ("resp_cancel_owner", None)
+    service._http_bridge_previous_response_index[alias_key] = key
+    async with SessionLocal() as verification:
+        baseline = await verification.get(HttpBridgeSessionRecord, claimed.session_id)
+        assert baseline is not None
+        original_last_seen = baseline.last_seen_at
+    operation_entered = asyncio.Event()
+    cleanup_entered = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    transaction_at_gate = []
+    owned_sessions = []
+
+    class GatedSession(AsyncSession):
+        async def execute(self, statement, *args, **kwargs):
+            result = await super().execute(statement, *args, **kwargs)
+            if self is owned_sessions[0] and isinstance(statement, Update) and statement.table.name == "http_bridge_sessions":
+                transaction_at_gate.append(self.in_transaction())
+                if phase == "rollback":
+                    raise RuntimeError("force owned rollback after actual fenced UPDATE")
+                if phase == "execute":
+                    operation_entered.set()
+                    await asyncio.Event().wait()
+            return result
+
+        async def commit(self):
+            await super().commit()
+            if self is owned_sessions[0] and phase == "commit":
+                transaction_at_gate.append(self.in_transaction())
+                operation_entered.set()
+                await asyncio.Event().wait()
+
+        async def rollback(self):
+            cleanup_entered.set()
+            await release_cleanup.wait()
+            await super().rollback()
+
+        async def close(self):
+            cleanup_entered.set()
+            await release_cleanup.wait()
+            await super().close()
+
+    def gated_factory():
+        session = GatedSession(bind=SessionLocal.kw["bind"], expire_on_commit=False)
+        owned_sessions.append(session)
+        return session
+
+    monkeypatch.setattr(service, "_durable_bridge", DurableBridgeSessionCoordinator(gated_factory))
+    monkeypatch.setattr(service, "_claim_durable_http_bridge_session", AsyncMock())
+
+    async def create_session(key, **kwargs):
+        session = _make_dummy_bridge_session(key)
+        session.request_model = kwargs["request_model"]
+        return session
+
+    monkeypatch.setattr(service, "_create_http_bridge_session", create_session)
+
+    async def lookup(request_key, previous_response_id=None):
+        return await service._get_or_create_http_bridge_session(
+            request_key, headers={}, affinity=proxy_module._AffinityPolicy(), api_key=None,
+            request_model="gpt-5.4", idle_ttl_seconds=120.0, max_sessions=8,
+            previous_response_id=previous_response_id,
+        )
+
+    request_key = key if reuse_path == "canonical" else proxy_module._HTTPBridgeSessionKey("request", "prev", None)
+    token = set_request_scope_id("db-cancellation-owner")
+    try:
+        owner = asyncio.create_task(lookup(request_key, "resp_cancel_owner" if reuse_path == "previous_response" else None))
+    finally:
+        reset_request_scope_id(token)
+    progress = None
+    unregister = None
+    try:
+        if phase != "rollback":
+            await _wait_for_event(operation_entered)
+            assert transaction_at_gate == ([True] if phase == "execute" else [True, False])
+            owner.cancel()
+        await _wait_for_event(cleanup_entered)
+        assert not release_cleanup.is_set()
+        if phase == "rollback":
+            assert transaction_at_gate == [True]
+            owner.cancel()
+        owner.cancel()
+
+        async def unregister_alias():
+            async with service._http_bridge_lock:
+                service._unregister_http_bridge_previous_response_id_locked(canonical, "resp_cancel_owner")
+
+        progress = asyncio.create_task(lookup(proxy_module._HTTPBridgeSessionKey("request", "unrelated", None)))
+        unregister = asyncio.create_task(unregister_alias())
+        unrelated, _ = await asyncio.wait_for(
+            asyncio.gather(asyncio.shield(progress), asyncio.shield(unregister)),
+            timeout=_TEST_SYNC_TIMEOUT_SECONDS,
+        )
+        assert unrelated is not canonical
+        assert alias_key not in service._http_bridge_previous_response_index
+        assert not release_cleanup.is_set()
+        assert not owner.done()
+        assert len(owned_sessions) == 1
+    finally:
+        release_cleanup.set()
+        owner.cancel()
+        await asyncio.gather(owner, *(task for task in (progress, unregister) if task is not None), return_exceptions=True)
+    assert owner.cancelled()
+    assert canonical.unanchored_reservation_id is None
+    assert all(not session.in_transaction() for session in owned_sessions)
+    async with SessionLocal() as verification:
+        row = await verification.get(HttpBridgeSessionRecord, claimed.session_id)
+        assert row is not None
+        assert row.owner_epoch == claimed.owner_epoch
+        assert row.owner_instance_id == "instance-a"
+        if phase == "commit":
+            assert to_utc_naive(row.last_seen_at) > to_utc_naive(original_last_seen)
+        else:
+            assert to_utc_naive(row.last_seen_at) == to_utc_naive(original_last_seen)
 
 
 @pytest.mark.asyncio
@@ -12725,12 +13318,12 @@ async def test_v1_responses_http_bridge_forks_follower_when_account_assignment_c
             create_started.set()
             await _wait_for_event(release_create)
             session = _make_dummy_bridge_session(key)
-            cast(Any, session).account = SimpleNamespace(id=stale_account_id, status=AccountStatus.ACTIVE)
+            cast(Any, session).account = SimpleNamespace(id=stale_account_id, status=AccountStatus.ACTIVE, plan_type="plus")
             session.queued_request_count = 1
             session.upstream_control.retire_after_drain = True
             return session
         session = _make_dummy_bridge_session(key)
-        cast(Any, session).account = SimpleNamespace(id=fresh_account_id, status=AccountStatus.ACTIVE)
+        cast(Any, session).account = SimpleNamespace(id=fresh_account_id, status=AccountStatus.ACTIVE, plan_type="plus")
         return session
 
     monkeypatch.setattr(proxy_module.ProxyService, "_create_http_bridge_session", fake_create_http_bridge_session)
