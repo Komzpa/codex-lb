@@ -1,9 +1,0 @@
-{
-  "app/modules/proxy/_service/http_bridge/session_registry.py": "bd0c0760ab54f340014cf6ae3ce14bb3f8d5a6a580d2687158cef0c857f26189",
-  "tests/unit/test_proxy_http_bridge.py": "9d61b9876ee0764d0833c52e9aafe32964900ea9cb790ee09f2cd7fb844e1bbf",
-  "Cargo.toml": "39ba328c836a78adcfd547bb386d7a2b640317aaa568c2cca4c67081eebb8246",
-  "Cargo.lock": "6463b89c9abbc82ceb57edc1dedd60a2dc62c92f99178d90acc13a5d65a512c8",
-  "pyproject.toml": "0080ee5d8b4c3d7ad3b42aa58f1f558c83759213dd7d0246d3f350a4725d5487",
-  "uv.lock": "0e583a911223eb451f915399a111cdc34160f20da37d46ecea5e6865afeeaa03",
-  "openspec/specs/proxy-architecture/spec.md": "6810fea41d985389a90c27e50aa112756d36f444d11f73aa2993b4db42a1dc04"
-}

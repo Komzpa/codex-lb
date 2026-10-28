@@ -1,6 +1,0 @@
-logs-122161377624.stdout: 2026-10-27T11:28:20.4563125Z │                    │                     │          │        │                   │               │ https://github.com/advisories/GHSA-6q48-6c7w-9gw2       │
-logs-122161377624.stdout: 2026-10-27T11:28:20.4563668Z └────────────────────┴─────────────────────┴──────────┴────────┴───────────────────┴───────────────┴─────────────────────────────────────────────────────────┘
-logs-122161377624.stdout: 2026-10-27T11:28:20.4584980Z ##[error]Process completed with exit code 1.
-logs-122161377624.stdout: 2026-10-27T11:28:20.4595758Z ##[end-action id=__aquasecurity_trivy-action_2.__run_4;outcome=failure;conclusion=failure;duration_ms=153]
-logs-122161377624.stdout: 2026-10-27T11:28:20.4599496Z ##[start-action display=Remove Trivy Envs file;id=__aquasecurity_trivy-action_2.__run_5]
-logs-122161377624.stdout: 2026-10-27T11:28:20.4632501Z ##[group]Run rm -f trivy_envs.txt
