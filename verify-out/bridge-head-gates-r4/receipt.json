@@ -1,0 +1,89 @@
+{
+  "start": "2026-10-27T11:33:08.317138+00:00",
+  "pid": 2226179,
+  "cwd": "/home/kom/proj/ai_pr/codex-lb-bridge-owner-main-20261027",
+  "commands": [
+    {
+      "name": "head-reviews",
+      "command": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query { repository(owner:\"Komzpa\",name:\"codex-lb\") { pullRequest(number:2) { headRefOid state isDraft mergeable mergeStateStatus reviewDecision reviews(first:100) { nodes { author { login } state body submittedAt commit { oid } } pageInfo { hasNextPage endCursor } } reviewThreads(first:100) { nodes { isResolved isOutdated path comments(first:100) { nodes { body url author { login } } pageInfo { hasNextPage endCursor } } } pageInfo { hasNextPage endCursor } } } } }"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "jobs",
+      "command": [
+        "gh",
+        "api",
+        "repos/Komzpa/codex-lb/actions/runs/40495930030/jobs?per_page=100"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "logs-122161377624",
+      "command": [
+        "gh",
+        "api",
+        "repos/Komzpa/codex-lb/actions/jobs/122161377624/logs"
+      ],
+      "exit": 0
+    }
+  ],
+  "stale": false,
+  "previously_pending": [
+    {
+      "id": 122161377344,
+      "name": "Tests (pytest, unit)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377344"
+    },
+    {
+      "id": 122161377351,
+      "name": "Tests (pytest, integration-bridge)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377351"
+    },
+    {
+      "id": 122161377606,
+      "name": "Tests (pytest, integration-core-1)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377606"
+    },
+    {
+      "id": 122161377624,
+      "name": "Docker build",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377624"
+    },
+    {
+      "id": 122161377627,
+      "name": "Tests (pytest, integration-core-2)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377627"
+    },
+    {
+      "id": 122161377699,
+      "name": "Tests (pytest, integration-core-3)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377699"
+    },
+    {
+      "id": 122161377702,
+      "name": "Tests (pytest, PostgreSQL)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377702"
+    }
+  ],
+  "finish": "2026-10-27T11:33:12.605633+00:00"
+}

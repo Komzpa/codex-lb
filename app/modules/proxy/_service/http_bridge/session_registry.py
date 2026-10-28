@@ -21,8 +21,6 @@ from app.db.models import StickySessionKind
 from app.modules.proxy._service.http_bridge import helpers as _http_bridge_helpers
 from app.modules.proxy._service.http_bridge.helpers import (
     _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
-    _HTTPBridgeLeaseRenewal,
-    _HTTPBridgeSessionSnapshot,
     _await_task_deferring_cancellation,
     _forget_http_bridge_denied_anchor_fence_owner,
     _http_bridge_allow_durable_takeover,
@@ -34,6 +32,8 @@ from app.modules.proxy._service.http_bridge.helpers import (
     _http_bridge_request_budget_seconds,
     _http_bridge_session_has_admission_waiter,
     _http_bridge_turn_state_alias_key,
+    _HTTPBridgeLeaseRenewal,
+    _HTTPBridgeSessionSnapshot,
     _is_missing_durable_bridge_table_error,
     _log_http_bridge_event,
     _persist_http_bridge_previous_response_alias,
@@ -123,7 +123,7 @@ class _HTTPBridgeSessionRegistryMixin:
         if not tasks:
             return not self._http_bridge_background_cleanup_failed
         try:
-            results = await asyncio.wait_for(
+            results = await scheduler_for(self).wait_for(
                 asyncio.gather(*(asyncio.shield(task) for task in tasks), return_exceptions=True),
                 timeout=_HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS,
             )
@@ -911,4 +911,3 @@ class _HTTPBridgeSessionRegistryMixin:
                 )
                 sessions_to_close.append(session)
         return sessions_to_close
-

@@ -10155,9 +10155,11 @@ async def test_get_or_create_http_bridge_session_registers_turn_state_alias_with
         "_active_http_bridge_instance_ring",
         AsyncMock(return_value=("instance-a", ["instance-a"])),
     )
-    refresh_durable = AsyncMock(side_effect=lambda snapshot: http_bridge_helpers_module._HTTPBridgeLeaseRenewal(
-        snapshot, "instance-a", None, None
-    ))
+    refresh_durable = AsyncMock(
+        side_effect=lambda snapshot: http_bridge_helpers_module._HTTPBridgeLeaseRenewal(
+            snapshot, "instance-a", None, None
+        )
+    )
     monkeypatch.setattr(service, "_refresh_durable_http_bridge_session", refresh_durable)
 
     resolved = await service._get_or_create_http_bridge_session(
@@ -23096,26 +23098,31 @@ async def test_close_all_http_bridge_sessions_fails_inflight_waiters() -> None:
 
 
 @pytest.mark.asyncio
-async def test_close_all_http_bridge_sessions_reports_background_cleanup_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+async def test_close_all_http_bridge_sessions_reports_background_cleanup_timeout() -> None:
+    scheduler = VirtualScheduler(VirtualClock())
+    service = proxy_service.ProxyService(cast(Any, nullcontext()), scheduler=scheduler)
     cleanup_release = asyncio.Event()
 
     async def stuck_cleanup() -> None:
         await cleanup_release.wait()
 
-    cleanup_task = asyncio.create_task(stuck_cleanup(), name="http-bridge-close-timeout")
+    cleanup_task = scheduler.create_task(stuck_cleanup(), name="http-bridge-close-timeout")
     service._background_cleanup_tasks.add(cleanup_task)
-    monkeypatch.setattr(http_bridge_helpers_module, "_HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS", 0.01)
+    shutdown_task = asyncio.create_task(service.close_all_http_bridge_sessions())
 
     try:
-        assert await service.close_all_http_bridge_sessions() is False
+        await scheduler.drain()
+        assert not shutdown_task.done()
+        await scheduler.advance(http_bridge_session_registry_module._HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS)
+        assert await asyncio.wait_for(shutdown_task, timeout=1.0) is False
         assert cleanup_task in service._background_cleanup_tasks
+        assert not cleanup_task.done()
     finally:
         cleanup_release.set()
         await cleanup_task
         service._background_cleanup_tasks.discard(cleanup_task)
+        await shutdown_task
+    assert await service._drain_http_bridge_background_cleanup_tasks(reason="test-released") is True
 
 
 @pytest.mark.asyncio

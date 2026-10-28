@@ -1,0 +1,344 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  4%]
+........................................................................ [  9%]
+........................................................................ [ 14%]
+........................................................................ [ 19%]
+........................................................................ [ 24%]
+........................................................................ [ 29%]
+........................................................................ [ 34%]
+........................................................................ [ 39%]
+........................................................................ [ 44%]
+........................................................................ [ 49%]
+........................................................................ [ 54%]
+........................................................................ [ 59%]
+........................................................................ [ 64%]
+........................................................................ [ 69%]
+........................................................................ [ 74%]
+........................................................................ [ 79%]
+........................................................................ [ 84%]
+..................................F........................F............ [ 89%]
+........................................................................ [ 93%]
+........................................................................ [ 98%]
+................                                                         [100%]
+=================================== FAILURES ===================================
+_____________________ test_repository_allowances_are_exact _____________________
+[gw7] linux -- Python 3.14.4 /home/kom/proj/ai_pr/codex-lb-bridge-owner-main-20261027/.venv/bin/python
+tests/unit/test_check_proxy_timing_seams.py:684: in test_repository_allowances_are_exact
+    assert counts("timing") == config.timing_allowances
+E   AssertionError: assert {'app/modules...rg': 19}, ...} == {'app/core/ut...awn': 3}, ...}
+E     
+E     Omitting 6 identical items, use -vv to show
+E     Right contains 1 more item:
+E     {'app/modules/proxy/_service/http_bridge/mixin.py': {'raw-timeout': 1}}
+E     
+E     Full diff:
+E       {
+E     -     'app/core/utils/shared_future.py': {
+E     -         'raw-task-spawn': 1,
+E     -     },
+E           'app/modules/proxy/_service/compact.py': {
+E               'raw-sleep': 1,
+E               'raw-timeout': 1,
+E               'raw-task-spawn': 1,
+E     -     },
+E     -     'app/modules/proxy/_service/http_bridge/mixin.py': {
+E     -         'raw-timeout': 1,
+E           },
+E           'app/modules/proxy/_service/realtime_live.py': {
+E               'raw-timeout': 2,
+E               'raw-task-spawn': 3,
+E           },
+E           'app/modules/proxy/_service/request_log.py': {
+E               'raw-timeout': 1,
+E           },
+E           'app/modules/proxy/api.py': {
+E               'missing-scheduler-kwarg': 19,
+E           },
+E           'app/modules/proxy/http_bridge_event_batcher.py': {
+E               'raw-timeout': 3,
+E               'raw-task-spawn': 3,
+E           },
+E     +     'app/core/utils/shared_future.py': {
+E     +         'raw-task-spawn': 1,
+E     +     },
+E       }
+______________ test_repository_report_reproduces_committed_block _______________
+[gw6] linux -- Python 3.14.4 /home/kom/proj/ai_pr/codex-lb-bridge-owner-main-20261027/.venv/bin/python
+tests/unit/test_check_proxy_timing_seams.py:700: in test_repository_report_reproduces_committed_block
+    assert tomllib.loads(rendered) == committed
+E   AssertionError: assert {'scheduler_k...py': 2, ...}}} == {'scheduler_k...py': 2, ...}}}
+E     
+E     Omitting 1 identical items, use -vv to show
+E     Differing items:
+E     {'allowances': {'timing': {'app/core/utils/shared_future.py': {'raw-task-spawn': 1}, 'app/modules/proxy/_service/compa...e/codex_control.py': 2, 'app/modules/proxy/_service/compact.py': 6, 'app/modules/proxy/_service/file_ops.py': 2, ...}}} != {'allowances': {'timing': {'app/core/utils/shared_future.py': {'raw-task-spawn': 1}, 'app/modules/proxy/_service/compa...e/codex_control.py': 2, 'app/modules/proxy/_service/compact.py': 6, 'app/modules/proxy/_service/file_ops.py': 2, ...}}}
+E     
+E     Full diff:
+E       {
+E           'scheduler_kwarg_required': {
+E               '_await_cancelled_task': 'scheduler',
+E               '_await_cleanup_deferring_cancellation': 'scheduler',
+E               '_await_owned_websocket_task_after_reader_cancellation': 'scheduler',
+E               '_await_result_deferring_cancellation': 'scheduler',
+E               '_cancel_and_track_cancelled_task': 'scheduler',
+E               '_cancel_http_bridge_reader_child': 'scheduler_owner',
+E               '_create_first_stream_probe_task': 'scheduler',
+E               '_iter_account_capacity_recovery_wait': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E               '_iter_account_capacity_wait_sse': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E               '_iter_sse_event_blocks': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E               '_probe_chat_stream_startup_error': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E               '_probe_stream_startup_error': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E               '_process_parsed_http_bridge_upstream_event': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E               '_release_reservation_best_effort': 'scheduler',
+E               '_release_websocket_response_create_gate': 'scheduler',
+E               '_sleep_for_account_selection_recovery': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E               '_wait_before_http_bridge_model_capacity_retry': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E               '_wait_for_first_stream_probe': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E               '_wait_for_websocket_continuity_gap': [
+E                   'scheduler',
+E                   'clock',
+E               ],
+E           },
+E           'allowances': {
+E               'timing': {
+E                   'app/core/utils/shared_future.py': {
+E                       'raw-task-spawn': 1,
+E                   },
+E                   'app/modules/proxy/_service/compact.py': {
+E                       'raw-sleep': 1,
+E                       'raw-timeout': 1,
+E                       'raw-task-spawn': 1,
+E                   },
+E     -             'app/modules/proxy/_service/http_bridge/mixin.py': {
+E     -                 'raw-timeout': 1,
+E     -             },
+E                   'app/modules/proxy/_service/realtime_live.py': {
+E                       'raw-timeout': 2,
+E                       'raw-task-spawn': 3,
+E                   },
+E                   'app/modules/proxy/_service/request_log.py': {
+E                       'raw-timeout': 1,
+E                   },
+E                   'app/modules/proxy/api.py': {
+E                       'missing-scheduler-kwarg': 19,
+E                   },
+E                   'app/modules/proxy/http_bridge_event_batcher.py': {
+E                       'raw-timeout': 3,
+E                       'raw-task-spawn': 3,
+E                   },
+E               },
+E               'clock': {
+E                   'app/modules/proxy/_service/clock_budget.py': 1,
+E                   'app/modules/proxy/_service/codex_control.py': 2,
+E                   'app/modules/proxy/_service/compact.py': 6,
+E                   'app/modules/proxy/_service/file_ops.py': 2,
+E                   'app/modules/proxy/_service/http_bridge/helpers.py': 1,
+E                   'app/modules/proxy/_service/rate_limit.py': 2,
+E                   'app/modules/proxy/_service/realtime_live.py': 2,
+E                   'app/modules/proxy/_service/request_log.py': 2,
+E                   'app/modules/proxy/_service/support.py': 2,
+E                   'app/modules/proxy/_service/transcribe.py': 2,
+E                   'app/modules/proxy/_service/warmup.py': 2,
+E                   'app/modules/proxy/_service/websocket/helpers.py': 3,
+E                   'app/modules/proxy/account_cache.py': 2,
+E                   'app/modules/proxy/account_eligibility.py': 1,
+E                   'app/modules/proxy/api.py': 8,
+E                   'app/modules/proxy/durable_bridge_repository.py': 2,
+E                   'app/modules/proxy/images_observability.py': 1,
+E                   'app/modules/proxy/images_service.py': 2,
+E                   'app/modules/proxy/load_balancer.py': 3,
+E                   'app/modules/proxy/rate_limit_cache.py': 2,
+E               },
+E           },
+E       }
+=============================== warnings summary ===============================
+tests/unit/test_bridge_ring_lifecycle.py::test_reconcile_skips_recently_used_sessions
+tests/unit/test_bridge_ring_lifecycle.py::test_operation_retry_reset_clears_partial_spool
+tests/integration/test_http_responses_bridge.py::test_http_bridge_reuse_db_cancellation_leaves_registry_available[execute-previous_response]
+tests/integration/test_http_responses_bridge.py::test_smart_chat_tool_loop_reuses_bridge_with_chat_contract[/v1/chat/completions-True]
+tests/integration/test_http_responses_bridge.py::test_v1_responses_http_bridge_gate_wait_is_clamped_to_remaining_budget
+tests/integration/test_http_responses_bridge.py::test_http_bridge_routing_hint_is_first_handshake_only
+tests/integration/test_http_responses_bridge.py::test_backend_responses_http_emits_turn_state_header_and_reuses_when_compatible[model-transition-fork]
+tests/integration/test_http_responses_bridge.py::test_backend_responses_http_bridge_replays_verified_full_resend_after_stale_owner[newer-circuit-before-submit]
+  /home/kom/proj/ai_pr/codex-lb-bridge-owner-main-20261027/.venv/lib/python3.14/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/unit/test_check_proxy_timing_seams.py::test_repository_allowances_are_exact - AssertionError: assert {'app/modules...rg': 19}, ...} == {'app/core/ut...awn': 3}, ...}
+  
+  Omitting 6 identical items, use -vv to show
+  Right contains 1 more item:
+  {'app/modules/proxy/_service/http_bridge/mixin.py': {'raw-timeout': 1}}
+  
+  Full diff:
+    {
+  -     'app/core/utils/shared_future.py': {
+  -         'raw-task-spawn': 1,
+  -     },
+        'app/modules/proxy/_service/compact.py': {
+            'raw-sleep': 1,
+            'raw-timeout': 1,
+            'raw-task-spawn': 1,
+  -     },
+  -     'app/modules/proxy/_service/http_bridge/mixin.py': {
+  -         'raw-timeout': 1,
+        },
+        'app/modules/proxy/_service/realtime_live.py': {
+            'raw-timeout': 2,
+            'raw-task-spawn': 3,
+        },
+        'app/modules/proxy/_service/request_log.py': {
+            'raw-timeout': 1,
+        },
+        'app/modules/proxy/api.py': {
+            'missing-scheduler-kwarg': 19,
+        },
+        'app/modules/proxy/http_bridge_event_batcher.py': {
+            'raw-timeout': 3,
+            'raw-task-spawn': 3,
+        },
+  +     'app/core/utils/shared_future.py': {
+  +         'raw-task-spawn': 1,
+  +     },
+    }
+FAILED tests/unit/test_check_proxy_timing_seams.py::test_repository_report_reproduces_committed_block - AssertionError: assert {'scheduler_k...py': 2, ...}}} == {'scheduler_k...py': 2, ...}}}
+  
+  Omitting 1 identical items, use -vv to show
+  Differing items:
+  {'allowances': {'timing': {'app/core/utils/shared_future.py': {'raw-task-spawn': 1}, 'app/modules/proxy/_service/compa...e/codex_control.py': 2, 'app/modules/proxy/_service/compact.py': 6, 'app/modules/proxy/_service/file_ops.py': 2, ...}}} != {'allowances': {'timing': {'app/core/utils/shared_future.py': {'raw-task-spawn': 1}, 'app/modules/proxy/_service/compa...e/codex_control.py': 2, 'app/modules/proxy/_service/compact.py': 6, 'app/modules/proxy/_service/file_ops.py': 2, ...}}}
+  
+  Full diff:
+    {
+        'scheduler_kwarg_required': {
+            '_await_cancelled_task': 'scheduler',
+            '_await_cleanup_deferring_cancellation': 'scheduler',
+            '_await_owned_websocket_task_after_reader_cancellation': 'scheduler',
+            '_await_result_deferring_cancellation': 'scheduler',
+            '_cancel_and_track_cancelled_task': 'scheduler',
+            '_cancel_http_bridge_reader_child': 'scheduler_owner',
+            '_create_first_stream_probe_task': 'scheduler',
+            '_iter_account_capacity_recovery_wait': [
+                'scheduler',
+                'clock',
+            ],
+            '_iter_account_capacity_wait_sse': [
+                'scheduler',
+                'clock',
+            ],
+            '_iter_sse_event_blocks': [
+                'scheduler',
+                'clock',
+            ],
+            '_probe_chat_stream_startup_error': [
+                'scheduler',
+                'clock',
+            ],
+            '_probe_stream_startup_error': [
+                'scheduler',
+                'clock',
+            ],
+            '_process_parsed_http_bridge_upstream_event': [
+                'scheduler',
+                'clock',
+            ],
+            '_release_reservation_best_effort': 'scheduler',
+            '_release_websocket_response_create_gate': 'scheduler',
+            '_sleep_for_account_selection_recovery': [
+                'scheduler',
+                'clock',
+            ],
+            '_wait_before_http_bridge_model_capacity_retry': [
+                'scheduler',
+                'clock',
+            ],
+            '_wait_for_first_stream_probe': [
+                'scheduler',
+                'clock',
+            ],
+            '_wait_for_websocket_continuity_gap': [
+                'scheduler',
+                'clock',
+            ],
+        },
+        'allowances': {
+            'timing': {
+                'app/core/utils/shared_future.py': {
+                    'raw-task-spawn': 1,
+                },
+                'app/modules/proxy/_service/compact.py': {
+                    'raw-sleep': 1,
+                    'raw-timeout': 1,
+                    'raw-task-spawn': 1,
+                },
+  -             'app/modules/proxy/_service/http_bridge/mixin.py': {
+  -                 'raw-timeout': 1,
+  -             },
+                'app/modules/proxy/_service/realtime_live.py': {
+                    'raw-timeout': 2,
+                    'raw-task-spawn': 3,
+                },
+                'app/modules/proxy/_service/request_log.py': {
+                    'raw-timeout': 1,
+                },
+                'app/modules/proxy/api.py': {
+                    'missing-scheduler-kwarg': 19,
+                },
+                'app/modules/proxy/http_bridge_event_batcher.py': {
+                    'raw-timeout': 3,
+                    'raw-task-spawn': 3,
+                },
+            },
+            'clock': {
+                'app/modules/proxy/_service/clock_budget.py': 1,
+                'app/modules/proxy/_service/codex_control.py': 2,
+                'app/modules/proxy/_service/compact.py': 6,
+                'app/modules/proxy/_service/file_ops.py': 2,
+                'app/modules/proxy/_service/http_bridge/helpers.py': 1,
+                'app/modules/proxy/_service/rate_limit.py': 2,
+                'app/modules/proxy/_service/realtime_live.py': 2,
+                'app/modules/proxy/_service/request_log.py': 2,
+                'app/modules/proxy/_service/support.py': 2,
+                'app/modules/proxy/_service/transcribe.py': 2,
+                'app/modules/proxy/_service/warmup.py': 2,
+                'app/modules/proxy/_service/websocket/helpers.py': 3,
+                'app/modules/proxy/account_cache.py': 2,
+                'app/modules/proxy/account_eligibility.py': 1,
+                'app/modules/proxy/api.py': 8,
+                'app/modules/proxy/durable_bridge_repository.py': 2,
+                'app/modules/proxy/images_observability.py': 1,
+                'app/modules/proxy/images_service.py': 2,
+                'app/modules/proxy/load_balancer.py': 3,
+                'app/modules/proxy/rate_limit_cache.py': 2,
+            },
+        },
+    }
+2 failed, 1454 passed, 8 warnings in 136.14s (0:02:16)

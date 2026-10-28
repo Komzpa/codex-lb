@@ -1,0 +1,2251 @@
+{
+  "total_count": 25,
+  "jobs": [
+    {
+      "id": 122171461952,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccfyRQA",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171461952",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171461952",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:48:52Z",
+      "started_at": "2026-10-27T11:48:55Z",
+      "completed_at": "2026-10-27T11:49:13Z",
+      "name": "OpenSpec validation",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:48:56Z",
+          "completed_at": "2026-10-27T11:48:56Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:48:56Z",
+          "completed_at": "2026-10-27T11:49:02Z"
+        },
+        {
+          "name": "Validate canonical OpenSpec capabilities",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:02Z",
+          "completed_at": "2026-10-27T11:49:10Z"
+        },
+        {
+          "name": "Strictly validate changed OpenSpec folders",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:10Z",
+          "completed_at": "2026-10-27T11:49:12Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-27T11:49:12Z",
+          "completed_at": "2026-10-27T11:49:12Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-27T11:49:12Z",
+          "completed_at": "2026-10-27T11:49:12Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171461952",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073268,
+      "runner_name": "GitHub Actions 1000073268",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171462223,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccfySTw",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171462223",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171462223",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:48:52Z",
+      "started_at": "2026-10-27T11:49:06Z",
+      "completed_at": "2026-10-27T11:49:17Z",
+      "name": "Contributors attribution",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:07Z",
+          "completed_at": "2026-10-27T11:49:07Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:07Z",
+          "completed_at": "2026-10-27T11:49:14Z"
+        },
+        {
+          "name": "Check all-contributors coverage",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:14Z",
+          "completed_at": "2026-10-27T11:49:15Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:49:15Z",
+          "completed_at": "2026-10-27T11:49:15Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:49:15Z",
+          "completed_at": "2026-10-27T11:49:15Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171462223",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073270,
+      "runner_name": "GitHub Actions 1000073270",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171462324,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccfyStA",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171462324",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171462324",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:48:52Z",
+      "started_at": "2026-10-27T11:49:02Z",
+      "completed_at": "2026-10-27T11:49:09Z",
+      "name": "Detect changes",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:03Z",
+          "completed_at": "2026-10-27T11:49:03Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:03Z",
+          "completed_at": "2026-10-27T11:49:06Z"
+        },
+        {
+          "name": "Detect full-suite events",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:06Z",
+          "completed_at": "2026-10-27T11:49:06Z"
+        },
+        {
+          "name": "Detect file changes",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:06Z",
+          "completed_at": "2026-10-27T11:49:07Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-27T11:49:07Z",
+          "completed_at": "2026-10-27T11:49:07Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-27T11:49:07Z",
+          "completed_at": "2026-10-27T11:49:07Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171462324",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073269,
+      "runner_name": "GitHub Actions 1000073269",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582668,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5ozA",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582668",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582668",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:49:12Z",
+      "completed_at": "2026-10-27T11:49:35Z",
+      "name": "Lint (ruff)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:13Z",
+          "completed_at": "2026-10-27T11:49:15Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:15Z",
+          "completed_at": "2026-10-27T11:49:18Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:18Z",
+          "completed_at": "2026-10-27T11:49:21Z"
+        },
+        {
+          "name": "Ruff check",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:21Z",
+          "completed_at": "2026-10-27T11:49:32Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 7,
+          "started_at": "2026-10-27T11:49:32Z",
+          "completed_at": "2026-10-27T11:49:32Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-27T11:49:32Z",
+          "completed_at": "2026-10-27T11:49:33Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-27T11:49:33Z",
+          "completed_at": "2026-10-27T11:49:33Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582668",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073272,
+      "runner_name": "GitHub Actions 1000073272",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582675,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5o0w",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582675",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582675",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:49:16Z",
+      "completed_at": "2026-10-27T11:52:38Z",
+      "name": "Rust workspace",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:17Z",
+          "completed_at": "2026-10-27T11:49:19Z"
+        },
+        {
+          "name": "Build EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:19Z",
+          "completed_at": "2026-10-27T11:49:38Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:38Z",
+          "completed_at": "2026-10-27T11:49:39Z"
+        },
+        {
+          "name": "Install pinned Rust toolchain",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:39Z",
+          "completed_at": "2026-10-27T11:49:46Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:49:46Z",
+          "completed_at": "2026-10-27T11:49:48Z"
+        },
+        {
+          "name": "Cache Cargo downloads",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:49:48Z",
+          "completed_at": "2026-10-27T11:49:48Z"
+        },
+        {
+          "name": "Check formatting, lints, tests, and release build",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:49:48Z",
+          "completed_at": "2026-10-27T11:51:49Z"
+        },
+        {
+          "name": "Run native routed and SSE wire probes",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-27T11:51:49Z",
+          "completed_at": "2026-10-27T11:52:10Z"
+        },
+        {
+          "name": "Audit Rust dependencies and licenses",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 9,
+          "started_at": "2026-10-27T11:52:10Z",
+          "completed_at": "2026-10-27T11:52:35Z"
+        },
+        {
+          "name": "Post Cache Cargo downloads",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 16,
+          "started_at": "2026-10-27T11:52:35Z",
+          "completed_at": "2026-10-27T11:52:35Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 17,
+          "started_at": "2026-10-27T11:52:35Z",
+          "completed_at": "2026-10-27T11:52:35Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-27T11:52:35Z",
+          "completed_at": "2026-10-27T11:52:36Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-27T11:52:36Z",
+          "completed_at": "2026-10-27T11:52:36Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582675",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073275,
+      "runner_name": "GitHub Actions 1000073275",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582676,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5o1A",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582676",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582676",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:49:12Z",
+      "completed_at": "2026-10-27T11:49:29Z",
+      "name": "Migration check (alembic)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:13Z",
+          "completed_at": "2026-10-27T11:49:13Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:13Z",
+          "completed_at": "2026-10-27T11:49:16Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:16Z",
+          "completed_at": "2026-10-27T11:49:19Z"
+        },
+        {
+          "name": "Validate migration policy and drift",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:19Z",
+          "completed_at": "2026-10-27T11:49:27Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:49:27Z",
+          "completed_at": "2026-10-27T11:49:27Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-27T11:49:27Z",
+          "completed_at": "2026-10-27T11:49:27Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-27T11:49:27Z",
+          "completed_at": "2026-10-27T11:49:28Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582676",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073271,
+      "runner_name": "GitHub Actions 1000073271",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582678,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5o1g",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582678",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582678",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:50:07Z",
+      "completed_at": "2026-10-27T11:50:27Z",
+      "name": "Type check (ty)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:50:08Z",
+          "completed_at": "2026-10-27T11:50:09Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:50:09Z",
+          "completed_at": "2026-10-27T11:50:13Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:50:13Z",
+          "completed_at": "2026-10-27T11:50:16Z"
+        },
+        {
+          "name": "Ty check",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:50:16Z",
+          "completed_at": "2026-10-27T11:50:24Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:50:24Z",
+          "completed_at": "2026-10-27T11:50:24Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-27T11:50:24Z",
+          "completed_at": "2026-10-27T11:50:24Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-27T11:50:24Z",
+          "completed_at": "2026-10-27T11:50:24Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582678",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073280,
+      "runner_name": "GitHub Actions 1000073280",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582695,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5o5w",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582695",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582695",
+      "status": "in_progress",
+      "conclusion": null,
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:49:29Z",
+      "completed_at": null,
+      "name": "Dashboard browser smoke (Playwright)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:30Z",
+          "completed_at": "2026-10-27T11:49:33Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:33Z",
+          "completed_at": "2026-10-27T11:49:36Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:36Z",
+          "completed_at": "2026-10-27T11:49:37Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:37Z",
+          "completed_at": "2026-10-27T11:49:42Z"
+        },
+        {
+          "name": "Cache Playwright browsers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:49:42Z",
+          "completed_at": "2026-10-27T11:49:47Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:49:47Z",
+          "completed_at": "2026-10-27T11:49:52Z"
+        },
+        {
+          "name": "Install frontend dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:49:52Z",
+          "completed_at": "2026-10-27T11:49:52Z"
+        },
+        {
+          "name": "Install Playwright Chromium",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-27T11:49:52Z",
+          "completed_at": "2026-10-27T11:59:35Z"
+        },
+        {
+          "name": "Run dashboard browser smoke test",
+          "status": "in_progress",
+          "conclusion": null,
+          "number": 9,
+          "started_at": "2026-10-27T11:59:35Z",
+          "completed_at": null
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "pending",
+          "conclusion": null,
+          "number": 14,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Cache Playwright browsers",
+          "status": "pending",
+          "conclusion": null,
+          "number": 15,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "pending",
+          "conclusion": null,
+          "number": 16,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "pending",
+          "conclusion": null,
+          "number": 17,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "pending",
+          "conclusion": null,
+          "number": 18,
+          "started_at": null,
+          "completed_at": null
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582695",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073277,
+      "runner_name": "GitHub Actions 1000073277",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582713,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5o-Q",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582713",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582713",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:49:20Z",
+      "completed_at": "2026-10-27T11:51:00Z",
+      "name": "Docker build",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:20Z",
+          "completed_at": "2026-10-27T11:49:23Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:23Z",
+          "completed_at": "2026-10-27T11:49:25Z"
+        },
+        {
+          "name": "Set up Docker Buildx",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:25Z",
+          "completed_at": "2026-10-27T11:49:33Z"
+        },
+        {
+          "name": "Build Docker image",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:33Z",
+          "completed_at": "2026-10-27T11:50:18Z"
+        },
+        {
+          "name": "Scan Docker image with Trivy (SARIF)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:50:18Z",
+          "completed_at": "2026-10-27T11:50:34Z"
+        },
+        {
+          "name": "Upload Trivy scan results to GitHub Security",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:50:34Z",
+          "completed_at": "2026-10-27T11:50:42Z"
+        },
+        {
+          "name": "Enforce Trivy high-severity gate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:50:42Z",
+          "completed_at": "2026-10-27T11:50:43Z"
+        },
+        {
+          "name": "Post Enforce Trivy high-severity gate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-27T11:50:43Z",
+          "completed_at": "2026-10-27T11:50:47Z"
+        },
+        {
+          "name": "Post Upload Trivy scan results to GitHub Security",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-27T11:50:47Z",
+          "completed_at": "2026-10-27T11:50:48Z"
+        },
+        {
+          "name": "Post Scan Docker image with Trivy (SARIF)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-27T11:50:48Z",
+          "completed_at": "2026-10-27T11:50:50Z"
+        },
+        {
+          "name": "Post Build Docker image",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-27T11:50:50Z",
+          "completed_at": "2026-10-27T11:50:51Z"
+        },
+        {
+          "name": "Post Set up Docker Buildx",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-27T11:50:51Z",
+          "completed_at": "2026-10-27T11:50:59Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-27T11:50:59Z",
+          "completed_at": "2026-10-27T11:50:59Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-27T11:50:59Z",
+          "completed_at": "2026-10-27T11:50:59Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582713",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073276,
+      "runner_name": "GitHub Actions 1000073276",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582730,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5pCg",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582730",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582730",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:50:11Z",
+      "completed_at": "2026-10-27T11:56:49Z",
+      "name": "Tests (pytest, unit)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:50:12Z",
+          "completed_at": "2026-10-27T11:50:14Z"
+        },
+        {
+          "name": "Skip backend tests for unrelated changes",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 2,
+          "started_at": "2026-10-27T11:50:14Z",
+          "completed_at": "2026-10-27T11:50:14Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:50:14Z",
+          "completed_at": "2026-10-27T11:50:17Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:50:17Z",
+          "completed_at": "2026-10-27T11:50:18Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:50:18Z",
+          "completed_at": "2026-10-27T11:50:23Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:50:23Z",
+          "completed_at": "2026-10-27T11:50:28Z"
+        },
+        {
+          "name": "Run tests",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 7,
+          "started_at": "2026-10-27T11:50:28Z",
+          "completed_at": "2026-10-27T11:56:47Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 11,
+          "started_at": "2026-10-27T11:56:47Z",
+          "completed_at": "2026-10-27T11:56:47Z"
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12,
+          "started_at": "2026-10-27T11:56:47Z",
+          "completed_at": "2026-10-27T11:56:47Z"
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 13,
+          "started_at": "2026-10-27T11:56:47Z",
+          "completed_at": "2026-10-27T11:56:47Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-27T11:56:47Z",
+          "completed_at": "2026-10-27T11:56:47Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-27T11:56:47Z",
+          "completed_at": "2026-10-27T11:56:47Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582730",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073281,
+      "runner_name": "GitHub Actions 1000073281",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582731,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5pCw",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582731",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582731",
+      "status": "in_progress",
+      "conclusion": null,
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:49:12Z",
+      "completed_at": null,
+      "name": "Tests (pytest, integration-core-1)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:13Z",
+          "completed_at": "2026-10-27T11:49:15Z"
+        },
+        {
+          "name": "Skip backend tests for unrelated changes",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:15Z",
+          "completed_at": "2026-10-27T11:49:15Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:15Z",
+          "completed_at": "2026-10-27T11:49:18Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:18Z",
+          "completed_at": "2026-10-27T11:49:20Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:49:20Z",
+          "completed_at": "2026-10-27T11:49:26Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:49:26Z",
+          "completed_at": "2026-10-27T11:49:34Z"
+        },
+        {
+          "name": "Run tests",
+          "status": "in_progress",
+          "conclusion": null,
+          "number": 7,
+          "started_at": "2026-10-27T11:49:34Z",
+          "completed_at": null
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "pending",
+          "conclusion": null,
+          "number": 11,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "pending",
+          "conclusion": null,
+          "number": 12,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "pending",
+          "conclusion": null,
+          "number": 13,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "pending",
+          "conclusion": null,
+          "number": 14,
+          "started_at": null,
+          "completed_at": null
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582731",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073274,
+      "runner_name": "GitHub Actions 1000073274",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582750,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5pHg",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582750",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582750",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:49:12Z",
+      "completed_at": "2026-10-27T11:50:05Z",
+      "name": "Package (build)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:13Z",
+          "completed_at": "2026-10-27T11:49:14Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:14Z",
+          "completed_at": "2026-10-27T11:49:17Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:17Z",
+          "completed_at": "2026-10-27T11:49:17Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:17Z",
+          "completed_at": "2026-10-27T11:49:22Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:49:22Z",
+          "completed_at": "2026-10-27T11:49:30Z"
+        },
+        {
+          "name": "Build and verify package",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:49:30Z",
+          "completed_at": "2026-10-27T11:50:02Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-27T11:50:02Z",
+          "completed_at": "2026-10-27T11:50:02Z"
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-27T11:50:02Z",
+          "completed_at": "2026-10-27T11:50:02Z"
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-27T11:50:02Z",
+          "completed_at": "2026-10-27T11:50:02Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-27T11:50:02Z",
+          "completed_at": "2026-10-27T11:50:02Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-27T11:50:02Z",
+          "completed_at": "2026-10-27T11:50:02Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582750",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073273,
+      "runner_name": "GitHub Actions 1000073273",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582756,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5pJA",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582756",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582756",
+      "status": "in_progress",
+      "conclusion": null,
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:50:29Z",
+      "completed_at": null,
+      "name": "Tests (pytest, integration-core-2)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:50:30Z",
+          "completed_at": "2026-10-27T11:50:32Z"
+        },
+        {
+          "name": "Skip backend tests for unrelated changes",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 2,
+          "started_at": "2026-10-27T11:50:32Z",
+          "completed_at": "2026-10-27T11:50:32Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:50:32Z",
+          "completed_at": "2026-10-27T11:50:35Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:50:35Z",
+          "completed_at": "2026-10-27T11:50:37Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:50:37Z",
+          "completed_at": "2026-10-27T11:50:42Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:50:42Z",
+          "completed_at": "2026-10-27T11:50:50Z"
+        },
+        {
+          "name": "Run tests",
+          "status": "in_progress",
+          "conclusion": null,
+          "number": 7,
+          "started_at": "2026-10-27T11:50:50Z",
+          "completed_at": null
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "pending",
+          "conclusion": null,
+          "number": 11,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "pending",
+          "conclusion": null,
+          "number": 12,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "pending",
+          "conclusion": null,
+          "number": 13,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "pending",
+          "conclusion": null,
+          "number": 14,
+          "started_at": null,
+          "completed_at": null
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582756",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073284,
+      "runner_name": "GitHub Actions 1000073284",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582761,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5pKQ",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582761",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582761",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:50:11Z",
+      "completed_at": "2026-10-27T11:55:57Z",
+      "name": "Tests (pytest, PostgreSQL)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:50:12Z",
+          "completed_at": "2026-10-27T11:50:14Z"
+        },
+        {
+          "name": "Initialize containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:50:14Z",
+          "completed_at": "2026-10-27T11:50:39Z"
+        },
+        {
+          "name": "Skip PostgreSQL tests for unrelated changes",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 3,
+          "started_at": "2026-10-27T11:50:39Z",
+          "completed_at": "2026-10-27T11:50:39Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:50:39Z",
+          "completed_at": "2026-10-27T11:50:41Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:50:41Z",
+          "completed_at": "2026-10-27T11:50:43Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:50:43Z",
+          "completed_at": "2026-10-27T11:50:47Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:50:47Z",
+          "completed_at": "2026-10-27T11:50:52Z"
+        },
+        {
+          "name": "Run tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-27T11:50:52Z",
+          "completed_at": "2026-10-27T11:55:54Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-27T11:55:54Z",
+          "completed_at": "2026-10-27T11:55:54Z"
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-27T11:55:54Z",
+          "completed_at": "2026-10-27T11:55:54Z"
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-27T11:55:54Z",
+          "completed_at": "2026-10-27T11:55:54Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-27T11:55:54Z",
+          "completed_at": "2026-10-27T11:55:55Z"
+        },
+        {
+          "name": "Stop containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-27T11:55:55Z",
+          "completed_at": "2026-10-27T11:55:55Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-27T11:55:55Z",
+          "completed_at": "2026-10-27T11:55:55Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582761",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073282,
+      "runner_name": "GitHub Actions 1000073282",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582815,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5pXw",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582815",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582815",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:49:32Z",
+      "completed_at": "2026-10-27T11:50:11Z",
+      "name": "Migration check (alembic, PostgreSQL)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:33Z",
+          "completed_at": "2026-10-27T11:49:34Z"
+        },
+        {
+          "name": "Initialize containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:34Z",
+          "completed_at": "2026-10-27T11:49:54Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:54Z",
+          "completed_at": "2026-10-27T11:49:57Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:57Z",
+          "completed_at": "2026-10-27T11:50:00Z"
+        },
+        {
+          "name": "Validate migration policy and drift on PostgreSQL",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:50:00Z",
+          "completed_at": "2026-10-27T11:50:08Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-27T11:50:08Z",
+          "completed_at": "2026-10-27T11:50:08Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-27T11:50:08Z",
+          "completed_at": "2026-10-27T11:50:08Z"
+        },
+        {
+          "name": "Stop containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-27T11:50:08Z",
+          "completed_at": "2026-10-27T11:50:10Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-27T11:50:10Z",
+          "completed_at": "2026-10-27T11:50:10Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582815",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073278,
+      "runner_name": "GitHub Actions 1000073278",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582838,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5pdg",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582838",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582838",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:49:37Z",
+      "completed_at": "2026-10-27T11:50:48Z",
+      "name": "Tests (pytest, e2e)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:49:39Z",
+          "completed_at": "2026-10-27T11:49:40Z"
+        },
+        {
+          "name": "Skip backend tests for unrelated changes",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 2,
+          "started_at": "2026-10-27T11:49:40Z",
+          "completed_at": "2026-10-27T11:49:40Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:49:40Z",
+          "completed_at": "2026-10-27T11:49:43Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:49:43Z",
+          "completed_at": "2026-10-27T11:49:46Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:49:46Z",
+          "completed_at": "2026-10-27T11:49:52Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:49:52Z",
+          "completed_at": "2026-10-27T11:50:01Z"
+        },
+        {
+          "name": "Run tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:50:01Z",
+          "completed_at": "2026-10-27T11:50:44Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-27T11:50:44Z",
+          "completed_at": "2026-10-27T11:50:45Z"
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-27T11:50:45Z",
+          "completed_at": "2026-10-27T11:50:45Z"
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-27T11:50:45Z",
+          "completed_at": "2026-10-27T11:50:45Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-27T11:50:45Z",
+          "completed_at": "2026-10-27T11:50:45Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-27T11:50:45Z",
+          "completed_at": "2026-10-27T11:50:45Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582838",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073279,
+      "runner_name": "GitHub Actions 1000073279",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582846,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5pfg",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582846",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582846",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:50:14Z",
+      "completed_at": "2026-10-27T11:57:12Z",
+      "name": "Tests (pytest, integration-bridge)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:50:14Z",
+          "completed_at": "2026-10-27T11:50:16Z"
+        },
+        {
+          "name": "Skip backend tests for unrelated changes",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 2,
+          "started_at": "2026-10-27T11:50:16Z",
+          "completed_at": "2026-10-27T11:50:16Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:50:16Z",
+          "completed_at": "2026-10-27T11:50:18Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:50:18Z",
+          "completed_at": "2026-10-27T11:50:19Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:50:19Z",
+          "completed_at": "2026-10-27T11:50:24Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:50:24Z",
+          "completed_at": "2026-10-27T11:50:29Z"
+        },
+        {
+          "name": "Run tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:50:29Z",
+          "completed_at": "2026-10-27T11:57:09Z"
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-27T11:57:09Z",
+          "completed_at": "2026-10-27T11:57:09Z"
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-27T11:57:09Z",
+          "completed_at": "2026-10-27T11:57:09Z"
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-27T11:57:09Z",
+          "completed_at": "2026-10-27T11:57:09Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-27T11:57:09Z",
+          "completed_at": "2026-10-27T11:57:10Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-27T11:57:10Z",
+          "completed_at": "2026-10-27T11:57:10Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582846",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073283,
+      "runner_name": "GitHub Actions 1000073283",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582895,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5prw",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582895",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582895",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:50:51Z",
+      "completed_at": "2026-10-27T11:53:33Z",
+      "name": "Nix flake check",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:50:51Z",
+          "completed_at": "2026-10-27T11:50:53Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-27T11:50:53Z",
+          "completed_at": "2026-10-27T11:50:56Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:50:56Z",
+          "completed_at": "2026-10-27T11:50:57Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:50:57Z",
+          "completed_at": "2026-10-27T11:51:01Z"
+        },
+        {
+          "name": "Verify bun.nix is generated from bun.lock",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:51:01Z",
+          "completed_at": "2026-10-27T11:51:02Z"
+        },
+        {
+          "name": "Install Nix",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:51:02Z",
+          "completed_at": "2026-10-27T11:51:08Z"
+        },
+        {
+          "name": "Build and check the flake",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-27T11:51:08Z",
+          "completed_at": "2026-10-27T11:53:29Z"
+        },
+        {
+          "name": "Post Install Nix",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-27T11:53:29Z",
+          "completed_at": "2026-10-27T11:53:31Z"
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-27T11:53:31Z",
+          "completed_at": "2026-10-27T11:53:31Z"
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-27T11:53:31Z",
+          "completed_at": "2026-10-27T11:53:31Z"
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-27T11:53:31Z",
+          "completed_at": "2026-10-27T11:53:31Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-27T11:53:31Z",
+          "completed_at": "2026-10-27T11:53:31Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582895",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073287,
+      "runner_name": "GitHub Actions 1000073287",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171582905,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5puQ",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171582905",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171582905",
+      "status": "in_progress",
+      "conclusion": null,
+      "created_at": "2026-10-27T11:49:09Z",
+      "started_at": "2026-10-27T11:50:50Z",
+      "completed_at": null,
+      "name": "Tests (pytest, integration-core-3)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-27T11:50:51Z",
+          "completed_at": "2026-10-27T11:50:52Z"
+        },
+        {
+          "name": "Skip backend tests for unrelated changes",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 2,
+          "started_at": "2026-10-27T11:50:52Z",
+          "completed_at": "2026-10-27T11:50:52Z"
+        },
+        {
+          "name": "Checkout repository",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-27T11:50:52Z",
+          "completed_at": "2026-10-27T11:50:55Z"
+        },
+        {
+          "name": "Set up Bun",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-27T11:50:55Z",
+          "completed_at": "2026-10-27T11:50:56Z"
+        },
+        {
+          "name": "Cache Bun dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-27T11:50:56Z",
+          "completed_at": "2026-10-27T11:51:02Z"
+        },
+        {
+          "name": "Set up uv",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-27T11:51:02Z",
+          "completed_at": "2026-10-27T11:51:10Z"
+        },
+        {
+          "name": "Run tests",
+          "status": "in_progress",
+          "conclusion": null,
+          "number": 7,
+          "started_at": "2026-10-27T11:51:10Z",
+          "completed_at": null
+        },
+        {
+          "name": "Post Set up uv",
+          "status": "pending",
+          "conclusion": null,
+          "number": 11,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Cache Bun dependencies",
+          "status": "pending",
+          "conclusion": null,
+          "number": 12,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Set up Bun",
+          "status": "pending",
+          "conclusion": null,
+          "number": 13,
+          "started_at": null,
+          "completed_at": null
+        },
+        {
+          "name": "Post Checkout repository",
+          "status": "pending",
+          "conclusion": null,
+          "number": 14,
+          "started_at": null,
+          "completed_at": null
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171582905",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000073286,
+      "runner_name": "GitHub Actions 1000073286",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 122171584553,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5wKQ",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171584553",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171584553",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-27T11:49:10Z",
+      "started_at": "2026-10-27T11:49:10Z",
+      "completed_at": "2026-10-27T11:49:09Z",
+      "name": "Frontend type check (tsc)",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171584553",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 122171584604,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5wXA",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171584604",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171584604",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-27T11:49:10Z",
+      "started_at": "2026-10-27T11:49:10Z",
+      "completed_at": "2026-10-27T11:49:09Z",
+      "name": "Frontend tests (vitest + coverage)",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171584604",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 122171584721,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5w0Q",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171584721",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171584721",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-27T11:49:10Z",
+      "started_at": "2026-10-27T11:49:10Z",
+      "completed_at": "2026-10-27T11:49:09Z",
+      "name": "Helm smoke install (kind)",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171584721",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 122171585455,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5zrw",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171585455",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171585455",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-27T11:49:10Z",
+      "started_at": "2026-10-27T11:49:10Z",
+      "completed_at": "2026-10-27T11:49:09Z",
+      "name": "Frontend lint (eslint)",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171585455",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 122171585472,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf5zwA",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171585472",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171585472",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-27T11:49:10Z",
+      "started_at": "2026-10-27T11:49:10Z",
+      "completed_at": "2026-10-27T11:49:09Z",
+      "name": "Frontend build (vite)",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171585472",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 122171587014,
+      "run_id": 40498949108,
+      "workflow_name": "CI",
+      "head_branch": "fix/http-bridge-owner-io",
+      "run_url": "https://api.github.com/repos/Komzpa/codex-lb/actions/runs/40498949108",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOSPuIrs8AAAAccf55xg",
+      "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+      "url": "https://api.github.com/repos/Komzpa/codex-lb/actions/jobs/122171587014",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40498949108/job/122171587014",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-27T11:49:10Z",
+      "started_at": "2026-10-27T11:49:10Z",
+      "completed_at": "2026-10-27T11:49:09Z",
+      "name": "Helm lint + template + kubeconform",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/Komzpa/codex-lb/check-runs/122171587014",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    }
+  ]
+}

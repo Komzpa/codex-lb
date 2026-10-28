@@ -1,0 +1,34 @@
+{
+  "compression-codecs": {
+    "before": "0.4.38",
+    "after": "0.4.40"
+  },
+  "compression-core": {
+    "before": "0.4.32",
+    "after": "0.4.34"
+  },
+  "rustls-webpki": {
+    "before": "0.103.15",
+    "after": "0.103.16"
+  },
+  "tokio": {
+    "before": "1.49.0",
+    "after": "1.51.6"
+  },
+  "tokio-macros": {
+    "before": "2.6.1",
+    "after": "2.7.2"
+  },
+  "zstd": {
+    "before": "0.13.3",
+    "after": "0.14.3"
+  },
+  "zstd-safe": {
+    "before": "7.2.4",
+    "after": "8.2.0"
+  },
+  "zstd-sys": {
+    "before": "2.0.16+zstd.1.5.7",
+    "after": "2.1.2+zstd.1.5.7"
+  }
+}

@@ -1,0 +1,282 @@
+﻿2026-10-27T11:49:13.8077616Z Current runner version: '2.338.0'
+2026-10-27T11:49:13.8103127Z ##[group]Runner Image Provisioner
+2026-10-27T11:49:13.8104037Z Hosted Compute Agent
+2026-10-27T11:49:13.8104689Z Version: 20261021.618
+2026-10-27T11:49:13.8105394Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-27T11:49:13.8106411Z Build Date: 2026-10-21T00:45:21Z
+2026-10-27T11:49:13.8107118Z Worker ID: {5aa39f8d-8250-4c9b-9c68-76259a5bbb65}
+2026-10-27T11:49:13.8107929Z Region: westcentralus
+2026-10-27T11:49:13.8108517Z Cloud: Azure
+2026-10-27T11:49:13.8109166Z ##[endgroup]
+2026-10-27T11:49:13.8110683Z ##[group]Operating System
+2026-10-27T11:49:13.8111329Z Ubuntu
+2026-10-27T11:49:13.8111961Z 24.04.5
+2026-10-27T11:49:13.8112518Z LTS
+2026-10-27T11:49:13.8113080Z ##[endgroup]
+2026-10-27T11:49:13.8113655Z ##[group]Runner Image
+2026-10-27T11:49:13.8114258Z Image: ubuntu-24.04
+2026-10-27T11:49:13.8114874Z Version: 20261012.334.1
+2026-10-27T11:49:13.8116475Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-27T11:49:13.8118156Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+2026-10-27T11:49:13.8119154Z ##[endgroup]
+2026-10-27T11:49:13.8120463Z ##[group]GITHUB_TOKEN Permissions
+2026-10-27T11:49:13.8122484Z Contents: read
+2026-10-27T11:49:13.8123243Z Metadata: read
+2026-10-27T11:49:13.8123829Z PullRequests: read
+2026-10-27T11:49:13.8124463Z ##[endgroup]
+2026-10-27T11:49:13.8126962Z Secret source: Actions
+2026-10-27T11:49:13.8127967Z Cache mode: write
+2026-10-27T11:49:13.8128820Z Prepare workflow directory
+2026-10-27T11:49:13.8471844Z Prepare all required actions
+2026-10-27T11:49:13.8523039Z Getting action download info
+2026-10-27T11:49:14.1943817Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-10-27T11:49:14.2962367Z Download action repository 'astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884' (SHA:1c37ad07a6a961277cf70c0d37d6f313000f5884)
+2026-10-27T11:49:15.1964625Z Complete job name: Lint (ruff)
+2026-10-27T11:49:15.2869753Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+2026-10-27T11:49:15.2870921Z with:
+2026-10-27T11:49:15.2871436Z   persist-credentials: false
+2026-10-27T11:49:15.2872032Z   repository: Komzpa/codex-lb
+2026-10-27T11:49:15.2876540Z   token: ***
+2026-10-27T11:49:15.2877039Z   ssh-strict: true
+2026-10-27T11:49:15.2877538Z   ssh-user: git
+2026-10-27T11:49:15.2878008Z   clean: true
+2026-10-27T11:49:15.2878503Z   sparse-checkout-cone-mode: true
+2026-10-27T11:49:15.2879076Z   fetch-depth: 1
+2026-10-27T11:49:15.2879546Z   fetch-tags: false
+2026-10-27T11:49:15.2880031Z   show-progress: true
+2026-10-27T11:49:15.2880521Z   lfs: false
+2026-10-27T11:49:15.2880989Z   submodules: false
+2026-10-27T11:49:15.2881498Z   set-safe-directory: true
+2026-10-27T11:49:15.2882067Z   allow-unsafe-pr-checkout: false
+2026-10-27T11:49:15.2882930Z ##[endgroup]
+2026-10-27T11:49:15.3897517Z Syncing repository: Komzpa/codex-lb
+2026-10-27T11:49:15.3900532Z ##[group]Getting Git version info
+2026-10-27T11:49:15.3901935Z Working directory is '/home/runner/work/codex-lb/codex-lb'
+2026-10-27T11:49:15.3903928Z [command]/usr/bin/git version
+2026-10-27T11:49:15.3961998Z git version 2.55.0
+2026-10-27T11:49:15.4010187Z ##[endgroup]
+2026-10-27T11:49:15.4020727Z Temporarily overriding HOME='/home/runner/work/_temp/db2191db-7133-420c-8b8a-9458bf47884b' before making global git config changes
+2026-10-27T11:49:15.4023835Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T11:49:15.4026740Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/codex-lb/codex-lb
+2026-10-27T11:49:15.4053976Z Deleting the contents of '/home/runner/work/codex-lb/codex-lb'
+2026-10-27T11:49:15.4065197Z ##[group]Determining repository object format
+2026-10-27T11:49:15.4067462Z ##[endgroup]
+2026-10-27T11:49:15.4069025Z ##[group]Initializing the repository
+2026-10-27T11:49:15.4070521Z [command]/usr/bin/git init /home/runner/work/codex-lb/codex-lb
+2026-10-27T11:49:15.4172230Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-27T11:49:15.4174485Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-27T11:49:15.4176875Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-27T11:49:15.4178503Z hint: call:
+2026-10-27T11:49:15.4179637Z hint:
+2026-10-27T11:49:15.4180841Z hint: 	git config --global init.defaultBranch <name>
+2026-10-27T11:49:15.4182170Z hint:
+2026-10-27T11:49:15.4183561Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-27T11:49:15.4185512Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-27T11:49:15.4187700Z hint:
+2026-10-27T11:49:15.4188719Z hint: 	git branch -m <name>
+2026-10-27T11:49:15.4189966Z hint:
+2026-10-27T11:49:15.4191462Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-27T11:49:15.4193581Z Initialized empty Git repository in /home/runner/work/codex-lb/codex-lb/.git/
+2026-10-27T11:49:15.4198153Z [command]/usr/bin/git remote add origin https://github.com/Komzpa/codex-lb
+2026-10-27T11:49:15.4241051Z ##[endgroup]
+2026-10-27T11:49:15.4243050Z ##[group]Disabling automatic garbage collection
+2026-10-27T11:49:15.4244881Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-27T11:49:15.4278975Z ##[endgroup]
+2026-10-27T11:49:15.4281155Z ##[group]Setting up auth
+2026-10-27T11:49:15.4282793Z Removing SSH command configuration
+2026-10-27T11:49:15.4284630Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T11:49:15.4338256Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T11:49:15.4691397Z Removing HTTP extra header
+2026-10-27T11:49:15.4697829Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T11:49:15.4738121Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T11:49:15.5005071Z Removing includeIf entries pointing to credentials config files
+2026-10-27T11:49:15.5011069Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T11:49:15.5050921Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T11:49:15.5281924Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-27T11:49:15.5326628Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/codex-lb/codex-lb/.git.path /home/runner/work/_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config
+2026-10-27T11:49:15.5363188Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/codex-lb/codex-lb/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config
+2026-10-27T11:49:15.5400783Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config
+2026-10-27T11:49:15.5437408Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config
+2026-10-27T11:49:15.5471301Z ##[endgroup]
+2026-10-27T11:49:15.5472282Z ##[group]Fetching the repository
+2026-10-27T11:49:15.5478527Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +6f20b97db50c84e126562c23368205d88e3506a5:refs/remotes/pull/2/merge
+2026-10-27T11:49:17.7961366Z From https://github.com/Komzpa/codex-lb
+2026-10-27T11:49:17.7963884Z  * [new ref]         6f20b97db50c84e126562c23368205d88e3506a5 -> pull/2/merge
+2026-10-27T11:49:17.7968241Z ##[endgroup]
+2026-10-27T11:49:17.7969710Z ##[group]Determining the checkout info
+2026-10-27T11:49:17.7971524Z ##[endgroup]
+2026-10-27T11:49:17.7972595Z [command]/usr/bin/git sparse-checkout disable
+2026-10-27T11:49:17.8028939Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-27T11:49:17.8064634Z ##[group]Checking out the ref
+2026-10-27T11:49:17.8067880Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/2/merge
+2026-10-27T11:49:18.3431105Z Note: switching to 'refs/remotes/pull/2/merge'.
+2026-10-27T11:49:18.3431734Z 
+2026-10-27T11:49:18.3432210Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-27T11:49:18.3433406Z changes and commit them, and you can discard any commits you make in this
+2026-10-27T11:49:18.3434564Z state without impacting any branches by switching back to a branch.
+2026-10-27T11:49:18.3435298Z 
+2026-10-27T11:49:18.3436010Z If you want to create a new branch to retain commits you create, you may
+2026-10-27T11:49:18.3437144Z do so (now or later) by using -c with the switch command. Example:
+2026-10-27T11:49:18.3437682Z 
+2026-10-27T11:49:18.3437984Z   git switch -c <new-branch-name>
+2026-10-27T11:49:18.3438361Z 
+2026-10-27T11:49:18.3438707Z Or undo this operation with:
+2026-10-27T11:49:18.3439139Z 
+2026-10-27T11:49:18.3439410Z   git switch -
+2026-10-27T11:49:18.3439768Z 
+2026-10-27T11:49:18.3440713Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-27T11:49:18.3441617Z 
+2026-10-27T11:49:18.3442637Z HEAD is now at 6f20b97 Merge 7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d into 72630bbfeee9e3b0d9acfb95e2b1e706b8b0188e
+2026-10-27T11:49:18.3454188Z ##[endgroup]
+2026-10-27T11:49:18.3512986Z [command]/usr/bin/git log -1 --format=%H
+2026-10-27T11:49:18.3546147Z 6f20b97db50c84e126562c23368205d88e3506a5
+2026-10-27T11:49:18.3557814Z ##[group]Removing auth
+2026-10-27T11:49:18.3558723Z Removing SSH command configuration
+2026-10-27T11:49:18.3563170Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T11:49:18.3606033Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T11:49:18.3873277Z Removing HTTP extra header
+2026-10-27T11:49:18.3880158Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T11:49:18.3926635Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T11:49:18.4167371Z Removing includeIf entries pointing to credentials config files
+2026-10-27T11:49:18.4171253Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T11:49:18.4202250Z includeif.gitdir:/home/runner/work/codex-lb/codex-lb/.git.path
+2026-10-27T11:49:18.4203586Z includeif.gitdir:/home/runner/work/codex-lb/codex-lb/.git/worktrees/*.path
+2026-10-27T11:49:18.4204849Z includeif.gitdir:/github/workspace/.git.path
+2026-10-27T11:49:18.4207526Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-27T11:49:18.4211746Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/codex-lb/codex-lb/.git.path
+2026-10-27T11:49:18.4239141Z /home/runner/work/_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config
+2026-10-27T11:49:18.4250221Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/codex-lb/codex-lb/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-9dfca4f5\-2861\-45ce\-84e7\-29c5076b408b\.config
+2026-10-27T11:49:18.4292828Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/codex-lb/codex-lb/.git/worktrees/*.path
+2026-10-27T11:49:18.4320263Z /home/runner/work/_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config
+2026-10-27T11:49:18.4328586Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/codex-lb/codex-lb/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-9dfca4f5\-2861\-45ce\-84e7\-29c5076b408b\.config
+2026-10-27T11:49:18.4366728Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-27T11:49:18.4393931Z /github/runner_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config
+2026-10-27T11:49:18.4401493Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-9dfca4f5\-2861\-45ce\-84e7\-29c5076b408b\.config
+2026-10-27T11:49:18.4443714Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-27T11:49:18.4471940Z /github/runner_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config
+2026-10-27T11:49:18.4481335Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-9dfca4f5\-2861\-45ce\-84e7\-29c5076b408b\.config
+2026-10-27T11:49:18.4519218Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T11:49:18.4755198Z Removing credentials config '/home/runner/work/_temp/git-credentials-9dfca4f5-2861-45ce-84e7-29c5076b408b.config'
+2026-10-27T11:49:18.4764806Z ##[endgroup]
+2026-10-27T11:49:18.5123097Z ##[group]Run astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+2026-10-27T11:49:18.5123519Z with:
+2026-10-27T11:49:18.5123719Z   python-version: 3.13
+2026-10-27T11:49:18.5123945Z   enable-cache: true
+2026-10-27T11:49:18.5124157Z   prune-cache: true
+2026-10-27T11:49:18.5124374Z   activate-environment: false
+2026-10-27T11:49:18.5124620Z   no-project: false
+2026-10-27T11:49:18.5124898Z   working-directory: /home/runner/work/codex-lb/codex-lb
+2026-10-27T11:49:18.5128044Z   github-token: ***
+2026-10-27T11:49:18.5128620Z   cache-dependency-glob: **/*requirements*.txt
+**/*requirements*.in
+**/*constraints*.txt
+**/*constraints*.in
+**/pyproject.toml
+**/uv.lock
+**/*.py.lock
+
+2026-10-27T11:49:18.5129271Z   restore-cache: true
+2026-10-27T11:49:18.5129483Z   save-cache: auto
+2026-10-27T11:49:18.5129686Z   cache-python: false
+2026-10-27T11:49:18.5129915Z   ignore-nothing-to-cache: false
+2026-10-27T11:49:18.5130180Z   ignore-empty-workdir: false
+2026-10-27T11:49:18.5130481Z   download-from-astral-mirror: true
+2026-10-27T11:49:18.5130757Z   add-problem-matchers: true
+2026-10-27T11:49:18.5130983Z   quiet: false
+2026-10-27T11:49:18.5131185Z   resolution-strategy: highest
+2026-10-27T11:49:18.5131420Z ##[endgroup]
+2026-10-27T11:49:18.7046563Z Trying to find version for uv in: /home/runner/work/codex-lb/codex-lb/uv.toml
+2026-10-27T11:49:18.7047984Z Could not find file: /home/runner/work/codex-lb/codex-lb/uv.toml
+2026-10-27T11:49:18.7049241Z Trying to find version for uv in: /home/runner/work/codex-lb/codex-lb/pyproject.toml
+2026-10-27T11:49:18.7050918Z Could not determine uv version from uv.toml or pyproject.toml. Falling back to latest.
+2026-10-27T11:49:18.7057027Z Fetching manifest data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-10-27T11:49:18.8006062Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-10-27T11:49:19.1954495Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/c8e0ee8a-0cad-4944-9b2c-5a5b8e878e24 -f /home/runner/work/_temp/8ed956e3-f8fc-40f7-982e-1193f0de3e0f
+2026-10-27T11:49:19.4917954Z Added /home/runner/.local/bin to the path
+2026-10-27T11:49:19.4921536Z Added /opt/hostedtoolcache/uv/0.13.6/x86_64 to the path
+2026-10-27T11:49:19.4922994Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+2026-10-27T11:49:19.4923690Z Added /home/runner/work/_temp/uv-python-dir to the path
+2026-10-27T11:49:19.4925661Z Set UV_PYTHON to 3.13
+2026-10-27T11:49:19.4947946Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-10-27T11:49:19.4948430Z Successfully installed uv version 0.13.6
+2026-10-27T11:49:19.4950019Z Searching files using cache dependency glob: /home/runner/work/codex-lb/codex-lb/**/*requirements*.txt,/home/runner/work/codex-lb/codex-lb/**/*requirements*.in,/home/runner/work/codex-lb/codex-lb/**/*constraints*.txt,/home/runner/work/codex-lb/codex-lb/**/*constraints*.in,/home/runner/work/codex-lb/codex-lb/**/pyproject.toml,/home/runner/work/codex-lb/codex-lb/**/uv.lock,/home/runner/work/codex-lb/codex-lb/**/*.py.lock
+2026-10-27T11:49:20.6734287Z /home/runner/work/codex-lb/codex-lb/pyproject.toml
+2026-10-27T11:49:20.7251465Z /home/runner/work/codex-lb/codex-lb/uv.lock
+2026-10-27T11:49:20.7272526Z Found 2 files to hash.
+2026-10-27T11:49:20.7351784Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-05b438bc91c26d621acd3d134eef84fe752a231f866b4b582adcf6df27e5539c
+2026-10-27T11:49:20.8987945Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-05b438bc91c26d621acd3d134eef84fe752a231f866b4b582adcf6df27e5539c
+2026-10-27T11:49:21.2925221Z Received 1743 of 1743 (100.0%), 0.0 MBs/sec
+2026-10-27T11:49:21.2925999Z Cache Size: ~0 MB (1743 B)
+2026-10-27T11:49:21.2953560Z [command]/usr/bin/tar -xf /home/runner/work/_temp/7e7b0cc8-3d06-4716-ae35-ea372fb4b797/cache.tzst -P -C /home/runner/work/codex-lb/codex-lb --use-compress-program unzstd
+2026-10-27T11:49:21.3029185Z Cache restored successfully
+2026-10-27T11:49:21.3033841Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-05b438bc91c26d621acd3d134eef84fe752a231f866b4b582adcf6df27e5539c
+2026-10-27T11:49:21.4200343Z ##[group]Run make lint
+2026-10-27T11:49:21.4200689Z [36;1mmake lint[0m
+2026-10-27T11:49:21.4453773Z shell: /usr/bin/bash -e {0}
+2026-10-27T11:49:21.4454072Z env:
+2026-10-27T11:49:21.4454361Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-10-27T11:49:21.4454715Z   UV_PYTHON: 3.13
+2026-10-27T11:49:21.4454976Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-10-27T11:49:21.4455292Z ##[endgroup]
+2026-10-27T11:49:21.5735509Z uv run python scripts/check_proxy_architecture.py
+2026-10-27T11:49:21.7110577Z Downloading cpython-3.13.18-linux-x86_64-gnu (download) (33.8MiB)
+2026-10-27T11:49:22.5289217Z  Downloaded cpython-3.13.18-linux-x86_64-gnu (download)
+2026-10-27T11:49:22.6734207Z Using CPython 3.13.18
+2026-10-27T11:49:22.6734611Z Creating virtual environment at: .venv
+2026-10-27T11:49:22.6921495Z    Building codex-lb @ file:///home/runner/work/codex-lb/codex-lb
+2026-10-27T11:49:22.7933268Z Downloading brotli (1.4MiB)
+2026-10-27T11:49:22.7937715Z Downloading asyncpg (3.4MiB)
+2026-10-27T11:49:22.7940780Z Downloading hypothesis (1.1MiB)
+2026-10-27T11:49:22.7946832Z Downloading ty (12.8MiB)
+2026-10-27T11:49:22.7947869Z Downloading pygments (1.2MiB)
+2026-10-27T11:49:22.7948713Z Downloading pydantic-core (2.0MiB)
+2026-10-27T11:49:22.7952567Z Downloading aiohttp (1.8MiB)
+2026-10-27T11:49:22.7953826Z Downloading psycopg-binary (4.9MiB)
+2026-10-27T11:49:22.7963189Z Downloading zstandard (5.3MiB)
+2026-10-27T11:49:22.7966211Z Downloading uvloop (4.2MiB)
+2026-10-27T11:49:22.7970993Z Downloading cryptography (4.5MiB)
+2026-10-27T11:49:22.7992307Z Downloading openai (1.7MiB)
+2026-10-27T11:49:22.7997620Z Downloading virtualenv (5.1MiB)
+2026-10-27T11:49:22.8765315Z Downloading ruff (9.8MiB)
+2026-10-27T11:49:22.8768872Z Downloading sqlalchemy (3.2MiB)
+2026-10-27T11:49:23.2918097Z  Downloaded hypothesis
+2026-10-27T11:49:23.3441290Z  Downloaded pygments
+2026-10-27T11:49:23.3466712Z  Downloaded brotli
+2026-10-27T11:49:23.3837967Z  Downloaded aiohttp
+2026-10-27T11:49:23.3838485Z  Downloaded openai
+2026-10-27T11:49:23.3926617Z  Downloaded pydantic-core
+2026-10-27T11:49:23.4480618Z  Downloaded asyncpg
+2026-10-27T11:49:23.4509348Z  Downloaded sqlalchemy
+2026-10-27T11:49:23.4966889Z  Downloaded uvloop
+2026-10-27T11:49:23.5129967Z  Downloaded virtualenv
+2026-10-27T11:49:23.5156738Z  Downloaded cryptography
+2026-10-27T11:49:23.5167181Z  Downloaded psycopg-binary
+2026-10-27T11:49:23.5169293Z  Downloaded zstandard
+2026-10-27T11:49:23.5692028Z  Downloaded ruff
+2026-10-27T11:49:23.6054094Z  Downloaded ty
+2026-10-27T11:49:24.1594579Z       Built codex-lb @ file:///home/runner/work/codex-lb/codex-lb
+2026-10-27T11:49:24.2357879Z Installed 103 packages in 74ms
+2026-10-27T11:49:24.6770133Z proxy architecture checks passed
+2026-10-27T11:49:24.6981784Z uv run python scripts/check_cancellation_safety.py
+2026-10-27T11:49:30.7562599Z cancellation safety checks passed
+2026-10-27T11:49:30.7666791Z uv run python scripts/check_proxy_timing_seams.py
+2026-10-27T11:49:32.8212436Z proxy timing seam check failed: app/modules/proxy/_service/http_bridge/session_registry.py:126: raw-timeout asyncio.wait_for(...); use scheduler_for(owner).wait_for/wait/fail_after or pass scheduler= to wait_on_shared_future
+2026-10-27T11:49:32.8215109Z proxy timing seam check failed: app/modules/proxy/_service/http_bridge/session_registry.py has 1 raw-timeout sites; allowance is 0
+2026-10-27T11:49:32.8311899Z make: *** [Makefile:121: architecture-check] Error 1
+2026-10-27T11:49:32.8330352Z ##[error]Process completed with exit code 2.
+2026-10-27T11:49:32.9251523Z Post job cleanup.
+2026-10-27T11:49:33.0113000Z [command]/usr/bin/git version
+2026-10-27T11:49:33.0173178Z git version 2.55.0
+2026-10-27T11:49:33.0216583Z Temporarily overriding HOME='/home/runner/work/_temp/92b329b7-54a9-49d8-8a50-be3439233d5e' before making global git config changes
+2026-10-27T11:49:33.0217866Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T11:49:33.0222803Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/codex-lb/codex-lb
+2026-10-27T11:49:33.0259273Z Removing SSH command configuration
+2026-10-27T11:49:33.0267657Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T11:49:33.0309386Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T11:49:33.0647528Z Removing HTTP extra header
+2026-10-27T11:49:33.0657166Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T11:49:33.0717971Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T11:49:33.1077501Z Removing includeIf entries pointing to credentials config files
+2026-10-27T11:49:33.1086287Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T11:49:33.1169758Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T11:49:33.1586859Z Cleaning up orphan processes

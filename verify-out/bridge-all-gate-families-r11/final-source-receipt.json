@@ -1,0 +1,41 @@
+{
+  "source_test": {
+    "pid": 2979145,
+    "command": [".venv/bin/python", "-m", "pytest", "-q", "--tb=short", "--timeout=120", "-n", "8", "--dist=load", "tests/integration/test_http_responses_bridge.py", "tests/unit/test_bridge_ring_lifecycle.py", "tests/unit/test_proxy_http_bridge.py", "tests/unit/test_check_proxy_timing_seams.py"],
+    "exit": 0,
+    "passed": 1456,
+    "warnings": 8,
+    "seconds": 127.34
+  },
+  "following_commands_all_exit_zero": [
+    [".venv/bin/ruff", "check", "app/modules/proxy/_service/http_bridge/session_registry.py", "tests/unit/test_proxy_http_bridge.py"],
+    [".venv/bin/ruff", "format", "--check", "app/modules/proxy/_service/http_bridge/session_registry.py", "tests/unit/test_proxy_http_bridge.py"],
+    [".venv/bin/python", "scripts/check_proxy_architecture.py"],
+    [".venv/bin/python", "scripts/check_cancellation_safety.py"],
+    [".venv/bin/python", "scripts/check_proxy_timing_seams.py"],
+    [".venv/bin/ty", "check"]
+  ],
+  "native_consumer": {
+    "pid": 3019340,
+    "environment": {"CODEX_LB_NATIVE_EGRESS_TEST_BINARY": "/home/kom/proj/ai_pr/codex-lb-bridge-owner-main-20261027/target/debug/codex-lb-native-egress"},
+    "command": [".venv/bin/python", "-m", "pytest", "-q", "-ra", "tests/integration/test_native_routed_egress.py", "tests/integration/test_native_sse_egress.py", "tests/integration/test_native_websocket_events.py", "tests/integration/test_native_usage_egress.py"],
+    "exit": 0,
+    "passed": 361,
+    "warnings": 1,
+    "seconds": 13.26
+  },
+  "negative_control": {
+    "pid": 2877688,
+    "mutation": "Process-local restored raw asyncio.wait_for in registry drain; checkout unchanged",
+    "consumer": "tests/unit/test_proxy_http_bridge.py::test_close_all_http_bridge_sessions_reports_background_cleanup_timeout",
+    "exit": 1,
+    "result": "Expected failure: shutdown misses virtual deadline; wall-clock completion guard raises TimeoutError, and final await observes cancellation. Shielded cleanup is released and awaited."
+  },
+  "process_ownership": "All launched finite children completed; none killed. No live services started.",
+  "source_hashes": {
+    "app/modules/proxy/_service/http_bridge/session_registry.py": "b96a8a5c19cd6e8c9e0e664f825f1309e6edaee301955c2d139ca12e50ee6dc2",
+    "tests/unit/test_proxy_http_bridge.py": "8c2917eb4be7f12b8c94554e3011905a9dfb6ecf8f2b655beabc5d3e9e469965",
+    "Cargo.toml": "39ba328c836a78adcfd547bb386d7a2b640317aaa568c2cca4c67081eebb8246",
+    "Cargo.lock": "6463b89c9abbc82ceb57edc1dedd60a2dc62c92f99178d90acc13a5d65a512c8"
+  }
+}

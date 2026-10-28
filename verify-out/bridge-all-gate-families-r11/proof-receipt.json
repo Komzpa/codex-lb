@@ -1,0 +1,80 @@
+[
+  {
+    "command": [
+      ".venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "--tb=short",
+      "--timeout=120",
+      "-n",
+      "8",
+      "--dist=load",
+      "tests/integration/test_http_responses_bridge.py",
+      "tests/unit/test_bridge_ring_lifecycle.py",
+      "tests/unit/test_proxy_http_bridge.py",
+      "tests/unit/test_check_proxy_timing_seams.py"
+    ],
+    "pid": 2842935,
+    "exit": 1,
+    "log": "proof-0.log"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_proxy_architecture.py"
+    ],
+    "pid": 2898799,
+    "exit": 0,
+    "log": "proof-1.log"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_cancellation_safety.py"
+    ],
+    "pid": 2899192,
+    "exit": 0,
+    "log": "proof-2.log"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_proxy_timing_seams.py"
+    ],
+    "pid": 2901782,
+    "exit": 0,
+    "log": "proof-3.log"
+  },
+  {
+    "command": [
+      ".venv/bin/ty",
+      "check"
+    ],
+    "pid": 2902007,
+    "exit": 0,
+    "log": "proof-4.log"
+  },
+  {
+    "command": [
+      ".venv/bin/ruff",
+      "check",
+      "app/modules/proxy/_service/http_bridge/session_registry.py",
+      "tests/unit/test_proxy_http_bridge.py"
+    ],
+    "pid": 2902482,
+    "exit": 1,
+    "log": "proof-5.log"
+  },
+  {
+    "command": [
+      "openspec",
+      "validate",
+      "unlock-http-bridge-owner-io",
+      "--strict"
+    ],
+    "pid": 2902571,
+    "exit": 0,
+    "log": "proof-6.log"
+  }
+]

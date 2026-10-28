@@ -1,0 +1,122 @@
+[
+  {
+    "id": 122171461952,
+    "name": "OpenSpec validation",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171462223,
+    "name": "Contributors attribution",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171462324,
+    "name": "Detect changes",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582668,
+    "name": "Lint (ruff)",
+    "status": "completed",
+    "conclusion": "failure",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582675,
+    "name": "Rust workspace",
+    "status": "completed",
+    "conclusion": "failure",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582676,
+    "name": "Migration check (alembic)",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582678,
+    "name": "Type check (ty)",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582713,
+    "name": "Docker build",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582730,
+    "name": "Tests (pytest, unit)",
+    "status": "completed",
+    "conclusion": "failure",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582750,
+    "name": "Package (build)",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582761,
+    "name": "Tests (pytest, PostgreSQL)",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582815,
+    "name": "Migration check (alembic, PostgreSQL)",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582838,
+    "name": "Tests (pytest, e2e)",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582846,
+    "name": "Tests (pytest, integration-bridge)",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  },
+  {
+    "id": 122171582895,
+    "name": "Nix flake check",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "7d1a5d2fddfa5d2786a03f1f78d39d2aed62c31d",
+    "fetch_exit": 0
+  }
+]

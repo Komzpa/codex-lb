@@ -1,0 +1,242 @@
+{
+  "finish": "2026-10-27T11:28:50.080452+00:00",
+  "start_evidence": "saved raw file modification timestamps; initial command artifact 5584",
+  "pid": 2173724,
+  "cwd": "/home/kom/proj/ai_pr/codex-lb-bridge-owner-main-20261027",
+  "expected_head": "41111d4364012b21010b395769855b833343c32a",
+  "observed_head": "41111d4364012b21010b395769855b833343c32a",
+  "stale": false,
+  "head_query_exit": 0,
+  "required_command_exit": 1,
+  "required_error": "no required checks reported on the 'fix/http-bridge-owner-io' branch\n",
+  "runs_and_saved_jobs_exit": 0,
+  "first_log_download_exit": 0,
+  "collector_exit": 1,
+  "collector_error": "JSON decoder attempted to parse plain-text log; saved log retained; resumed from saved jobs without polling",
+  "remaining_log_commands": [
+    {
+      "command": [
+        "gh",
+        "api",
+        "repos/Komzpa/codex-lb/actions/jobs/122161377323/logs"
+      ],
+      "exit": 0
+    }
+  ],
+  "jobs": [
+    {
+      "id": 122161237604,
+      "name": "Simplicity budgets",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930025/job/122161237604"
+    },
+    {
+      "id": 122161237849,
+      "name": "Stable release guard",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930077/job/122161237849"
+    },
+    {
+      "id": 122161238221,
+      "name": "Beta release guard",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930077/job/122161238221"
+    },
+    {
+      "id": 122161238181,
+      "name": "Contributors attribution",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161238181"
+    },
+    {
+      "id": 122161238404,
+      "name": "Detect changes",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161238404"
+    },
+    {
+      "id": 122161238521,
+      "name": "OpenSpec validation",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161238521"
+    },
+    {
+      "id": 122161377274,
+      "name": "Lint (ruff)",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377274"
+    },
+    {
+      "id": 122161377307,
+      "name": "Migration check (alembic, PostgreSQL)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377307"
+    },
+    {
+      "id": 122161377323,
+      "name": "Type check (ty)",
+      "status": "completed",
+      "conclusion": "failure",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377323"
+    },
+    {
+      "id": 122161377338,
+      "name": "Tests (pytest, e2e)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377338"
+    },
+    {
+      "id": 122161377344,
+      "name": "Tests (pytest, unit)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377344"
+    },
+    {
+      "id": 122161377351,
+      "name": "Tests (pytest, integration-bridge)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377351"
+    },
+    {
+      "id": 122161377409,
+      "name": "Dashboard browser smoke (Playwright)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377409"
+    },
+    {
+      "id": 122161377606,
+      "name": "Tests (pytest, integration-core-1)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377606"
+    },
+    {
+      "id": 122161377610,
+      "name": "Migration check (alembic)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377610"
+    },
+    {
+      "id": 122161377624,
+      "name": "Docker build",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377624"
+    },
+    {
+      "id": 122161377627,
+      "name": "Tests (pytest, integration-core-2)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377627"
+    },
+    {
+      "id": 122161377699,
+      "name": "Tests (pytest, integration-core-3)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377699"
+    },
+    {
+      "id": 122161377702,
+      "name": "Tests (pytest, PostgreSQL)",
+      "status": "in_progress",
+      "conclusion": null,
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377702"
+    },
+    {
+      "id": 122161377807,
+      "name": "Package (build)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161377807"
+    },
+    {
+      "id": 122161379084,
+      "name": "Rust workspace",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161379084"
+    },
+    {
+      "id": 122161379096,
+      "name": "Frontend tests (vitest + coverage)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161379096"
+    },
+    {
+      "id": 122161379130,
+      "name": "Frontend lint (eslint)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161379130"
+    },
+    {
+      "id": 122161379291,
+      "name": "Frontend build (vite)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161379291"
+    },
+    {
+      "id": 122161379301,
+      "name": "Frontend type check (tsc)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161379301"
+    },
+    {
+      "id": 122161379513,
+      "name": "Nix flake check",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161379513"
+    },
+    {
+      "id": 122161379518,
+      "name": "Helm smoke install (kind)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161379518"
+    },
+    {
+      "id": 122161379670,
+      "name": "Helm lint + template + kubeconform",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930030/job/122161379670"
+    },
+    {
+      "id": 122161241624,
+      "name": "label",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/Komzpa/codex-lb/actions/runs/40495930675/job/122161241624"
+    }
+  ],
+  "resource": "private output directory; no services or shared DB",
+  "processes_stopped": [],
+  "start": "2026-10-27T11:28:26.411838+00:00",
+  "start_precision": "earliest retained head-query output timestamp; process-start timestamp was not captured",
+  "command_inventory": [
+    "gh api graphql -f query=<saved head fields>",
+    "gh pr checks 2 --repo Komzpa/codex-lb --required --json name,state,bucket,link,workflow",
+    "gh api repos/Komzpa/codex-lb/actions/runs?head_sha=41111d4364012b21010b395769855b833343c32a&per_page=100",
+    "gh api <each saved workflow jobs_url>?per_page=100",
+    "gh api repos/Komzpa/codex-lb/actions/jobs/{122161377274,122161377323}/logs"
+  ]
+}

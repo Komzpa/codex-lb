@@ -17,3 +17,14 @@ A still-current foreign-owner renewal MUST evict only the expected generation an
 - **WHEN** that session is replaced or the same object advances its epoch while I/O is suspended
 - **THEN** the old owned, foreign or error result cannot validate or evict the new generation
 - **AND** winner aliases, ownership and capacity remain protected during old resource cleanup
+
+### Requirement: Background ownership cleanup uses the owner scheduler
+
+The registry cleanup drain MUST use the service owner's scheduler for its existing bounded wait. Timeout MUST report incomplete cleanup without cancelling shielded session-close tasks or changing the ownership I/O deadline.
+
+#### Scenario: Cleanup remains owned after the drain times out
+
+- **GIVEN** a session-close task is still pending
+- **WHEN** the owner scheduler reaches the background drain timeout
+- **THEN** the drain reports incomplete cleanup
+- **AND** the shielded close remains owned and can complete on a later drain
